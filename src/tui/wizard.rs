@@ -181,8 +181,16 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
                 }
             }
 
-            // Pre-fill season input buffer
-            app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
+            // If episodes already fetched, start on start-episode field
+            if !app.episodes.is_empty() {
+                app.season_field = 1;
+                let disc_num = app.label_info.as_ref().map(|l| l.disc);
+                let guessed = guess_start_episode(disc_num, app.episodes_pl.len());
+                app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
+            } else {
+                app.season_field = 0;
+                app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
+            }
             app.input_active = true;
             app.list_cursor = 0;
             app.screen = Screen::SeasonEpisode;
@@ -209,44 +217,40 @@ pub fn render_season_episode(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Step 3: Season & Starting Episode"));
     f.render_widget(title, chunks[0]);
 
-    // Split content area into input section and episode list
     let content_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // season input
-            Constraint::Length(3),  // start episode input
-            Constraint::Min(1),    // episode list
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(1),
         ])
         .split(chunks[1]);
 
     // Season input
-    let season_label = if app.episodes.is_empty() {
-        "Season number"
-    } else {
-        "Season number (fetched)"
-    };
-    let season_display = if app.input_active && app.episodes.is_empty() {
+    let season_active = app.season_field == 0;
+    let season_display = if season_active && app.input_active {
         format!("{}|", app.input_buffer)
     } else {
         app.season_num.map(|s| s.to_string()).unwrap_or_default()
     };
+    let season_style = if season_active { Style::default().fg(Color::Yellow) } else { Style::default() };
     let season_input = Paragraph::new(season_display)
-        .block(Block::default().borders(Borders::ALL).title(season_label));
+        .block(Block::default().borders(Borders::ALL).title("Season number").border_style(season_style));
     f.render_widget(season_input, content_chunks[0]);
 
-    // Start episode
+    // Start episode input
+    let start_active = app.season_field == 1;
     let disc_num = app.label_info.as_ref().map(|l| l.disc);
-    let guessed = app.start_episode.unwrap_or_else(|| {
-        guess_start_episode(disc_num, app.episodes_pl.len())
-    });
+    let guessed = guess_start_episode(disc_num, app.episodes_pl.len());
 
-    let start_display = if app.input_active && !app.episodes.is_empty() {
+    let start_display = if start_active && app.input_active {
         format!("{}|", app.input_buffer)
     } else {
-        guessed.to_string()
+        app.start_episode.unwrap_or(guessed).to_string()
     };
+    let start_style = if start_active { Style::default().fg(Color::Yellow) } else { Style::default() };
     let start_input = Paragraph::new(start_display)
-        .block(Block::default().borders(Borders::ALL).title(format!("Starting episode (guess: {})", guessed)));
+        .block(Block::default().borders(Borders::ALL).title(format!("Starting episode (guess: {})", guessed)).border_style(start_style));
     f.render_widget(start_input, content_chunks[1]);
 
     // Episode list preview
@@ -261,13 +265,18 @@ pub fn render_season_episode(f: &mut Frame, app: &App) {
                 format!("Season {}: {} episodes", app.season_num.unwrap_or(0), app.episodes.len())
             ));
         f.render_widget(list, content_chunks[2]);
+    } else if !app.status_message.is_empty() {
+        let msg = Paragraph::new(app.status_message.as_str())
+            .style(Style::default().fg(Color::Yellow))
+            .block(Block::default().borders(Borders::ALL).title("Episodes"));
+        f.render_widget(msg, content_chunks[2]);
     } else {
         let empty = Paragraph::new("Enter season number and press Enter to fetch episodes")
             .block(Block::default().borders(Borders::ALL).title("Episodes"));
         f.render_widget(empty, content_chunks[2]);
     }
 
-    let hints = Paragraph::new("Enter: Confirm | Esc: Back")
+    let hints = Paragraph::new("Tab: Switch field | Enter: Confirm/Fetch | Esc: Back")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
@@ -280,44 +289,65 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Backspace => { app.input_buffer.pop(); }
+        KeyCode::Tab | KeyCode::BackTab => {
+            // Save current field value before switching
+            if app.season_field == 0 {
+                if let Ok(s) = app.input_buffer.parse::<u32>() {
+                    app.season_num = Some(s);
+                }
+                // Switch to start episode field
+                app.season_field = 1;
+                let disc_num = app.label_info.as_ref().map(|l| l.disc);
+                let guessed = guess_start_episode(disc_num, app.episodes_pl.len());
+                app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
+            } else {
+                if let Ok(s) = app.input_buffer.parse::<u32>() {
+                    app.start_episode = Some(s);
+                }
+                // Switch to season field
+                app.season_field = 0;
+                app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
+            }
+        }
         KeyCode::Enter => {
-            if app.episodes.is_empty() {
-                // We're entering the season number
+            if app.season_field == 0 {
+                // Entering season number — fetch episodes
                 let season: u32 = match app.input_buffer.parse() {
-                    Ok(s) if s > 0 => s,
+                    Ok(s) => s,
                     _ => return,
                 };
                 app.season_num = Some(season);
 
-                // Fetch episodes
                 let show_id = app.selected_show
                     .and_then(|i| app.search_results.get(i))
                     .map(|s| s.id);
 
                 if let (Some(show_id), Some(ref api_key)) = (show_id, app.api_key.clone()) {
                     match tmdb::get_season(show_id, season, &api_key) {
-                        Ok(eps) => app.episodes = eps,
+                        Ok(eps) => {
+                            app.episodes = eps;
+                            app.status_message.clear();
+                        }
                         Err(e) => {
                             app.status_message = format!("Failed to fetch season: {}", e);
+                            app.episodes.clear();
                         }
                     }
                 }
 
-                // Pre-fill start episode guess
+                // Switch to start episode field
+                app.season_field = 1;
                 let disc_num = app.label_info.as_ref().map(|l| l.disc);
-                let guessed = app.start_episode.unwrap_or_else(|| {
-                    guess_start_episode(disc_num, app.episodes_pl.len())
-                });
-                app.input_buffer = guessed.to_string();
+                let guessed = guess_start_episode(disc_num, app.episodes_pl.len());
+                app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
             } else {
-                // We're entering the starting episode number
+                // Entering start episode — confirm and proceed
                 let start_ep: u32 = match app.input_buffer.parse() {
                     Ok(s) if s > 0 => s,
                     _ => return,
                 };
                 app.start_episode = Some(start_ep);
 
-                // Assign episodes to playlists
                 app.episode_assignments = assign_episodes(
                     &app.episodes_pl,
                     &app.episodes,
@@ -326,6 +356,7 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
 
                 app.input_active = false;
                 app.input_buffer.clear();
+                app.season_field = 0;
                 app.list_cursor = 0;
                 app.screen = Screen::PlaylistSelect;
             }
@@ -333,6 +364,7 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.episodes.clear();
             app.input_buffer.clear();
+            app.season_field = 0;
             app.list_cursor = 0;
             app.input_active = false;
             app.screen = Screen::ShowSelect;

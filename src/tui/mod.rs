@@ -55,6 +55,8 @@ pub struct App {
     // Text input
     pub input_buffer: String,
     pub input_active: bool,
+    /// 0 = editing season, 1 = editing start episode
+    pub season_field: u8,
 
     // Rip state
     pub rip_jobs: Vec<RipJob>,
@@ -91,6 +93,7 @@ impl App {
             list_cursor: 0,
             input_buffer: String::new(),
             input_active: false,
+            season_field: 0,
             rip_jobs: Vec::new(),
             current_rip: 0,
             rip_child: None,
