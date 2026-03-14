@@ -46,6 +46,14 @@ pub struct Args {
     /// Plain text mode (auto if not a TTY)
     #[arg(long)]
     no_tui: bool,
+
+    /// Custom filename template
+    #[arg(long, group = "format_group")]
+    format: Option<String>,
+
+    /// Use a built-in filename preset (default, plex, jellyfin)
+    #[arg(long, group = "format_group")]
+    format_preset: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -53,12 +61,13 @@ fn main() -> anyhow::Result<()> {
 
     disc::check_dependencies()?;
 
+    let config = config::load_config();
     let use_tui = !args.no_tui && atty_stdout();
 
     if use_tui {
-        tui::run(&args)
+        tui::run(&args, &config)
     } else {
-        cli::run(&args)
+        cli::run(&args, &config)
     }
 }
 
