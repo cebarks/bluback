@@ -75,6 +75,11 @@ def scan_playlists(device: str) -> list[dict]:
     return playlists
 
 
+def filter_episodes(playlists: list[dict], min_duration: int = 900) -> list[dict]:
+    """Filter playlists to only those likely to be episodes (above min_duration seconds)."""
+    return [pl for pl in playlists if pl["seconds"] >= min_duration]
+
+
 def probe_streams(device: str, playlist_num: str) -> dict:
     result = subprocess.run(
         ["ffprobe", "-playlist", playlist_num, "-i", f"bluray:{device}"],

@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label
+from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label, filter_episodes
 
 
 class TestDurationToSeconds:
@@ -55,3 +55,32 @@ class TestParseVolumeLabel:
     def test_show_with_underscores_before_season(self):
         result = parse_volume_label("THE_WIRE_S3D1")
         assert result == {"show": "THE WIRE", "season": 3, "disc": 1}
+
+
+class TestFilterEpisodes:
+    def test_filters_short_playlists(self):
+        playlists = [
+            {"num": "00001", "duration": "0:00:30", "seconds": 30},
+            {"num": "00002", "duration": "0:43:00", "seconds": 2580},
+            {"num": "00003", "duration": "0:44:00", "seconds": 2640},
+            {"num": "00004", "duration": "0:02:00", "seconds": 120},
+        ]
+        result = filter_episodes(playlists, min_duration=900)
+        assert len(result) == 2
+        assert result[0]["num"] == "00002"
+        assert result[1]["num"] == "00003"
+
+    def test_all_long(self):
+        playlists = [
+            {"num": "00001", "duration": "0:43:00", "seconds": 2580},
+            {"num": "00002", "duration": "0:44:00", "seconds": 2640},
+        ]
+        result = filter_episodes(playlists, min_duration=900)
+        assert len(result) == 2
+
+    def test_all_short(self):
+        playlists = [
+            {"num": "00001", "duration": "0:00:30", "seconds": 30},
+        ]
+        result = filter_episodes(playlists, min_duration=900)
+        assert len(result) == 0
