@@ -411,7 +411,8 @@ def main():
 
     # Select playlists
     while True:
-        selection = input("Select playlists to rip (e.g. 1,2,3 or 1-3 or 'all'): ").strip()
+        selection = input("Select playlists to rip (e.g. 1,2,3 or 1-3 or 'all') [all]: ").strip()
+        selection = selection or "all"
         selected = parse_selection(selection, len(episodes_pl))
         if selected is not None:
             break
@@ -420,19 +421,31 @@ def main():
     # Name each playlist
     print()
     outfiles = []
+    default_names = []
     for idx in selected:
         pl = episodes_pl[idx]
         ep = episode_assignments.get(pl["num"])
 
         if ep and season_num is not None:
-            default_name = f"S{season_num:02d}E{ep['episode_number']:02d}_{sanitize_filename(ep['name'])}"
+            default_names.append(f"S{season_num:02d}E{ep['episode_number']:02d}_{sanitize_filename(ep['name'])}")
         else:
-            default_name = f"playlist{pl['num']}"
+            default_names.append(f"playlist{pl['num']}")
 
-        name = input(f"  Name for playlist {pl['num']} ({pl['duration']}) [{default_name}]: ").strip()
-        name = name or default_name
-        name = sanitize_filename(name)
-        outfiles.append(Path(outdir) / f"{name}.mkv")
+    print("  Output filenames:")
+    for i, idx in enumerate(selected):
+        pl = episodes_pl[idx]
+        print(f"    {pl['num']} ({pl['duration']}) -> {default_names[i]}.mkv")
+
+    customize = input("\n  Customize filenames? [y/N]: ").strip().lower()
+    if customize in ("y", "yes"):
+        for i, idx in enumerate(selected):
+            pl = episodes_pl[idx]
+            name = input(f"  Name for playlist {pl['num']} [{default_names[i]}]: ").strip()
+            name = sanitize_filename(name) if name else default_names[i]
+            outfiles.append(Path(outdir) / f"{name}.mkv")
+    else:
+        for name in default_names:
+            outfiles.append(Path(outdir) / f"{name}.mkv")
 
     # Dry run
     if args.dry_run:
