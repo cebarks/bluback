@@ -69,4 +69,84 @@ pub struct RipJob {
     pub status: PlaylistStatus,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MediaInfo {
+    pub resolution: String,
+    pub width: u32,
+    pub height: u32,
+    pub codec: String,
+    pub hdr: String,
+    pub aspect_ratio: String,
+    pub framerate: String,
+    pub bit_depth: String,
+    pub profile: String,
+    pub audio: String,
+    pub channels: String,
+    pub audio_lang: String,
+}
+
+impl MediaInfo {
+    pub fn to_vars(&self) -> std::collections::HashMap<&str, String> {
+        let mut m = std::collections::HashMap::new();
+        m.insert("resolution", self.resolution.clone());
+        m.insert("width", if self.width > 0 { self.width.to_string() } else { String::new() });
+        m.insert("height", if self.height > 0 { self.height.to_string() } else { String::new() });
+        m.insert("codec", self.codec.clone());
+        m.insert("hdr", self.hdr.clone());
+        m.insert("aspect_ratio", self.aspect_ratio.clone());
+        m.insert("framerate", self.framerate.clone());
+        m.insert("bit_depth", self.bit_depth.clone());
+        m.insert("profile", self.profile.clone());
+        m.insert("audio", self.audio.clone());
+        m.insert("channels", self.channels.clone());
+        m.insert("audio_lang", self.audio_lang.clone());
+        m
+    }
+}
+
 pub type EpisodeAssignments = HashMap<String, Episode>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_media_info_to_vars_all_fields() {
+        let info = MediaInfo {
+            resolution: "1080p".into(),
+            width: 1920,
+            height: 1080,
+            codec: "hevc".into(),
+            hdr: "HDR10".into(),
+            aspect_ratio: "16:9".into(),
+            framerate: "23.976".into(),
+            bit_depth: "10".into(),
+            profile: "Main 10".into(),
+            audio: "truehd".into(),
+            channels: "7.1".into(),
+            audio_lang: "eng".into(),
+        };
+        let vars = info.to_vars();
+        assert_eq!(vars["resolution"], "1080p");
+        assert_eq!(vars["width"], "1920");
+        assert_eq!(vars["height"], "1080");
+        assert_eq!(vars["codec"], "hevc");
+        assert_eq!(vars["hdr"], "HDR10");
+        assert_eq!(vars["aspect_ratio"], "16:9");
+        assert_eq!(vars["framerate"], "23.976");
+        assert_eq!(vars["bit_depth"], "10");
+        assert_eq!(vars["profile"], "Main 10");
+        assert_eq!(vars["audio"], "truehd");
+        assert_eq!(vars["channels"], "7.1");
+        assert_eq!(vars["audio_lang"], "eng");
+    }
+
+    #[test]
+    fn test_media_info_default_is_empty() {
+        let info = MediaInfo::default();
+        let vars = info.to_vars();
+        assert_eq!(vars["resolution"], "");
+        assert_eq!(vars["codec"], "");
+        assert_eq!(vars["hdr"], "");
+    }
+}
