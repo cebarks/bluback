@@ -2,19 +2,22 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::LazyLock;
 
 use crate::types::{RipProgress, StreamInfo};
 use crate::util::duration_to_seconds;
+
+static SURROUND_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"5\.1|7\.1|surround").unwrap());
 
 pub fn build_map_args(streams: &StreamInfo) -> Vec<String> {
     let mut args = vec!["-map".into(), "0:v:0".into()];
 
     let mut surround_idx: Option<usize> = None;
     let mut stereo_idx: Option<usize> = None;
-    let surround_re = Regex::new(r"5\.1|7\.1|surround").unwrap();
 
     for (i, line) in streams.audio_streams.iter().enumerate() {
-        if surround_re.is_match(line) && surround_idx.is_none() {
+        if SURROUND_RE.is_match(line) && surround_idx.is_none() {
             surround_idx = Some(i);
         }
         if line.contains("stereo") && stereo_idx.is_none() {

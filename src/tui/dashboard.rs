@@ -2,8 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
 use std::io::BufRead;
-use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 use super::{App, Screen};
@@ -228,7 +227,9 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
             let job = &app.rip_jobs[idx];
             let device = app.args.device.to_string_lossy().to_string();
             let playlist_num = job.playlist.num.clone();
-            let outfile = PathBuf::from(&job.filename);
+            let outfile = app.args.output.join(&job.filename);
+
+            std::fs::create_dir_all(&app.args.output).ok();
 
             let streams = disc::probe_streams(&device, &playlist_num);
             let map_args = match streams {
@@ -250,8 +251,26 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
                             }
                         }
                     });
+
+                    let stderr = child.stderr.take().expect("stderr piped");
+                    let stderr_buf = Arc::new(Mutex::new(String::new()));
+                    let stderr_clone = stderr_buf.clone();
+                    thread::spawn(move || {
+                        let reader = std::io::BufReader::new(stderr);
+                        for line in reader.lines() {
+                            if let Ok(line) = line {
+                                let mut buf = stderr_clone.lock().unwrap();
+                                if !buf.is_empty() {
+                                    buf.push('\n');
+                                }
+                                buf.push_str(&line);
+                            }
+                        }
+                    });
+
                     app.rip_child = Some(child);
                     app.progress_rx = Some(rx);
+                    app.stderr_buffer = Some(stderr_buf);
                     app.progress_state.clear();
                     app.rip_jobs[idx].status =
                         PlaylistStatus::Ripping(crate::types::RipProgress::default());
@@ -281,16 +300,27 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
             Ok(Some(status)) => {
                 let idx = app.current_rip;
                 if status.success() {
-                    let file_size = std::fs::metadata(&app.rip_jobs[idx].filename)
+                    let outfile = app.args.output.join(&app.rip_jobs[idx].filename);
+                    let file_size = std::fs::metadata(&outfile)
                         .map(|m| m.len())
                         .unwrap_or(0);
                     app.rip_jobs[idx].status = PlaylistStatus::Done(file_size);
                 } else {
-                    let msg = format!("ffmpeg exited with code {}", status);
+                    let stderr_msg = app.stderr_buffer.as_ref()
+                        .and_then(|b| b.lock().ok())
+                        .map(|b| b.clone())
+                        .unwrap_or_default();
+                    let msg = if stderr_msg.is_empty() {
+                        format!("ffmpeg exited with code {}", status)
+                    } else {
+                        let last_line = stderr_msg.lines().last().unwrap_or("");
+                        format!("ffmpeg: {}", last_line)
+                    };
                     app.rip_jobs[idx].status = PlaylistStatus::Failed(msg);
                 }
                 app.rip_child = None;
                 app.progress_rx = None;
+                app.stderr_buffer = None;
             }
             Ok(None) => {} // still running
             Err(e) => {
@@ -298,6 +328,7 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
                 app.rip_jobs[idx].status = PlaylistStatus::Failed(format!("wait error: {}", e));
                 app.rip_child = None;
                 app.progress_rx = None;
+                app.stderr_buffer = None;
             }
         }
     }

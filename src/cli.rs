@@ -220,6 +220,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         let mut child = rip::start_rip(&device, &pl.num, &map_args, outfile)?;
 
         let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take();
         let reader = io::BufReader::new(stdout);
         let mut state = HashMap::new();
 
@@ -253,10 +254,22 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         println!();
 
         if !status.success() {
-            println!(
-                "Error: ffmpeg exited with code {}",
-                status.code().unwrap_or(-1)
-            );
+            let stderr_msg = stderr
+                .and_then(|mut s| {
+                    let mut buf = String::new();
+                    io::Read::read_to_string(&mut s, &mut buf).ok()?;
+                    Some(buf)
+                })
+                .unwrap_or_default();
+            if stderr_msg.is_empty() {
+                println!(
+                    "Error: ffmpeg exited with code {}",
+                    status.code().unwrap_or(-1)
+                );
+            } else {
+                let last_line = stderr_msg.lines().last().unwrap_or("");
+                println!("Error: ffmpeg: {}", last_line);
+            }
             continue;
         }
 

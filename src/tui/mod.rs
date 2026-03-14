@@ -8,7 +8,7 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use std::collections::HashMap;
 use std::io;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
 use crate::types::*;
@@ -64,6 +64,7 @@ pub struct App {
     pub rip_child: Option<std::process::Child>,
     pub progress_rx: Option<mpsc::Receiver<String>>,
     pub progress_state: HashMap<String, String>,
+    pub stderr_buffer: Option<Arc<Mutex<String>>>,
     pub confirm_abort: bool,
 
     // Status/error messages
@@ -99,6 +100,7 @@ impl App {
             rip_child: None,
             progress_rx: None,
             progress_state: HashMap::new(),
+            stderr_buffer: None,
             confirm_abort: false,
             status_message: String::new(),
         }

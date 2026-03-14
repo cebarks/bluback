@@ -1,9 +1,18 @@
 use anyhow::{bail, Result};
 use regex::Regex;
 use std::process::Command;
+use std::sync::LazyLock;
 
 use crate::types::{LabelInfo, Playlist, StreamInfo};
 use crate::util::duration_to_seconds;
+
+static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| [
+    Regex::new(r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)").unwrap(),
+    Regex::new(r"(?i)^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)").unwrap(),
+]);
+
+static PLAYLIST_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").unwrap());
 
 pub fn check_dependencies() -> Result<()> {
     let mut missing = Vec::new();
@@ -40,12 +49,7 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
     if label.is_empty() {
         return None;
     }
-    let patterns = [
-        r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)",
-        r"(?i)^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)",
-    ];
-    for pat in &patterns {
-        let re = Regex::new(pat).unwrap();
+    for re in LABEL_PATTERNS.iter() {
         if let Some(caps) = re.captures(label) {
             let show = caps["show"].trim_matches('_').replace('_', " ");
             let season: u32 = caps["season"].parse().unwrap();
@@ -64,9 +68,8 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>> {
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + &String::from_utf8_lossy(&output.stderr);
 
-    let re = Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").unwrap();
     let mut playlists = Vec::new();
-    for caps in re.captures_iter(&text) {
+    for caps in PLAYLIST_RE.captures_iter(&text) {
         let num = caps[1].to_string();
         let duration = caps[2].to_string();
         let seconds = duration_to_seconds(&duration);
