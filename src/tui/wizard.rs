@@ -1,21 +1,537 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table};
 
-use super::App;
+use super::{App, Screen};
+use crate::tmdb;
+use crate::util::{assign_episodes, guess_start_episode, sanitize_filename};
 
-pub fn render_scanning(f: &mut Frame, app: &App) {
-    let text = ratatui::widgets::Paragraph::new(app.status_message.as_str());
-    f.render_widget(text, f.area());
+fn standard_layout(area: Rect) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(area)
 }
 
-pub fn render_tmdb_search(_f: &mut Frame, _app: &App) { todo!() }
-pub fn render_show_select(_f: &mut Frame, _app: &App) { todo!() }
-pub fn render_season_episode(_f: &mut Frame, _app: &App) { todo!() }
-pub fn render_playlist_select(_f: &mut Frame, _app: &App) { todo!() }
-pub fn render_confirm(_f: &mut Frame, _app: &App) { todo!() }
+pub fn render_scanning(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
 
-pub fn handle_tmdb_search_input(_app: &mut App, _key: KeyEvent) { todo!() }
-pub fn handle_show_select_input(_app: &mut App, _key: KeyEvent) { todo!() }
-pub fn handle_season_episode_input(_app: &mut App, _key: KeyEvent) { todo!() }
-pub fn handle_playlist_select_input(_app: &mut App, _key: KeyEvent) { todo!() }
-pub fn handle_confirm_input(_app: &mut App, _key: KeyEvent) { todo!() }
+    let title = Paragraph::new("bluback")
+        .block(Block::default().borders(Borders::ALL).title("Blu-ray Backup"));
+    f.render_widget(title, chunks[0]);
+
+    let body = Paragraph::new(app.status_message.as_str());
+    f.render_widget(body, chunks[1]);
+}
+
+pub fn render_tmdb_search(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
+
+    let title = Paragraph::new(format!(
+        "Disc: {}  |  {} episode-length playlists",
+        if app.label.is_empty() { "(no label)" } else { &app.label },
+        app.episodes_pl.len(),
+    ))
+    .block(Block::default().borders(Borders::ALL).title("Step 1: TMDb Search"));
+    f.render_widget(title, chunks[0]);
+
+    let input = Paragraph::new(format!("{}|", app.input_buffer))
+        .block(Block::default().borders(Borders::ALL).title("Search query"));
+    f.render_widget(input, chunks[1]);
+
+    let hints = Paragraph::new("Enter: Search | Esc: Skip TMDb | q: Quit")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
+}
+
+pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char(c) => app.input_buffer.push(c),
+        KeyCode::Backspace => { app.input_buffer.pop(); }
+        KeyCode::Enter => {
+            let query = app.input_buffer.trim().to_string();
+            if query.is_empty() {
+                return;
+            }
+            if let Some(ref api_key) = app.api_key.clone() {
+                match tmdb::search_show(&query, api_key) {
+                    Ok(results) => {
+                        if results.is_empty() {
+                            app.status_message = "No results found.".into();
+                        } else {
+                            app.search_results = results;
+                            app.list_cursor = 0;
+                            app.input_active = false;
+                            app.screen = Screen::ShowSelect;
+                        }
+                    }
+                    Err(e) => {
+                        app.status_message = format!("TMDb search failed: {}", e);
+                    }
+                }
+            }
+        }
+        KeyCode::Esc => {
+            app.input_active = false;
+            app.list_cursor = 0;
+            app.screen = Screen::PlaylistSelect;
+        }
+        _ => {}
+    }
+}
+
+pub fn render_show_select(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
+
+    let title = Paragraph::new("Select a show from the search results")
+        .block(Block::default().borders(Borders::ALL).title("Step 2: Select Show"));
+    f.render_widget(title, chunks[0]);
+
+    let items: Vec<ListItem> = app.search_results.iter().enumerate().map(|(i, show)| {
+        let year = show.first_air_date.as_deref()
+            .unwrap_or("")
+            .get(..4)
+            .unwrap_or("");
+        let marker = if i == app.list_cursor { "> " } else { "  " };
+        ListItem::new(format!("{}{} ({})", marker, show.name, year))
+    }).collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title("Results"))
+        .highlight_style(Style::default().fg(Color::Yellow));
+    f.render_widget(list, chunks[1]);
+
+    let hints = Paragraph::new("Up/Down: Navigate | Enter: Select | Esc: Back")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
+}
+
+pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Up => {
+            if app.list_cursor > 0 {
+                app.list_cursor -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.list_cursor + 1 < app.search_results.len() {
+                app.list_cursor += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if app.search_results.is_empty() {
+                return;
+            }
+            app.selected_show = Some(app.list_cursor);
+            let show = &app.search_results[app.list_cursor];
+
+            // If we already have a season number, fetch episodes immediately
+            if let Some(season) = app.season_num {
+                if let Some(ref api_key) = app.api_key.clone() {
+                    match tmdb::get_season(show.id, season, api_key) {
+                        Ok(eps) => {
+                            app.episodes = eps;
+                        }
+                        Err(e) => {
+                            app.status_message = format!("Failed to fetch season: {}", e);
+                            app.episodes.clear();
+                        }
+                    }
+                }
+            }
+
+            // Pre-fill season input buffer
+            app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
+            app.input_active = true;
+            app.list_cursor = 0;
+            app.screen = Screen::SeasonEpisode;
+        }
+        KeyCode::Esc => {
+            app.input_buffer = app.search_query.clone();
+            app.input_active = true;
+            app.list_cursor = 0;
+            app.screen = Screen::TmdbSearch;
+        }
+        _ => {}
+    }
+}
+
+pub fn render_season_episode(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
+
+    let show_name = app.selected_show
+        .and_then(|i| app.search_results.get(i))
+        .map(|s| s.name.as_str())
+        .unwrap_or("Unknown");
+
+    let title = Paragraph::new(format!("Show: {}", show_name))
+        .block(Block::default().borders(Borders::ALL).title("Step 3: Season & Starting Episode"));
+    f.render_widget(title, chunks[0]);
+
+    // Split content area into input section and episode list
+    let content_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // season input
+            Constraint::Length(3),  // start episode input
+            Constraint::Min(1),    // episode list
+        ])
+        .split(chunks[1]);
+
+    // Season input
+    let season_label = if app.episodes.is_empty() {
+        "Season number"
+    } else {
+        "Season number (fetched)"
+    };
+    let season_display = if app.input_active && app.episodes.is_empty() {
+        format!("{}|", app.input_buffer)
+    } else {
+        app.season_num.map(|s| s.to_string()).unwrap_or_default()
+    };
+    let season_input = Paragraph::new(season_display)
+        .block(Block::default().borders(Borders::ALL).title(season_label));
+    f.render_widget(season_input, content_chunks[0]);
+
+    // Start episode
+    let disc_num = app.label_info.as_ref().map(|l| l.disc);
+    let guessed = app.start_episode.unwrap_or_else(|| {
+        guess_start_episode(disc_num, app.episodes_pl.len())
+    });
+
+    let start_display = if app.input_active && !app.episodes.is_empty() {
+        format!("{}|", app.input_buffer)
+    } else {
+        guessed.to_string()
+    };
+    let start_input = Paragraph::new(start_display)
+        .block(Block::default().borders(Borders::ALL).title(format!("Starting episode (guess: {})", guessed)));
+    f.render_widget(start_input, content_chunks[1]);
+
+    // Episode list preview
+    if !app.episodes.is_empty() {
+        let items: Vec<ListItem> = app.episodes.iter().map(|ep| {
+            let runtime = ep.runtime.unwrap_or(0);
+            ListItem::new(format!("  E{:02} - {} ({} min)", ep.episode_number, ep.name, runtime))
+        }).collect();
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(
+                format!("Season {}: {} episodes", app.season_num.unwrap_or(0), app.episodes.len())
+            ));
+        f.render_widget(list, content_chunks[2]);
+    } else {
+        let empty = Paragraph::new("Enter season number and press Enter to fetch episodes")
+            .block(Block::default().borders(Borders::ALL).title("Episodes"));
+        f.render_widget(empty, content_chunks[2]);
+    }
+
+    let hints = Paragraph::new("Enter: Confirm | Esc: Back")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
+}
+
+pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char(c) => {
+            if c.is_ascii_digit() {
+                app.input_buffer.push(c);
+            }
+        }
+        KeyCode::Backspace => { app.input_buffer.pop(); }
+        KeyCode::Enter => {
+            if app.episodes.is_empty() {
+                // We're entering the season number
+                let season: u32 = match app.input_buffer.parse() {
+                    Ok(s) if s > 0 => s,
+                    _ => return,
+                };
+                app.season_num = Some(season);
+
+                // Fetch episodes
+                let show_id = app.selected_show
+                    .and_then(|i| app.search_results.get(i))
+                    .map(|s| s.id);
+
+                if let (Some(show_id), Some(ref api_key)) = (show_id, app.api_key.clone()) {
+                    match tmdb::get_season(show_id, season, &api_key) {
+                        Ok(eps) => app.episodes = eps,
+                        Err(e) => {
+                            app.status_message = format!("Failed to fetch season: {}", e);
+                        }
+                    }
+                }
+
+                // Pre-fill start episode guess
+                let disc_num = app.label_info.as_ref().map(|l| l.disc);
+                let guessed = app.start_episode.unwrap_or_else(|| {
+                    guess_start_episode(disc_num, app.episodes_pl.len())
+                });
+                app.input_buffer = guessed.to_string();
+            } else {
+                // We're entering the starting episode number
+                let start_ep: u32 = match app.input_buffer.parse() {
+                    Ok(s) if s > 0 => s,
+                    _ => return,
+                };
+                app.start_episode = Some(start_ep);
+
+                // Assign episodes to playlists
+                app.episode_assignments = assign_episodes(
+                    &app.episodes_pl,
+                    &app.episodes,
+                    start_ep,
+                );
+
+                app.input_active = false;
+                app.input_buffer.clear();
+                app.list_cursor = 0;
+                app.screen = Screen::PlaylistSelect;
+            }
+        }
+        KeyCode::Esc => {
+            app.episodes.clear();
+            app.input_buffer.clear();
+            app.list_cursor = 0;
+            app.input_active = false;
+            app.screen = Screen::ShowSelect;
+        }
+        _ => {}
+    }
+}
+
+pub fn render_playlist_select(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
+
+    let selected_count = app.playlist_selected.iter().filter(|&&s| s).count();
+    let title = Paragraph::new(format!(
+        "{} playlists ({} selected)",
+        app.episodes_pl.len(),
+        selected_count,
+    ))
+    .block(Block::default().borders(Borders::ALL).title("Step 4: Select Playlists"));
+    f.render_widget(title, chunks[0]);
+
+    let has_eps = !app.episode_assignments.is_empty();
+    let header_cells = if has_eps {
+        vec!["", "#", "Playlist", "Duration", "Episode", "Filename"]
+    } else {
+        vec!["", "#", "Playlist", "Duration", "Filename"]
+    };
+    let header = Row::new(header_cells).style(Style::default().fg(Color::Yellow));
+
+    let rows: Vec<Row> = app.episodes_pl.iter().enumerate().map(|(i, pl)| {
+        let checked = if app.playlist_selected.get(i).copied().unwrap_or(false) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let cursor = if i == app.list_cursor { ">" } else { " " };
+        let marker = format!("{} {}", cursor, checked);
+
+        let ep_info = if let Some(ep) = app.episode_assignments.get(&pl.num) {
+            format!("S{:02}E{:02} - {}", app.season_num.unwrap_or(0), ep.episode_number, ep.name)
+        } else {
+            String::new()
+        };
+
+        let filename = if let Some(ep) = app.episode_assignments.get(&pl.num) {
+            format!("S{:02}E{:02}_{}.mkv",
+                app.season_num.unwrap_or(0),
+                ep.episode_number,
+                sanitize_filename(&ep.name)
+            )
+        } else {
+            format!("playlist{}.mkv", pl.num)
+        };
+
+        if has_eps {
+            Row::new(vec![
+                marker,
+                format!("{}", i + 1),
+                pl.num.clone(),
+                pl.duration.clone(),
+                ep_info,
+                filename,
+            ])
+        } else {
+            Row::new(vec![
+                marker,
+                format!("{}", i + 1),
+                pl.num.clone(),
+                pl.duration.clone(),
+                filename,
+            ])
+        }
+    }).collect();
+
+    let widths = if has_eps {
+        vec![
+            Constraint::Length(6),
+            Constraint::Length(4),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Min(20),
+            Constraint::Min(20),
+        ]
+    } else {
+        vec![
+            Constraint::Length(6),
+            Constraint::Length(4),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Min(20),
+        ]
+    };
+
+    let table = Table::new(rows, &widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(table, chunks[1]);
+
+    let hints = Paragraph::new("Space: Toggle | Up/Down: Navigate | Enter: Confirm | Esc: Back")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
+}
+
+pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Up => {
+            if app.list_cursor > 0 {
+                app.list_cursor -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.list_cursor + 1 < app.episodes_pl.len() {
+                app.list_cursor += 1;
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(sel) = app.playlist_selected.get_mut(app.list_cursor) {
+                *sel = !*sel;
+            }
+        }
+        KeyCode::Enter => {
+            // Generate filenames for selected playlists
+            app.filenames.clear();
+            for (i, pl) in app.episodes_pl.iter().enumerate() {
+                if !app.playlist_selected.get(i).copied().unwrap_or(false) {
+                    continue;
+                }
+                let name = if let Some(ep) = app.episode_assignments.get(&pl.num) {
+                    format!("S{:02}E{:02}_{}.mkv",
+                        app.season_num.unwrap_or(0),
+                        ep.episode_number,
+                        sanitize_filename(&ep.name)
+                    )
+                } else {
+                    format!("playlist{}.mkv", pl.num)
+                };
+                app.filenames.push(name);
+            }
+
+            if app.filenames.is_empty() {
+                app.status_message = "No playlists selected.".into();
+                return;
+            }
+
+            app.list_cursor = 0;
+            app.screen = Screen::Confirm;
+        }
+        KeyCode::Esc => {
+            app.list_cursor = 0;
+            if !app.episode_assignments.is_empty() {
+                // Go back to season/episode if TMDb was used
+                app.input_active = true;
+                let disc_num = app.label_info.as_ref().map(|l| l.disc);
+                let guessed = app.start_episode.unwrap_or_else(|| {
+                    guess_start_episode(disc_num, app.episodes_pl.len())
+                });
+                app.input_buffer = guessed.to_string();
+                app.screen = Screen::SeasonEpisode;
+            } else {
+                app.input_active = true;
+                app.input_buffer = app.search_query.clone();
+                app.screen = Screen::TmdbSearch;
+            }
+        }
+        _ => {}
+    }
+}
+
+pub fn render_confirm(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
+
+    let title = Paragraph::new(format!(
+        "Ready to rip {} playlist(s) to {}",
+        app.filenames.len(),
+        app.args.output.display(),
+    ))
+    .block(Block::default().borders(Borders::ALL).title("Step 5: Confirm"));
+    f.render_widget(title, chunks[0]);
+
+    let header = Row::new(vec!["Playlist", "Duration", "Output File"])
+        .style(Style::default().fg(Color::Yellow));
+
+    let selected_playlists: Vec<&crate::types::Playlist> = app.episodes_pl.iter()
+        .enumerate()
+        .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
+        .map(|(_, pl)| pl)
+        .collect();
+
+    let rows: Vec<Row> = selected_playlists.iter().zip(app.filenames.iter()).map(|(pl, name)| {
+        Row::new(vec![pl.num.clone(), pl.duration.clone(), name.clone()])
+    }).collect();
+
+    let widths = [
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Min(30),
+    ];
+
+    let table = Table::new(rows, &widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title("Summary"));
+    f.render_widget(table, chunks[1]);
+
+    let hints = Paragraph::new("Enter: Start Ripping | Esc: Back")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
+}
+
+pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Enter => {
+            // Build RipJobs from selected playlists and filenames
+            app.rip_jobs.clear();
+
+            let selected_playlists: Vec<crate::types::Playlist> = app.episodes_pl.iter()
+                .enumerate()
+                .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
+                .map(|(_, pl)| pl.clone())
+                .collect();
+
+            for (pl, filename) in selected_playlists.into_iter().zip(app.filenames.iter()) {
+                let episode = app.episode_assignments.get(&pl.num).cloned();
+                app.rip_jobs.push(crate::types::RipJob {
+                    playlist: pl,
+                    episode,
+                    filename: filename.clone(),
+                    status: crate::types::PlaylistStatus::Pending,
+                });
+            }
+
+            app.current_rip = 0;
+            app.screen = Screen::Ripping;
+        }
+        KeyCode::Esc => {
+            app.list_cursor = 0;
+            app.screen = Screen::PlaylistSelect;
+        }
+        _ => {}
+    }
+}
