@@ -27,6 +27,83 @@ pub fn sanitize_filename(name: &str) -> String {
     cleaned.replace(' ', "_")
 }
 
+const UNSAFE_PATH_CHARS: &[char] = &['/', '<', '>', ':', '"', '|', '?', '*', '\\'];
+
+pub fn sanitize_path_component(name: &str) -> String {
+    if name == ".." {
+        return String::new();
+    }
+    name.chars()
+        .filter(|c| !UNSAFE_PATH_CHARS.contains(c) && *c != '\0')
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+pub fn render_template(template: &str, vars: &HashMap<&str, String>) -> String {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    static PLACEHOLDER_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\{([a-z_]+)\}").unwrap());
+    static EMPTY_BRACKET_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\[[^\[\]]*\]").unwrap());
+    static MULTI_SPACE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r" {2,}").unwrap());
+    static SPACE_BEFORE_DOT_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r" +\.").unwrap());
+
+    // 1. Substitute placeholders
+    let result = PLACEHOLDER_RE.replace_all(template, |caps: &regex::Captures| {
+        let key = &caps[1];
+        match vars.get(key) {
+            Some(val) => val.clone(),
+            None => caps[0].to_string(),
+        }
+    });
+    let mut result = result.to_string();
+
+    // 2. Bracket cleanup: remove bracket groups whose contents are empty/whitespace/hyphens
+    // TODO(debt): This hardcodes "Bluray-" as a known filler prefix. Custom templates with
+    // other prefixes inside brackets would leave stale prefix text when placeholders are empty.
+    loop {
+        let cleaned = EMPTY_BRACKET_RE.replace_all(&result, |caps: &regex::Captures| {
+            let full = &caps[0];
+            let content = &full[1..full.len() - 1];
+            let stripped = content.replace("Bluray-", "").replace("Bluray", "");
+            if stripped.trim().is_empty()
+                || stripped.trim_matches(|c: char| c == '-' || c == ' ').is_empty()
+            {
+                String::new()
+            } else {
+                full.to_string()
+            }
+        });
+        // Also clean up double spaces after bracket removal
+        let cleaned = MULTI_SPACE_RE.replace_all(&cleaned, " ").to_string();
+        if cleaned == result {
+            break;
+        }
+        result = cleaned;
+    }
+
+    // 3. Clean up spaces before dots (e.g., " .mkv" -> ".mkv")
+    result = SPACE_BEFORE_DOT_RE.replace_all(&result, ".").to_string();
+
+    // 4. Trim
+    result = result.trim().to_string();
+
+    // 5. Sanitize per path component (preserve /)
+    result = result
+        .split('/')
+        .map(|component| sanitize_path_component(component))
+        .filter(|c| !c.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+
+    result
+}
+
 pub fn parse_selection(text: &str, max_val: usize) -> Option<Vec<usize>> {
     let text = text.trim();
     if text.is_empty() {
@@ -358,5 +435,116 @@ mod tests {
     #[test]
     fn test_make_filename_no_episode() {
         assert_eq!(make_filename("00042", None, 1), "playlist00042.mkv");
+    }
+
+    #[test]
+    fn test_sanitize_path_component_preserves_spaces() {
+        assert_eq!(sanitize_path_component("Hello World"), "Hello World");
+    }
+
+    #[test]
+    fn test_sanitize_path_component_strips_unsafe() {
+        assert_eq!(sanitize_path_component("foo/bar:baz\"qux"), "foobarbazqux");
+    }
+
+    #[test]
+    fn test_sanitize_path_component_strips_backslash_and_null() {
+        assert_eq!(sanitize_path_component("test\\path\0here"), "testpathhere");
+    }
+
+    #[test]
+    fn test_sanitize_path_component_strips_dotdot() {
+        assert_eq!(sanitize_path_component(".."), "");
+    }
+
+    #[test]
+    fn test_render_template_basic() {
+        let mut vars = HashMap::new();
+        vars.insert("show", "Stargate Universe".to_string());
+        vars.insert("season", "01".to_string());
+        vars.insert("episode", "03".to_string());
+        vars.insert("title", "Air (Part 1)".to_string());
+        assert_eq!(
+            render_template("S{season}E{episode}_{title}.mkv", &vars),
+            "S01E03_Air (Part 1).mkv"
+        );
+    }
+
+    #[test]
+    fn test_render_template_with_subdirs() {
+        let mut vars = HashMap::new();
+        vars.insert("show", "Test Show".to_string());
+        vars.insert("season", "02".to_string());
+        vars.insert("episode", "05".to_string());
+        vars.insert("title", "Ep Name".to_string());
+        assert_eq!(
+            render_template("{show}/Season {season}/S{season}E{episode} - {title}.mkv", &vars),
+            "Test Show/Season 02/S02E05 - Ep Name.mkv"
+        );
+    }
+
+    #[test]
+    fn test_render_template_unknown_placeholder_preserved() {
+        let vars = HashMap::new();
+        assert_eq!(
+            render_template("{foo}_{bar}.mkv", &vars),
+            "{foo}_{bar}.mkv"
+        );
+    }
+
+    #[test]
+    fn test_render_template_empty_values_bracket_cleanup() {
+        let mut vars = HashMap::new();
+        vars.insert("resolution", "1080p".to_string());
+        vars.insert("audio", String::new());
+        vars.insert("channels", String::new());
+        vars.insert("codec", "hevc".to_string());
+        assert_eq!(
+            render_template("Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv", &vars),
+            "Movie [Bluray-1080p][hevc].mkv"
+        );
+    }
+
+    #[test]
+    fn test_render_template_all_brackets_empty() {
+        let mut vars = HashMap::new();
+        vars.insert("resolution", String::new());
+        vars.insert("audio", String::new());
+        vars.insert("channels", String::new());
+        vars.insert("codec", String::new());
+        assert_eq!(
+            render_template("Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv", &vars),
+            "Movie.mkv"
+        );
+    }
+
+    #[test]
+    fn test_render_template_unsafe_chars_in_values() {
+        let mut vars = HashMap::new();
+        vars.insert("title", "Spider-Man: No Way Home".to_string());
+        assert_eq!(
+            render_template("{title}.mkv", &vars),
+            "Spider-Man No Way Home.mkv"
+        );
+    }
+
+    #[test]
+    fn test_render_template_path_traversal_stripped() {
+        let mut vars = HashMap::new();
+        vars.insert("show", "../../etc".to_string());
+        vars.insert("title", "passwd".to_string());
+        let result = render_template("{show}/{title}.mkv", &vars);
+        assert!(!result.contains(".."));
+    }
+
+    #[test]
+    fn test_render_template_double_space_cleanup() {
+        let mut vars = HashMap::new();
+        vars.insert("title", "Test".to_string());
+        vars.insert("codec", String::new());
+        assert_eq!(
+            render_template("{title} [{codec}] end.mkv", &vars),
+            "Test end.mkv"
+        );
     }
 }
