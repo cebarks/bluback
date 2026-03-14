@@ -70,6 +70,10 @@ pub struct App {
     pub stderr_buffer: Option<Arc<Mutex<String>>>,
     pub confirm_abort: bool,
 
+    // Config
+    pub config: crate::config::Config,
+    pub show_name: String,
+
     // Status/error messages
     pub status_message: String,
 }
@@ -108,6 +112,8 @@ impl App {
             progress_state: HashMap::new(),
             stderr_buffer: None,
             confirm_abort: false,
+            config: crate::config::Config::default(),
+            show_name: String::new(),
             status_message: String::new(),
         }
     }
@@ -129,6 +135,7 @@ pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, config: &crate::config::Config) -> Result<()> {
     let mut app = App::new(args.clone());
+    app.config = config.clone();
 
     // Initial scan (blocking -- runs before event loop)
     app.status_message = format!("Scanning disc at {}...", args.device.display());

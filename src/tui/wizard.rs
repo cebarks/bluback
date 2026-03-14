@@ -6,8 +6,33 @@ use super::{App, Screen};
 use crate::tmdb;
 use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename};
 
-fn playlist_filename(app: &App, playlist_index: usize) -> String {
+fn playlist_filename(app: &App, playlist_index: usize, media_info: Option<&crate::types::MediaInfo>) -> String {
     let pl = &app.episodes_pl[playlist_index];
+
+    let format_template = app.config.resolve_format(
+        app.movie_mode,
+        app.args.format.as_deref(),
+        app.args.format_preset.as_deref(),
+    );
+    let use_custom = app.args.format.is_some()
+        || app.args.format_preset.is_some()
+        || app.config.tv_format.is_some()
+        || app.config.movie_format.is_some()
+        || app.config.preset.is_some();
+    let fmt = if use_custom { Some(format_template.as_str()) } else { None };
+
+    // Build extra vars
+    let mut extra: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+    let show_name = if !app.show_name.is_empty() {
+        app.show_name.clone()
+    } else {
+        app.label_info.as_ref().map(|l| l.show.clone()).unwrap_or_else(|| "Unknown".to_string())
+    };
+    extra.insert("show", show_name);
+    extra.insert("disc", app.label_info.as_ref().map(|l| l.disc.to_string()).unwrap_or_default());
+    extra.insert("label", app.label.clone());
+    extra.insert("playlist", pl.num.clone());
+
     if app.movie_mode {
         let movie = app.selected_movie.and_then(|i| app.movie_results.get(i));
         let title = movie.map(|m| m.title.as_str()).unwrap_or("movie");
@@ -20,15 +45,15 @@ fn playlist_filename(app: &App, playlist_index: usize) -> String {
         } else {
             None
         };
-        make_movie_filename(title, year, part, None, None, None)
+        make_movie_filename(title, year, part, fmt, media_info, Some(&extra))
     } else {
         make_filename(
             &pl.num,
             app.episode_assignments.get(&pl.num),
             app.season_num.unwrap_or(0),
-            None,
-            None,
-            None,
+            fmt,
+            media_info,
+            Some(&extra),
         )
     }
 }
@@ -249,12 +274,14 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
 
             if app.movie_mode {
                 app.selected_movie = Some(app.list_cursor);
+                app.show_name = app.movie_results[app.list_cursor].title.clone();
                 app.input_active = false;
                 app.list_cursor = 0;
                 app.screen = Screen::PlaylistSelect;
             } else {
                 app.selected_show = Some(app.list_cursor);
                 let show = &app.search_results[app.list_cursor];
+                app.show_name = show.name.clone();
 
                 // If we already have a season number, fetch episodes immediately
                 if let Some(season) = app.season_num {
@@ -414,7 +441,7 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                     .map(|s| s.id);
 
                 if let (Some(show_id), Some(ref api_key)) = (show_id, app.api_key.clone()) {
-                    match tmdb::get_season(show_id, season, &api_key) {
+                    match tmdb::get_season(show_id, season, api_key) {
                         Ok(eps) => {
                             app.episodes = eps;
                             app.status_message.clear();
@@ -501,7 +528,7 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
             String::new()
         };
 
-        let filename = playlist_filename(app, i);
+        let filename = playlist_filename(app, i, None);
 
         if has_eps {
             Row::new(vec![
@@ -570,13 +597,15 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            // Generate filenames for selected playlists
+            // Generate filenames for selected playlists, probing media info
             app.filenames.clear();
+            let device = app.args.device.to_string_lossy().to_string();
             for (i, _pl) in app.episodes_pl.iter().enumerate() {
                 if !app.playlist_selected.get(i).copied().unwrap_or(false) {
                     continue;
                 }
-                app.filenames.push(playlist_filename(app, i));
+                let media_info = crate::disc::probe_media_info(&device, &app.episodes_pl[i].num);
+                app.filenames.push(playlist_filename(app, i, media_info.as_ref()));
             }
 
             if app.filenames.is_empty() {

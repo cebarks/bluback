@@ -237,8 +237,9 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
             let device = app.args.device.to_string_lossy().to_string();
             let playlist_num = job.playlist.num.clone();
             let outfile = app.args.output.join(&job.filename);
-
-            std::fs::create_dir_all(&app.args.output).ok();
+            if let Some(parent) = outfile.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
 
             // Skip if output file already exists
             if outfile.exists() {
@@ -261,11 +262,9 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
                     let (tx, rx) = mpsc::channel();
                     thread::spawn(move || {
                         let reader = std::io::BufReader::new(stdout);
-                        for line in reader.lines() {
-                            if let Ok(line) = line {
-                                if tx.send(line).is_err() {
-                                    break;
-                                }
+                        for line in reader.lines().map_while(Result::ok) {
+                            if tx.send(line).is_err() {
+                                break;
                             }
                         }
                     });
@@ -275,14 +274,12 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
                     let stderr_clone = stderr_buf.clone();
                     thread::spawn(move || {
                         let reader = std::io::BufReader::new(stderr);
-                        for line in reader.lines() {
-                            if let Ok(line) = line {
-                                let mut buf = stderr_clone.lock().unwrap();
-                                if !buf.is_empty() {
-                                    buf.push('\n');
-                                }
-                                buf.push_str(&line);
+                        for line in reader.lines().map_while(Result::ok) {
+                            let mut buf = stderr_clone.lock().unwrap();
+                            if !buf.is_empty() {
+                                buf.push('\n');
                             }
+                            buf.push_str(&line);
                         }
                     });
 

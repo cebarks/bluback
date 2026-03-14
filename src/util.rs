@@ -96,7 +96,7 @@ pub fn render_template(template: &str, vars: &HashMap<&str, String>) -> String {
     // 5. Sanitize per path component (preserve /)
     result = result
         .split('/')
-        .map(|component| sanitize_path_component(component))
+        .map(sanitize_path_component)
         .filter(|c| !c.is_empty())
         .collect::<Vec<_>>()
         .join("/");
@@ -117,9 +117,7 @@ pub fn parse_selection(text: &str, max_val: usize) -> Option<Vec<usize>> {
     for part in text.split(',') {
         let part = part.trim();
         if part.contains('-') {
-            let mut split = part.splitn(2, '-');
-            let start_s = split.next()?;
-            let end_s = split.next()?;
+            let (start_s, end_s) = part.split_once('-')?;
             let start: usize = start_s.parse().ok()?;
             let end: usize = if end_s.is_empty() {
                 max_val

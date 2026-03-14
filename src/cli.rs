@@ -49,6 +49,7 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
     let mut episode_assignments: EpisodeAssignments = HashMap::new();
     let mut season_num: Option<u32> = args.season.or(label_info.as_ref().map(|l| l.season));
     let mut movie_title: Option<(String, String)> = None; // (title, year)
+    let mut tmdb_show_name_opt: Option<String> = None;
     let mut api_key = tmdb::get_api_key(config);
 
     if api_key.is_none() {
@@ -72,8 +73,9 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
 
             let cli_season = args.season.or(label_info.as_ref().map(|l| l.season));
 
-            if let Some((episodes, _show_id, sn)) = prompt_tmdb(key, default_query, cli_season)? {
+            if let Some((episodes, _show_id, sn, tmdb_show_name)) = prompt_tmdb(key, default_query, cli_season)? {
                 season_num = Some(sn);
+                tmdb_show_name_opt = Some(tmdb_show_name);
 
                 let disc_number = label_info.as_ref().map(|l| l.disc);
                 let default_start = args.start_episode.unwrap_or_else(|| {
@@ -146,13 +148,58 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
     };
 
     println!();
+
+    // Resolve filename format
+    let format_template = config.resolve_format(
+        movie_mode,
+        args.format.as_deref(),
+        args.format_preset.as_deref(),
+    );
+    let use_custom_format = args.format.is_some()
+        || args.format_preset.is_some()
+        || config.tv_format.is_some()
+        || config.movie_format.is_some()
+        || config.preset.is_some();
+
+    // Determine show name for {show} placeholder
+    let show_name_str = if movie_mode {
+        movie_title.as_ref().map(|(t, _)| t.clone()).unwrap_or_else(|| "Unknown".to_string())
+    } else {
+        tmdb_show_name_opt.clone().unwrap_or_else(|| {
+            label_info.as_ref().map(|l| l.show.clone()).unwrap_or_else(|| "Unknown".to_string())
+        })
+    };
+
     let default_names: Vec<String> = selected.iter().enumerate().map(|(sel_i, &idx)| {
         let pl = episodes_pl[idx];
+
+        let media_info = if use_custom_format {
+            disc::probe_media_info(&device, &pl.num)
+        } else {
+            None
+        };
+
+        let fmt = if use_custom_format { Some(format_template.as_str()) } else { None };
+
+        // Build extra vars per playlist
+        let mut extra_vars: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
+        extra_vars.insert("show", show_name_str.clone());
+        extra_vars.insert("disc", label_info.as_ref().map(|l| l.disc.to_string()).unwrap_or_default());
+        extra_vars.insert("label", label.clone());
+        extra_vars.insert("playlist", pl.num.clone());
+
         if let Some((ref title, ref year)) = movie_title {
             let part = if selected.len() > 1 { Some(sel_i as u32 + 1) } else { None };
-            util::make_movie_filename(title, year, part, None, None, None)
+            util::make_movie_filename(title, year, part, fmt, media_info.as_ref(), Some(&extra_vars))
         } else {
-            util::make_filename(&pl.num, episode_assignments.get(&pl.num), season_num.unwrap_or(0), None, None, None)
+            util::make_filename(
+                &pl.num,
+                episode_assignments.get(&pl.num),
+                season_num.unwrap_or(0),
+                fmt,
+                media_info.as_ref(),
+                Some(&extra_vars),
+            )
         }
     }).collect();
 
@@ -198,7 +245,12 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    std::fs::create_dir_all(&args.output)?;
+    // Create output directory and any template subdirectories
+    for outfile in &outfiles {
+        if let Some(parent) = outfile.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
 
     for (i, &idx) in selected.iter().enumerate() {
         let pl = episodes_pl[idx];
@@ -332,11 +384,12 @@ fn prompt_number(msg: &str, default: Option<u32>) -> io::Result<u32> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn prompt_tmdb(
     api_key: &str,
     default_query: &str,
     cli_season: Option<u32>,
-) -> anyhow::Result<Option<(Vec<Episode>, u64, u32)>> {
+) -> anyhow::Result<Option<(Vec<Episode>, u64, u32, String)>> {
     let hint = if default_query.is_empty() {
         String::new()
     } else {
@@ -424,7 +477,7 @@ fn prompt_tmdb(
         }
     }
 
-    Ok(Some((episodes, show_id, season_num)))
+    Ok(Some((episodes, show_id, season_num, show.name.clone())))
 }
 
 fn prompt_tmdb_movie(
