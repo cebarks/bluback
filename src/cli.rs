@@ -6,7 +6,7 @@ use crate::disc;
 use crate::rip;
 use crate::tmdb;
 use crate::types::*;
-use crate::util::*;
+use crate::util::{self, *};
 use crate::Args;
 
 pub fn run(args: &Args) -> anyhow::Result<()> {
@@ -41,8 +41,14 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         anyhow::bail!("No episode-length playlists found. Try lowering --min-duration.");
     }
 
+    let movie_mode = args.movie || (episodes_pl.len() == 1 && args.season.is_none());
+    if movie_mode && !args.movie {
+        println!("  (Single playlist detected — using movie mode. Use --season to force TV mode.)");
+    }
+
     let mut episode_assignments: EpisodeAssignments = HashMap::new();
     let mut season_num: Option<u32> = args.season.or(label_info.as_ref().map(|l| l.season));
+    let mut movie_title: Option<(String, String)> = None; // (title, year)
     let mut api_key = tmdb::get_api_key();
 
     if api_key.is_none() {
@@ -54,33 +60,38 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         }
     }
 
-    if api_key.is_none() && (args.season.is_some() || args.start_episode.is_some()) {
-        println!("Warning: --season/--start-episode require TMDb. Ignoring.");
-    }
-
     if let Some(ref key) = api_key {
         let default_query = label_info.as_ref().map(|l| l.show.as_str()).unwrap_or("");
-        let cli_season = args.season.or(label_info.as_ref().map(|l| l.season));
 
-        if let Some((episodes, _show_id, sn)) = prompt_tmdb(key, default_query, cli_season)? {
-            season_num = Some(sn);
+        if movie_mode {
+            movie_title = prompt_tmdb_movie(key, default_query)?;
+        } else {
+            if api_key.is_none() && (args.season.is_some() || args.start_episode.is_some()) {
+                println!("Warning: --season/--start-episode require TMDb. Ignoring.");
+            }
 
-            let disc_number = label_info.as_ref().map(|l| l.disc);
-            let default_start = args.start_episode.unwrap_or_else(|| {
-                guess_start_episode(disc_number, episodes_pl.len())
-            });
+            let cli_season = args.season.or(label_info.as_ref().map(|l| l.season));
 
-            let start_ep = if args.start_episode.is_none() {
-                prompt_number(
-                    &format!("  Starting episode number [{}]: ", default_start),
-                    Some(default_start),
-                )?
-            } else {
-                default_start
-            };
+            if let Some((episodes, _show_id, sn)) = prompt_tmdb(key, default_query, cli_season)? {
+                season_num = Some(sn);
 
-            let pl_owned: Vec<Playlist> = episodes_pl.iter().map(|p| (*p).clone()).collect();
-            episode_assignments = assign_episodes(&pl_owned, &episodes, start_ep);
+                let disc_number = label_info.as_ref().map(|l| l.disc);
+                let default_start = args.start_episode.unwrap_or_else(|| {
+                    guess_start_episode(disc_number, episodes_pl.len())
+                });
+
+                let start_ep = if args.start_episode.is_none() {
+                    prompt_number(
+                        &format!("  Starting episode number [{}]: ", default_start),
+                        Some(default_start),
+                    )?
+                } else {
+                    default_start
+                };
+
+                let pl_owned: Vec<Playlist> = episodes_pl.iter().map(|p| (*p).clone()).collect();
+                episode_assignments = assign_episodes(&pl_owned, &episodes, start_ep);
+            }
         }
     }
 
@@ -135,26 +146,20 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     };
 
     println!();
-    let mut default_names: Vec<String> = Vec::new();
-    for &idx in &selected {
+    let default_names: Vec<String> = selected.iter().enumerate().map(|(sel_i, &idx)| {
         let pl = episodes_pl[idx];
-        let name = if let Some(ep) = episode_assignments.get(&pl.num) {
-            format!(
-                "S{:02}E{:02}_{}",
-                season_num.unwrap_or(0),
-                ep.episode_number,
-                sanitize_filename(&ep.name)
-            )
+        if let Some((ref title, ref year)) = movie_title {
+            let part = if selected.len() > 1 { Some(sel_i as u32 + 1) } else { None };
+            util::make_movie_filename(title, year, part)
         } else {
-            format!("playlist{}", pl.num)
-        };
-        default_names.push(name);
-    }
+            util::make_filename(&pl.num, episode_assignments.get(&pl.num), season_num.unwrap_or(0))
+        }
+    }).collect();
 
     println!("  Output filenames:");
     for (i, &idx) in selected.iter().enumerate() {
         let pl = episodes_pl[idx];
-        println!("    {} ({}) -> {}.mkv", pl.num, pl.duration, default_names[i]);
+        println!("    {} ({}) -> {}", pl.num, pl.duration, default_names[i]);
     }
 
     let customize = prompt("\n  Customize filenames? [y/N]: ")?;
@@ -169,13 +174,13 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
             let name = if input.is_empty() {
                 default_names[i].clone()
             } else {
-                sanitize_filename(&input)
+                format!("{}.mkv", sanitize_filename(&input))
             };
-            outfiles.push(args.output.join(format!("{}.mkv", name)));
+            outfiles.push(args.output.join(&name));
         }
     } else {
         for name in &default_names {
-            outfiles.push(args.output.join(format!("{}.mkv", name)));
+            outfiles.push(args.output.join(name));
         }
     }
 
@@ -199,6 +204,16 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         let pl = episodes_pl[idx];
         let outfile = &outfiles[i];
         let filename = outfile.file_name().unwrap().to_string_lossy();
+
+        // Skip if output file already exists
+        if outfile.exists() {
+            let existing_size = std::fs::metadata(outfile)?.len();
+            println!(
+                "\nSkipping playlist {} -> {} (already exists, {})",
+                pl.num, filename, format_size(existing_size)
+            );
+            continue;
+        }
 
         println!(
             "\nRipping playlist {} ({}) -> {}",
@@ -410,4 +425,79 @@ fn prompt_tmdb(
     }
 
     Ok(Some((episodes, show_id, season_num)))
+}
+
+fn prompt_tmdb_movie(
+    api_key: &str,
+    default_query: &str,
+) -> anyhow::Result<Option<(String, String)>> {
+    let hint = if default_query.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", default_query)
+    };
+    let query = prompt(&format!("\nSearch TMDb for movie{}: ", hint))?;
+    let query = if query.is_empty() {
+        default_query.to_string()
+    } else {
+        query
+    };
+    if query.is_empty() {
+        return Ok(None);
+    }
+
+    let results = match tmdb::search_movie(&query, api_key) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("  TMDb search failed: {}", e);
+            return Ok(None);
+        }
+    };
+
+    if results.is_empty() {
+        println!("  No results found.");
+        return Ok(None);
+    }
+
+    println!("\n  Results:");
+    let display_count = results.len().min(5);
+    for (i, movie) in results.iter().take(5).enumerate() {
+        let year = movie
+            .release_date
+            .as_deref()
+            .unwrap_or("")
+            .get(..4)
+            .unwrap_or("");
+        println!("    {}. {} ({})", i + 1, movie.title, year);
+    }
+
+    let movie_idx = loop {
+        let pick = prompt("  Select movie (1-5, Enter for 1, 's' to skip): ")?;
+        if pick.eq_ignore_ascii_case("s") {
+            return Ok(None);
+        }
+        let pick = if pick.is_empty() {
+            "1".to_string()
+        } else {
+            pick
+        };
+        if let Ok(n) = pick.parse::<usize>() {
+            if n >= 1 && n <= display_count {
+                break n - 1;
+            }
+        }
+        println!("  Invalid selection.");
+    };
+
+    let movie = &results[movie_idx];
+    let year = movie
+        .release_date
+        .as_deref()
+        .unwrap_or("")
+        .get(..4)
+        .unwrap_or("")
+        .to_string();
+
+    println!("  Selected: {} ({})", movie.title, year);
+    Ok(Some((movie.title.clone(), year)))
 }

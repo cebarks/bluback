@@ -22,6 +22,14 @@ pub struct TmdbShow {
     pub first_air_date: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TmdbMovie {
+    #[allow(dead_code)]
+    pub id: u64,
+    pub title: String,
+    pub release_date: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LabelInfo {
     pub show: String,

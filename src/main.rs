@@ -34,6 +34,10 @@ pub struct Args {
     #[arg(long, default_value = "900")]
     min_duration: u32,
 
+    /// Movie mode (skip episode assignment)
+    #[arg(long)]
+    movie: bool,
+
     /// Show what would be ripped without ripping
     #[arg(long)]
     dry_run: bool,

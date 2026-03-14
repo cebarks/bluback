@@ -40,8 +40,11 @@ pub struct App {
     // TMDb data
     pub api_key: Option<String>,
     pub search_query: String,
+    pub movie_mode: bool,
     pub search_results: Vec<TmdbShow>,
     pub selected_show: Option<usize>,
+    pub movie_results: Vec<TmdbMovie>,
+    pub selected_movie: Option<usize>,
     pub season_num: Option<u32>,
     pub episodes: Vec<Episode>,
     pub start_episode: Option<u32>,
@@ -83,8 +86,11 @@ impl App {
             episodes_pl: Vec::new(),
             api_key: None,
             search_query: String::new(),
+            movie_mode: false,
             search_results: Vec::new(),
             selected_show: None,
+            movie_results: Vec::new(),
+            selected_movie: None,
             season_num: None,
             episodes: Vec::new(),
             start_episode: None,
@@ -138,10 +144,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args) -
     app.api_key = crate::tmdb::get_api_key();
     app.status_message.clear();
 
+    // Set movie mode from flag or auto-detect (single playlist)
+    app.movie_mode = args.movie || (app.episodes_pl.len() == 1 && args.season.is_none());
+
     // Pre-fill from label/args
     if let Some(ref info) = app.label_info {
         app.search_query = info.show.clone();
-        app.season_num = Some(info.season);
+        if !app.movie_mode {
+            app.season_num = Some(info.season);
+        }
     }
     if let Some(s) = args.season {
         app.season_num = Some(s);

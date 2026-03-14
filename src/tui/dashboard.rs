@@ -137,7 +137,9 @@ pub fn render_done(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    let summary = if failed_count > 0 {
+    let summary = if !app.status_message.is_empty() {
+        app.status_message.clone()
+    } else if failed_count > 0 {
         format!(
             "Completed {} of {} playlist(s) ({} failed)",
             completed.len(),
@@ -153,15 +155,22 @@ pub fn render_done(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     let mut lines: Vec<Line> = Vec::new();
-    for (filename, sz) in &completed {
-        lines.push(Line::from(format!("  {} ({})", filename, format_size(*sz))));
-    }
-    for job in &app.rip_jobs {
-        if let PlaylistStatus::Failed(msg) = &job.status {
-            lines.push(
-                Line::from(format!("  {} - FAILED: {}", job.filename, msg))
-                    .style(Style::default().fg(Color::Red)),
-            );
+    if app.rip_jobs.is_empty() && !app.filenames.is_empty() {
+        // Dry run: show what would have been ripped
+        for name in &app.filenames {
+            lines.push(Line::from(format!("  {}", name)));
+        }
+    } else {
+        for (filename, sz) in &completed {
+            lines.push(Line::from(format!("  {} ({})", filename, format_size(*sz))));
+        }
+        for job in &app.rip_jobs {
+            if let PlaylistStatus::Failed(msg) = &job.status {
+                lines.push(
+                    Line::from(format!("  {} - FAILED: {}", job.filename, msg))
+                        .style(Style::default().fg(Color::Red)),
+                );
+            }
         }
     }
 
@@ -230,6 +239,15 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
             let outfile = app.args.output.join(&job.filename);
 
             std::fs::create_dir_all(&app.args.output).ok();
+
+            // Skip if output file already exists
+            if outfile.exists() {
+                let file_size = std::fs::metadata(&outfile)
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                app.rip_jobs[idx].status = PlaylistStatus::Done(file_size);
+                return Ok(());
+            }
 
             let streams = disc::probe_streams(&device, &playlist_num);
             let map_args = match streams {

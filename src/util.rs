@@ -94,6 +94,30 @@ pub fn assign_episodes(
     assignments
 }
 
+pub fn make_movie_filename(title: &str, year: &str, part: Option<u32>) -> String {
+    let name = sanitize_filename(title);
+    let year_suffix = if year.is_empty() {
+        String::new()
+    } else {
+        format!("_({})", year)
+    };
+    let part_suffix = part.map(|p| format!("_pt{}", p)).unwrap_or_default();
+    format!("{}{}{}.mkv", name, year_suffix, part_suffix)
+}
+
+pub fn make_filename(playlist_num: &str, episode: Option<&Episode>, season: u32) -> String {
+    if let Some(ep) = episode {
+        format!(
+            "S{:02}E{:02}_{}.mkv",
+            season,
+            ep.episode_number,
+            sanitize_filename(&ep.name)
+        )
+    } else {
+        format!("playlist{}.mkv", playlist_num)
+    }
+}
+
 pub fn format_size(bytes: u64) -> String {
     let mut size = bytes as f64;
     for unit in &["B", "KiB", "MiB", "GiB"] {
@@ -294,5 +318,45 @@ mod tests {
     #[test]
     fn test_format_tib() {
         assert_eq!(format_size(2 * 1024u64.pow(4)), "2.0 TiB");
+    }
+
+    #[test]
+    fn test_movie_filename_basic() {
+        assert_eq!(
+            make_movie_filename("The Matrix", "1999", None),
+            "The_Matrix_(1999).mkv"
+        );
+    }
+
+    #[test]
+    fn test_movie_filename_no_year() {
+        assert_eq!(make_movie_filename("Inception", "", None), "Inception.mkv");
+    }
+
+    #[test]
+    fn test_movie_filename_with_part() {
+        assert_eq!(
+            make_movie_filename("Dune", "2021", Some(1)),
+            "Dune_(2021)_pt1.mkv"
+        );
+    }
+
+    #[test]
+    fn test_movie_filename_special_chars() {
+        assert_eq!(
+            make_movie_filename("Spider-Man: No Way Home", "2021", None),
+            "Spider-Man_No_Way_Home_(2021).mkv"
+        );
+    }
+
+    #[test]
+    fn test_make_filename_with_episode() {
+        let ep = Episode { episode_number: 3, name: "The Pilot".into(), runtime: Some(44) };
+        assert_eq!(make_filename("00001", Some(&ep), 1), "S01E03_The_Pilot.mkv");
+    }
+
+    #[test]
+    fn test_make_filename_no_episode() {
+        assert_eq!(make_filename("00042", None, 1), "playlist00042.mkv");
     }
 }

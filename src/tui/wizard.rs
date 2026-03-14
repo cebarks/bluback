@@ -4,7 +4,31 @@ use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table};
 
 use super::{App, Screen};
 use crate::tmdb;
-use crate::util::{assign_episodes, guess_start_episode, sanitize_filename};
+use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename};
+
+fn playlist_filename(app: &App, playlist_index: usize) -> String {
+    let pl = &app.episodes_pl[playlist_index];
+    if app.movie_mode {
+        let movie = app.selected_movie.and_then(|i| app.movie_results.get(i));
+        let title = movie.map(|m| m.title.as_str()).unwrap_or("movie");
+        let year = movie
+            .and_then(|m| m.release_date.as_deref())
+            .and_then(|d| d.get(..4))
+            .unwrap_or("");
+        let part = if app.episodes_pl.len() > 1 {
+            Some(playlist_index as u32 + 1)
+        } else {
+            None
+        };
+        make_movie_filename(title, year, part)
+    } else {
+        make_filename(
+            &pl.num,
+            app.episode_assignments.get(&pl.num),
+            app.season_num.unwrap_or(0),
+        )
+    }
+}
 
 fn standard_layout(area: Rect) -> std::rc::Rc<[Rect]> {
     Layout::default()
@@ -31,12 +55,14 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
 pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
+    let mode_label = if app.movie_mode { "Movie" } else { "TV Show" };
+    let step_title = format!("Step 1: TMDb Search ({})", mode_label);
     let title = Paragraph::new(format!(
-        "Disc: {}  |  {} episode-length playlists",
+        "Disc: {}  |  {} playlists",
         if app.label.is_empty() { "(no label)" } else { &app.label },
         app.episodes_pl.len(),
     ))
-    .block(Block::default().borders(Borders::ALL).title("Step 1: TMDb Search"));
+    .block(Block::default().borders(Borders::ALL).title(step_title));
     f.render_widget(title, chunks[0]);
 
     if app.api_key.is_none() {
@@ -64,7 +90,10 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
             .block(Block::default().borders(Borders::ALL).title("Search query"));
         f.render_widget(input, chunks[1]);
 
-        let hints = Paragraph::new("Enter: Search | Esc: Skip TMDb | q: Quit")
+        let toggle = if app.movie_mode { "TV Show" } else { "Movie" };
+        let hints = Paragraph::new(format!(
+            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit", toggle
+        ))
             .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     }
@@ -94,22 +123,46 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
 
             // Otherwise treat input as search query
             if let Some(ref api_key) = app.api_key.clone() {
-                match tmdb::search_show(&input, api_key) {
-                    Ok(results) => {
-                        if results.is_empty() {
-                            app.status_message = "No results found.".into();
-                        } else {
-                            app.search_results = results;
-                            app.list_cursor = 0;
-                            app.input_active = false;
-                            app.status_message.clear();
-                            app.screen = Screen::ShowSelect;
+                if app.movie_mode {
+                    match tmdb::search_movie(&input, api_key) {
+                        Ok(results) => {
+                            if results.is_empty() {
+                                app.status_message = "No results found.".into();
+                            } else {
+                                app.movie_results = results;
+                                app.list_cursor = 0;
+                                app.input_active = false;
+                                app.status_message.clear();
+                                app.screen = Screen::ShowSelect;
+                            }
+                        }
+                        Err(e) => {
+                            app.status_message = format!("TMDb search failed: {}", e);
                         }
                     }
-                    Err(e) => {
-                        app.status_message = format!("TMDb search failed: {}", e);
+                } else {
+                    match tmdb::search_show(&input, api_key) {
+                        Ok(results) => {
+                            if results.is_empty() {
+                                app.status_message = "No results found.".into();
+                            } else {
+                                app.search_results = results;
+                                app.list_cursor = 0;
+                                app.input_active = false;
+                                app.status_message.clear();
+                                app.screen = Screen::ShowSelect;
+                            }
+                        }
+                        Err(e) => {
+                            app.status_message = format!("TMDb search failed: {}", e);
+                        }
                     }
                 }
+            }
+        }
+        KeyCode::Tab => {
+            if app.api_key.is_some() {
+                app.movie_mode = !app.movie_mode;
             }
         }
         KeyCode::Esc => {
@@ -124,18 +177,39 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
 pub fn render_show_select(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
-    let title = Paragraph::new("Select a show from the search results")
-        .block(Block::default().borders(Borders::ALL).title("Step 2: Select Show"));
+    let step_title = if app.movie_mode {
+        "Step 2: Select Movie"
+    } else {
+        "Step 2: Select Show"
+    };
+    let prompt = if app.movie_mode {
+        "Select a movie from the search results"
+    } else {
+        "Select a show from the search results"
+    };
+    let title = Paragraph::new(prompt)
+        .block(Block::default().borders(Borders::ALL).title(step_title));
     f.render_widget(title, chunks[0]);
 
-    let items: Vec<ListItem> = app.search_results.iter().enumerate().map(|(i, show)| {
-        let year = show.first_air_date.as_deref()
-            .unwrap_or("")
-            .get(..4)
-            .unwrap_or("");
-        let marker = if i == app.list_cursor { "> " } else { "  " };
-        ListItem::new(format!("{}{} ({})", marker, show.name, year))
-    }).collect();
+    let items: Vec<ListItem> = if app.movie_mode {
+        app.movie_results.iter().enumerate().map(|(i, movie)| {
+            let year = movie.release_date.as_deref()
+                .unwrap_or("")
+                .get(..4)
+                .unwrap_or("");
+            let marker = if i == app.list_cursor { "> " } else { "  " };
+            ListItem::new(format!("{}{} ({})", marker, movie.title, year))
+        }).collect()
+    } else {
+        app.search_results.iter().enumerate().map(|(i, show)| {
+            let year = show.first_air_date.as_deref()
+                .unwrap_or("")
+                .get(..4)
+                .unwrap_or("");
+            let marker = if i == app.list_cursor { "> " } else { "  " };
+            ListItem::new(format!("{}{} ({})", marker, show.name, year))
+        }).collect()
+    };
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title("Results"))
@@ -148,6 +222,12 @@ pub fn render_show_select(f: &mut Frame, app: &App) {
 }
 
 pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
+    let result_count = if app.movie_mode {
+        app.movie_results.len()
+    } else {
+        app.search_results.len()
+    };
+
     match key.code {
         KeyCode::Up => {
             if app.list_cursor > 0 {
@@ -155,45 +235,53 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Down => {
-            if app.list_cursor + 1 < app.search_results.len() {
+            if app.list_cursor + 1 < result_count {
                 app.list_cursor += 1;
             }
         }
         KeyCode::Enter => {
-            if app.search_results.is_empty() {
+            if result_count == 0 {
                 return;
             }
-            app.selected_show = Some(app.list_cursor);
-            let show = &app.search_results[app.list_cursor];
 
-            // If we already have a season number, fetch episodes immediately
-            if let Some(season) = app.season_num {
-                if let Some(ref api_key) = app.api_key.clone() {
-                    match tmdb::get_season(show.id, season, api_key) {
-                        Ok(eps) => {
-                            app.episodes = eps;
-                        }
-                        Err(e) => {
-                            app.status_message = format!("Failed to fetch season: {}", e);
-                            app.episodes.clear();
+            if app.movie_mode {
+                app.selected_movie = Some(app.list_cursor);
+                app.input_active = false;
+                app.list_cursor = 0;
+                app.screen = Screen::PlaylistSelect;
+            } else {
+                app.selected_show = Some(app.list_cursor);
+                let show = &app.search_results[app.list_cursor];
+
+                // If we already have a season number, fetch episodes immediately
+                if let Some(season) = app.season_num {
+                    if let Some(ref api_key) = app.api_key.clone() {
+                        match tmdb::get_season(show.id, season, api_key) {
+                            Ok(eps) => {
+                                app.episodes = eps;
+                            }
+                            Err(e) => {
+                                app.status_message = format!("Failed to fetch season: {}", e);
+                                app.episodes.clear();
+                            }
                         }
                     }
                 }
-            }
 
-            // If episodes already fetched, start on start-episode field
-            if !app.episodes.is_empty() {
-                app.season_field = 1;
-                let disc_num = app.label_info.as_ref().map(|l| l.disc);
-                let guessed = guess_start_episode(disc_num, app.episodes_pl.len());
-                app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
-            } else {
-                app.season_field = 0;
-                app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
+                // If episodes already fetched, start on start-episode field
+                if !app.episodes.is_empty() {
+                    app.season_field = 1;
+                    let disc_num = app.label_info.as_ref().map(|l| l.disc);
+                    let guessed = guess_start_episode(disc_num, app.episodes_pl.len());
+                    app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
+                } else {
+                    app.season_field = 0;
+                    app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
+                }
+                app.input_active = true;
+                app.list_cursor = 0;
+                app.screen = Screen::SeasonEpisode;
             }
-            app.input_active = true;
-            app.list_cursor = 0;
-            app.screen = Screen::SeasonEpisode;
         }
         KeyCode::Esc => {
             app.input_buffer = app.search_query.clone();
@@ -382,7 +470,9 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
         app.episodes_pl.len(),
         selected_count,
     ))
-    .block(Block::default().borders(Borders::ALL).title("Step 4: Select Playlists"));
+    .block(Block::default().borders(Borders::ALL).title(
+        if app.movie_mode { "Step 3: Select Playlists" } else { "Step 4: Select Playlists" }
+    ));
     f.render_widget(title, chunks[0]);
 
     let has_eps = !app.episode_assignments.is_empty();
@@ -408,15 +498,7 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
             String::new()
         };
 
-        let filename = if let Some(ep) = app.episode_assignments.get(&pl.num) {
-            format!("S{:02}E{:02}_{}.mkv",
-                app.season_num.unwrap_or(0),
-                ep.episode_number,
-                sanitize_filename(&ep.name)
-            )
-        } else {
-            format!("playlist{}.mkv", pl.num)
-        };
+        let filename = playlist_filename(app, i);
 
         if has_eps {
             Row::new(vec![
@@ -487,20 +569,11 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             // Generate filenames for selected playlists
             app.filenames.clear();
-            for (i, pl) in app.episodes_pl.iter().enumerate() {
+            for (i, _pl) in app.episodes_pl.iter().enumerate() {
                 if !app.playlist_selected.get(i).copied().unwrap_or(false) {
                     continue;
                 }
-                let name = if let Some(ep) = app.episode_assignments.get(&pl.num) {
-                    format!("S{:02}E{:02}_{}.mkv",
-                        app.season_num.unwrap_or(0),
-                        ep.episode_number,
-                        sanitize_filename(&ep.name)
-                    )
-                } else {
-                    format!("playlist{}.mkv", pl.num)
-                };
-                app.filenames.push(name);
+                app.filenames.push(playlist_filename(app, i));
             }
 
             if app.filenames.is_empty() {
@@ -513,7 +586,9 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Esc => {
             app.list_cursor = 0;
-            if !app.episode_assignments.is_empty() {
+            if app.movie_mode && app.selected_movie.is_some() {
+                app.screen = Screen::ShowSelect;
+            } else if !app.episode_assignments.is_empty() {
                 // Go back to season/episode if TMDb was used
                 app.input_active = true;
                 let disc_num = app.label_info.as_ref().map(|l| l.disc);
@@ -540,7 +615,9 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         app.filenames.len(),
         app.args.output.display(),
     ))
-    .block(Block::default().borders(Borders::ALL).title("Step 5: Confirm"));
+    .block(Block::default().borders(Borders::ALL).title(
+        if app.movie_mode { "Step 4: Confirm" } else { "Step 5: Confirm" }
+    ));
     f.render_widget(title, chunks[0]);
 
     let header = Row::new(vec!["Playlist", "Duration", "~Size", "Output File"])
@@ -590,7 +667,12 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title(summary_title));
     f.render_widget(table, chunks[1]);
 
-    let hints = Paragraph::new("Enter: Start Ripping | Esc: Back")
+    let hint_text = if app.args.dry_run {
+        "Enter: Exit (dry run) | Esc: Back"
+    } else {
+        "Enter: Start Ripping | Esc: Back"
+    };
+    let hints = Paragraph::new(hint_text)
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
@@ -598,6 +680,16 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
 pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Enter => {
+            if app.args.dry_run {
+                app.status_message = format!(
+                    "[DRY RUN] Would rip {} playlist(s) to {}",
+                    app.filenames.len(),
+                    app.args.output.display(),
+                );
+                app.screen = Screen::Done;
+                return;
+            }
+
             // Build RipJobs from selected playlists and filenames
             app.rip_jobs.clear();
 
