@@ -20,12 +20,15 @@ fn playlist_filename(app: &App, playlist_index: usize) -> String {
         } else {
             None
         };
-        make_movie_filename(title, year, part)
+        make_movie_filename(title, year, part, None, None, None)
     } else {
         make_filename(
             &pl.num,
             app.episode_assignments.get(&pl.num),
             app.season_num.unwrap_or(0),
+            None,
+            None,
+            None,
         )
     }
 }

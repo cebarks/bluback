@@ -150,9 +150,9 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
         let pl = episodes_pl[idx];
         if let Some((ref title, ref year)) = movie_title {
             let part = if selected.len() > 1 { Some(sel_i as u32 + 1) } else { None };
-            util::make_movie_filename(title, year, part)
+            util::make_movie_filename(title, year, part, None, None, None)
         } else {
-            util::make_filename(&pl.num, episode_assignments.get(&pl.num), season_num.unwrap_or(0))
+            util::make_filename(&pl.num, episode_assignments.get(&pl.num), season_num.unwrap_or(0), None, None, None)
         }
     }).collect();
 

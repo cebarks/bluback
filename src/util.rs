@@ -1,4 +1,4 @@
-use crate::types::{Episode, Playlist};
+use crate::types::{Episode, MediaInfo, Playlist};
 use std::collections::HashMap;
 
 pub fn duration_to_seconds(dur: &str) -> u32 {
@@ -171,28 +171,82 @@ pub fn assign_episodes(
     assignments
 }
 
-pub fn make_movie_filename(title: &str, year: &str, part: Option<u32>) -> String {
-    let name = sanitize_filename(title);
-    let year_suffix = if year.is_empty() {
-        String::new()
-    } else {
-        format!("_({})", year)
-    };
-    let part_suffix = part.map(|p| format!("_pt{}", p)).unwrap_or_default();
-    format!("{}{}{}.mkv", name, year_suffix, part_suffix)
+pub fn make_movie_filename(
+    title: &str,
+    year: &str,
+    part: Option<u32>,
+    format: Option<&str>,
+    media_info: Option<&MediaInfo>,
+    extra_vars: Option<&HashMap<&str, String>>,
+) -> String {
+    // Default format: use legacy sanitize_filename (underscores) for backwards compat
+    if format.is_none() {
+        let name = sanitize_filename(title);
+        let year_suffix = if year.is_empty() {
+            String::new()
+        } else {
+            format!("_({})", year)
+        };
+        let part_suffix = part.map(|p| format!("_pt{}", p)).unwrap_or_default();
+        return format!("{}{}{}.mkv", name, year_suffix, part_suffix);
+    }
+
+    let mut vars: HashMap<&str, String> = HashMap::new();
+    vars.insert("title", title.to_string());
+    vars.insert("year", year.to_string());
+    vars.insert("part", part.map(|p| p.to_string()).unwrap_or_default());
+
+    if let Some(info) = media_info {
+        vars.extend(info.to_vars());
+    }
+    if let Some(extra) = extra_vars {
+        for (k, v) in extra {
+            vars.insert(k, v.clone());
+        }
+    }
+
+    render_template(format.unwrap(), &vars)
 }
 
-pub fn make_filename(playlist_num: &str, episode: Option<&Episode>, season: u32) -> String {
-    if let Some(ep) = episode {
-        format!(
+pub fn make_filename(
+    playlist_num: &str,
+    episode: Option<&Episode>,
+    season: u32,
+    format: Option<&str>,
+    media_info: Option<&MediaInfo>,
+    extra_vars: Option<&HashMap<&str, String>>,
+) -> String {
+    if episode.is_none() {
+        return format!("playlist{}.mkv", playlist_num);
+    }
+    let ep = episode.unwrap();
+
+    // Default format: use legacy sanitize_filename (underscores) for backwards compat
+    if format.is_none() {
+        return format!(
             "S{:02}E{:02}_{}.mkv",
             season,
             ep.episode_number,
             sanitize_filename(&ep.name)
-        )
-    } else {
-        format!("playlist{}.mkv", playlist_num)
+        );
     }
+
+    let mut vars: HashMap<&str, String> = HashMap::new();
+    vars.insert("season", format!("{:02}", season));
+    vars.insert("episode", format!("{:02}", ep.episode_number));
+    vars.insert("title", ep.name.clone());
+    vars.insert("playlist", playlist_num.to_string());
+
+    if let Some(info) = media_info {
+        vars.extend(info.to_vars());
+    }
+    if let Some(extra) = extra_vars {
+        for (k, v) in extra {
+            vars.insert(k, v.clone());
+        }
+    }
+
+    render_template(format.unwrap(), &vars)
 }
 
 pub fn format_size(bytes: u64) -> String {
@@ -400,20 +454,20 @@ mod tests {
     #[test]
     fn test_movie_filename_basic() {
         assert_eq!(
-            make_movie_filename("The Matrix", "1999", None),
+            make_movie_filename("The Matrix", "1999", None, None, None, None),
             "The_Matrix_(1999).mkv"
         );
     }
 
     #[test]
     fn test_movie_filename_no_year() {
-        assert_eq!(make_movie_filename("Inception", "", None), "Inception.mkv");
+        assert_eq!(make_movie_filename("Inception", "", None, None, None, None), "Inception.mkv");
     }
 
     #[test]
     fn test_movie_filename_with_part() {
         assert_eq!(
-            make_movie_filename("Dune", "2021", Some(1)),
+            make_movie_filename("Dune", "2021", Some(1), None, None, None),
             "Dune_(2021)_pt1.mkv"
         );
     }
@@ -421,7 +475,7 @@ mod tests {
     #[test]
     fn test_movie_filename_special_chars() {
         assert_eq!(
-            make_movie_filename("Spider-Man: No Way Home", "2021", None),
+            make_movie_filename("Spider-Man: No Way Home", "2021", None, None, None, None),
             "Spider-Man_No_Way_Home_(2021).mkv"
         );
     }
@@ -429,12 +483,43 @@ mod tests {
     #[test]
     fn test_make_filename_with_episode() {
         let ep = Episode { episode_number: 3, name: "The Pilot".into(), runtime: Some(44) };
-        assert_eq!(make_filename("00001", Some(&ep), 1), "S01E03_The_Pilot.mkv");
+        assert_eq!(make_filename("00001", Some(&ep), 1, None, None, None), "S01E03_The_Pilot.mkv");
     }
 
     #[test]
     fn test_make_filename_no_episode() {
-        assert_eq!(make_filename("00042", None, 1), "playlist00042.mkv");
+        assert_eq!(make_filename("00042", None, 1, None, None, None), "playlist00042.mkv");
+    }
+
+    #[test]
+    fn test_make_filename_custom_format_with_show() {
+        let ep = Episode { episode_number: 3, name: "The Pilot".into(), runtime: Some(44) };
+        let mut extra = HashMap::new();
+        extra.insert("show", "Test Show".to_string());
+        assert_eq!(
+            make_filename("00001", Some(&ep), 1, Some("{show}/S{season}E{episode} - {title}.mkv"), None, Some(&extra)),
+            "Test Show/S01E03 - The Pilot.mkv"
+        );
+    }
+
+    #[test]
+    fn test_movie_filename_plex_format() {
+        let media = MediaInfo {
+            resolution: "1080p".into(),
+            codec: "hevc".into(),
+            audio: "truehd".into(),
+            channels: "7.1".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            make_movie_filename(
+                "The Matrix", "1999", None,
+                Some("{title} ({year})/Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv"),
+                Some(&media),
+                None,
+            ),
+            "The Matrix (1999)/Movie [Bluray-1080p][truehd 7.1][hevc].mkv"
+        );
     }
 
     #[test]
