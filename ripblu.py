@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Blu-ray to MKV ripper using ffmpeg + libaacs with TMDb episode matching."""
 
+import argparse
 import json
 import os
 import re
@@ -58,10 +59,15 @@ def duration_to_seconds(dur_str: str) -> int:
 
 
 def scan_playlists(device: str) -> list[dict]:
-    result = subprocess.run(
-        ["ffprobe", "-i", f"bluray:{device}"],
-        capture_output=True, text=True, timeout=60,
-    )
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-i", f"bluray:{device}"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        print("Error: ffprobe timed out while scanning disc.")
+        return []
+
     output = result.stdout + result.stderr
 
     playlists = []
@@ -88,11 +94,17 @@ def guess_start_episode(disc_number: int | None, episodes_on_disc: int) -> int:
     return 1 + episodes_on_disc * (disc_number - 1)
 
 
-def probe_streams(device: str, playlist_num: str) -> dict:
-    result = subprocess.run(
-        ["ffprobe", "-playlist", playlist_num, "-i", f"bluray:{device}"],
-        capture_output=True, text=True, timeout=60,
-    )
+def probe_streams(device: str, playlist_num: str) -> dict | None:
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-playlist", playlist_num, "-i", f"bluray:{device}"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+
     output = result.stdout + result.stderr
 
     audio_streams = []
@@ -222,9 +234,12 @@ def parse_selection(text: str, max_val: int) -> list[int] | None:
     return indices if indices else None
 
 
-def prompt_tmdb(api_key: str) -> tuple[list[dict] | None, int | None, int | None]:
+def prompt_tmdb(api_key: str, default_query: str = "",
+                cli_season: int | None = None) -> tuple[list[dict] | None, int | None, int | None]:
     """Interactive TMDb search. Returns (episodes, show_id, season_num) or (None, None, None)."""
-    query = input("\nSearch TMDb for episode info (show name, or Enter to skip): ").strip()
+    default_hint = f" [{default_query}]" if default_query else ""
+    query = input(f"\nSearch TMDb for episode info{default_hint}: ").strip()
+    query = query or default_query
     if not query:
         return None, None, None
 
@@ -243,45 +258,81 @@ def prompt_tmdb(api_key: str) -> tuple[list[dict] | None, int | None, int | None
         year = show.get("first_air_date", "")[:4]
         print(f"    {i+1}. {show['name']} ({year})")
 
-    pick = input("  Select show (1-5, or Enter to skip): ").strip()
-    if not pick.isdigit() or not (1 <= int(pick) <= len(results[:5])):
-        return None, None, None
+    while True:
+        pick = input("  Select show (1-5, or Enter to skip): ").strip()
+        if not pick:
+            return None, None, None
+        if pick.isdigit() and 1 <= int(pick) <= len(results[:5]):
+            break
+        print("  Invalid selection.")
 
     show = results[int(pick) - 1]
     show_id = show["id"]
 
-    season_str = input(f"  Season number: ").strip()
-    if not season_str.isdigit():
-        return None, None, None
+    if cli_season is not None:
+        season_num = cli_season
+        print(f"  Using season {season_num} (from --season flag)")
+    else:
+        while True:
+            season_str = input("  Season number: ").strip()
+            if season_str.isdigit() and int(season_str) > 0:
+                season_num = int(season_str)
+                break
+            print("  Invalid season number.")
 
-    season_num = int(season_str)
     try:
         episodes = tmdb_get_season(show_id, season_num, api_key)
     except urllib.error.URLError as e:
         print(f"  Failed to fetch season: {e}")
         return None, None, None
 
+    if episodes:
+        print(f"\n  Season {season_num}: {len(episodes)} episodes")
+        for ep in episodes:
+            runtime = ep.get("runtime") or 0
+            print(f"    E{ep['episode_number']:02d} - {ep['name']}  ({runtime} min)")
+
     return episodes, show_id, season_num
 
 
-def main():
-    device = DEFAULT_DEVICE
-    outdir = os.getcwd()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ripblu",
+        description="Rip Blu-ray discs to MKV files using ffmpeg + libaacs",
+    )
+    parser.add_argument("-d", "--device", default=DEFAULT_DEVICE,
+                        help=f"Blu-ray device path (default: {DEFAULT_DEVICE})")
+    parser.add_argument("-o", "--output", default=".",
+                        help="Output directory (default: current directory)")
+    parser.add_argument("-s", "--season", type=int, default=None,
+                        help="Season number (skips interactive prompt)")
+    parser.add_argument("-e", "--start-episode", type=int, default=None,
+                        help="Starting episode number (skips interactive prompt)")
+    parser.add_argument("--min-duration", type=int, default=900,
+                        help="Minimum seconds to consider a playlist an episode (default: 900)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show what would be ripped without ripping")
+    return parser
 
-    args = sys.argv[1:]
-    if args and args[0] in ("-h", "--help"):
-        print("Usage: ripblu [device] [output_dir]")
-        print(f"  device defaults to {DEFAULT_DEVICE}")
-        print("  output_dir defaults to current directory")
-        sys.exit(0)
-    if args:
-        device = args[0]
-    if len(args) > 1:
-        outdir = args[1]
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    device = args.device
+    outdir = args.output
+
+    check_dependencies()
 
     if not Path(device).is_block_device():
         print(f"Error: No Blu-ray device found at {device}")
         sys.exit(1)
+
+    # Read volume label
+    label = get_volume_label(device)
+    label_info = parse_volume_label(label)
+    if label:
+        print(f"Volume label: {label}")
 
     print(f"Scanning disc at {device}...")
     playlists = scan_playlists(device)
@@ -290,68 +341,87 @@ def main():
         print("Error: No playlists found. Check libaacs and KEYDB.cfg.")
         sys.exit(1)
 
-    # Try TMDb matching
-    episode_matches = {}
+    # Filter to episode-length playlists
+    episodes_pl = filter_episodes(playlists, args.min_duration)
+    short_count = len(playlists) - len(episodes_pl)
+    print(f"Found {len(playlists)} playlists ({len(episodes_pl)} episode-length, {short_count} short/extras).\n")
+
+    if not episodes_pl:
+        print("No episode-length playlists found. Try lowering --min-duration.")
+        sys.exit(1)
+
+    # TMDb lookup
+    episode_assignments = {}
+    season_num = args.season or label_info.get("season")
     api_key = get_tmdb_api_key()
-    season_num = None
 
     if api_key is None:
-        setup = input("\nTMDb API key not found. Enter key (or Enter to skip): ").strip()
+        setup = input("TMDb API key not found. Enter key (or Enter to skip): ").strip()
         if setup:
             save_tmdb_api_key(setup)
             api_key = setup
             print(f"  Saved to {TMDB_API_KEY_FILE}")
 
+    if api_key is None and (args.season or args.start_episode):
+        print("Warning: --season/--start-episode require TMDb. Ignoring.")
+
     if api_key:
-        episodes, show_id, season_num = prompt_tmdb(api_key)
+        default_query = label_info.get("show", "")
+        episodes, show_id, season_num = prompt_tmdb(api_key, default_query, args.season or label_info.get("season"))
+
         if episodes:
-            episode_matches = assign_episodes(playlists, episodes, start_episode=1)
+            # Determine starting episode
+            disc_number = label_info.get("disc")
+            default_start = args.start_episode
+            if default_start is None:
+                default_start = guess_start_episode(disc_number, len(episodes_pl))
+
+            if args.start_episode is None:
+                while True:
+                    start_input = input(f"  Starting episode number [{default_start}]: ").strip()
+                    if not start_input:
+                        start_ep = default_start
+                        break
+                    if start_input.isdigit() and int(start_input) > 0:
+                        start_ep = int(start_input)
+                        break
+                    print("  Invalid episode number.")
+            else:
+                start_ep = args.start_episode
+
+            episode_assignments = assign_episodes(episodes_pl, episodes, start_ep)
 
     # Display playlists
-    print(f"\nFound {len(playlists)} playlists:\n")
-    header_match = "  Episode" if episode_matches else ""
-    print(f"  {'#':<4}  {'Playlist':<10}  {'Duration':<10}{header_match}")
+    has_eps = bool(episode_assignments)
+    header_match = "  Episode" if has_eps else ""
+    print(f"\n  {'#':<4}  {'Playlist':<10}  {'Duration':<10}{header_match}")
     print(f"  {'---':<4}  {'--------':<10}  {'--------':<10}{'-' * len(header_match)}")
 
-    for i, pl in enumerate(playlists):
-        ep = episode_matches.get(pl["num"])
+    for i, pl in enumerate(episodes_pl):
+        ep = episode_assignments.get(pl["num"])
         ep_str = ""
         if ep:
             ep_str = f"  S{season_num:02d}E{ep['episode_number']:02d} - {ep['name']}"
-        elif episode_matches:
-            ep_str = "  (unmatched)"
+        elif has_eps:
+            ep_str = "  (no episode data)"
         print(f"  {i+1:<4}  {pl['num']:<10}  {pl['duration']:<10}{ep_str}")
 
     print()
 
     # Select playlists
-    selection = input("Select playlists to rip (e.g. 1,2,3 or 1-3 or 'all'): ").strip()
-    if not selection:
-        print("No playlists selected.")
-        sys.exit(0)
-
-    selected = []
-    if selection == "all":
-        selected = list(range(len(playlists)))
-    else:
-        for part in selection.split(","):
-            part = part.strip()
-            if "-" in part:
-                start, end = part.split("-", 1)
-                selected.extend(range(int(start) - 1, int(end)))
-            else:
-                selected.append(int(part) - 1)
-
-    if not selected:
-        print("No playlists selected.")
-        sys.exit(0)
+    while True:
+        selection = input("Select playlists to rip (e.g. 1,2,3 or 1-3 or 'all'): ").strip()
+        selected = parse_selection(selection, len(episodes_pl))
+        if selected is not None:
+            break
+        print("Invalid selection. Try again.")
 
     # Name each playlist
     print()
     outfiles = []
     for idx in selected:
-        pl = playlists[idx]
-        ep = episode_matches.get(pl["num"])
+        pl = episodes_pl[idx]
+        ep = episode_assignments.get(pl["num"])
 
         if ep and season_num is not None:
             default_name = f"S{season_num:02d}E{ep['episode_number']:02d}_{sanitize_filename(ep['name'])}"
@@ -363,16 +433,28 @@ def main():
         name = sanitize_filename(name)
         outfiles.append(Path(outdir) / f"{name}.mkv")
 
+    # Dry run
+    if args.dry_run:
+        print("\n[DRY RUN] Would rip:")
+        for i, idx in enumerate(selected):
+            pl = episodes_pl[idx]
+            print(f"  {pl['num']} ({pl['duration']}) -> {outfiles[i].name}")
+        return
+
     Path(outdir).mkdir(parents=True, exist_ok=True)
 
     # Rip
     for i, idx in enumerate(selected):
-        pl = playlists[idx]
+        pl = episodes_pl[idx]
         outfile = outfiles[i]
 
         print(f"\nRipping playlist {pl['num']} ({pl['duration']}) -> {outfile.name}")
 
         streams = probe_streams(device, pl["num"])
+        if streams is None:
+            print(f"Warning: Failed to probe streams for playlist {pl['num']}, skipping.")
+            continue
+
         map_args = build_map_args(streams)
 
         cmd = [
@@ -396,4 +478,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nAborted.")
+        sys.exit(130)
