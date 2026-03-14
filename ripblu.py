@@ -124,6 +124,38 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
+def parse_volume_label(label: str) -> dict:
+    """Parse a Blu-ray volume label for show name, season, and disc number."""
+    if not label:
+        return {}
+    patterns = [
+        r"^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)",
+        r"^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)",
+    ]
+    for pattern in patterns:
+        m = re.match(pattern, label, re.IGNORECASE)
+        if m:
+            show = m.group("show").strip("_").replace("_", " ")
+            return {
+                "show": show,
+                "season": int(m.group("season")),
+                "disc": int(m.group("disc")),
+            }
+    return {}
+
+
+def get_volume_label(device: str) -> str:
+    """Get volume label from a block device via lsblk."""
+    try:
+        result = subprocess.run(
+            ["lsblk", "-no", "LABEL", device],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
 def match_episodes(playlists: list[dict], episodes: list[dict], threshold: int = 120) -> dict[str, dict]:
     """Match playlists to episodes by duration. Returns {playlist_num: episode}."""
     matches = {}

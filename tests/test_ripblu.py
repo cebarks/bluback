@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ripblu import duration_to_seconds, sanitize_filename
+from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label
 
 
 class TestDurationToSeconds:
@@ -29,3 +29,29 @@ class TestSanitizeFilename:
 
     def test_preserves_parens(self):
         assert sanitize_filename("Earth (Part 1)") == "Earth_(Part_1)"
+
+
+class TestParseVolumeLabel:
+    def test_sXdY_format(self):
+        result = parse_volume_label("SGU_BR_S1D2")
+        assert result == {"show": "SGU BR", "season": 1, "disc": 2}
+
+    def test_sX_dY_underscore_separated(self):
+        result = parse_volume_label("SHOW_S1_D2")
+        assert result == {"show": "SHOW", "season": 1, "disc": 2}
+
+    def test_season_disc_long_form(self):
+        result = parse_volume_label("SHOW_SEASON1_DISC2")
+        assert result == {"show": "SHOW", "season": 1, "disc": 2}
+
+    def test_no_match(self):
+        result = parse_volume_label("RANDOM_DISC")
+        assert result == {}
+
+    def test_empty_string(self):
+        result = parse_volume_label("")
+        assert result == {}
+
+    def test_show_with_underscores_before_season(self):
+        result = parse_volume_label("THE_WIRE_S3D1")
+        assert result == {"show": "THE WIRE", "season": 3, "disc": 1}
