@@ -180,3 +180,9 @@ class TestParseSelection:
 
     def test_reversed_range(self):
         assert parse_selection("4-2", max_val=5) is None
+
+    def test_open_ended_range(self):
+        assert parse_selection("3-", max_val=5) == [2, 3, 4]
+
+    def test_open_ended_range_from_1(self):
+        assert parse_selection("1-", max_val=3) == [0, 1, 2]

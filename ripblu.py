@@ -220,7 +220,8 @@ def parse_selection(text: str, max_val: int) -> list[int] | None:
             part = part.strip()
             if "-" in part:
                 start_s, end_s = part.split("-", 1)
-                start, end = int(start_s), int(end_s)
+                start = int(start_s)
+                end = max_val if end_s == "" else int(end_s)
                 if start > end or start < 1 or end > max_val:
                     return None
                 indices.extend(range(start - 1, end))
