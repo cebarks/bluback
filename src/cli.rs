@@ -9,7 +9,7 @@ use crate::types::*;
 use crate::util::{self, *};
 use crate::Args;
 
-pub fn run(args: &Args) -> anyhow::Result<()> {
+pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
     let device = args.device.to_string_lossy();
 
     if !args.device.exists() {
@@ -49,7 +49,7 @@ pub fn run(args: &Args) -> anyhow::Result<()> {
     let mut episode_assignments: EpisodeAssignments = HashMap::new();
     let mut season_num: Option<u32> = args.season.or(label_info.as_ref().map(|l| l.season));
     let mut movie_title: Option<(String, String)> = None; // (title, year)
-    let mut api_key = tmdb::get_api_key();
+    let mut api_key = tmdb::get_api_key(config);
 
     if api_key.is_none() {
         let input = prompt("TMDb API key not found. Enter key (or Enter to skip): ")?;

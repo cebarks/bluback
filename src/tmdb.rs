@@ -3,6 +3,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
+use crate::config::Config;
 use crate::types::{Episode, TmdbMovie, TmdbShow};
 
 fn config_path() -> PathBuf {
@@ -12,13 +13,8 @@ fn config_path() -> PathBuf {
     home.join(".config").join("bluback").join("tmdb_api_key")
 }
 
-pub fn get_api_key() -> Option<String> {
-    let path = config_path();
-    if path.exists() {
-        fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
-    } else {
-        std::env::var("TMDB_API_KEY").ok()
-    }
+pub fn get_api_key(config: &Config) -> Option<String> {
+    config.tmdb_api_key()
 }
 
 pub fn save_api_key(key: &str) -> Result<()> {

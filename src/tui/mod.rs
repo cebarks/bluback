@@ -113,13 +113,13 @@ impl App {
     }
 }
 
-pub fn run(args: &Args) -> Result<()> {
+pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
     enable_raw_mode()?;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, args);
+    let result = run_app(&mut terminal, args, config);
 
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
@@ -127,7 +127,7 @@ pub fn run(args: &Args) -> Result<()> {
     result
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args) -> Result<()> {
+fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, config: &crate::config::Config) -> Result<()> {
     let mut app = App::new(args.clone());
 
     // Initial scan (blocking -- runs before event loop)
@@ -141,7 +141,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args) -
     app.playlists = crate::disc::scan_playlists(&device)?;
     app.episodes_pl = crate::disc::filter_episodes(&app.playlists, args.min_duration)
         .into_iter().cloned().collect();
-    app.api_key = crate::tmdb::get_api_key();
+    app.api_key = crate::tmdb::get_api_key(config);
     app.status_message.clear();
 
     // Set movie mode from flag or auto-detect (single playlist)
