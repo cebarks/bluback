@@ -577,17 +577,12 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         Constraint::Min(30),
     ];
 
-    // Estimate rip time at ~2x read speed (conservative for USB Blu-ray drives)
-    let est_rip_secs = total_seconds / 2;
-    let rip_h = est_rip_secs / 3600;
-    let rip_m = (est_rip_secs % 3600) / 60;
-    let content_h = total_seconds / 3600;
-    let content_m = (total_seconds % 3600) / 60;
+    let total_h = total_seconds / 3600;
+    let total_m = (total_seconds % 3600) / 60;
     let summary_title = format!(
-        "Summary — ~{}, ~{}h {:02}m content, ~{}h {:02}m to rip",
+        "Summary — ~{} total, ~{}h {:02}m of content",
         crate::util::format_size(total_est_bytes),
-        content_h, content_m,
-        rip_h, rip_m,
+        total_h, total_m,
     );
 
     let table = Table::new(rows, &widths)
