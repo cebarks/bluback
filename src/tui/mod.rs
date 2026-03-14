@@ -178,6 +178,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args) -
         })?;
 
         if app.quit {
+            if let Some(ref mut child) = app.rip_child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             break;
         }
 
