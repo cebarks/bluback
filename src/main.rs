@@ -1,4 +1,5 @@
 mod cli;
+mod config;
 mod disc;
 mod rip;
 mod tmdb;
