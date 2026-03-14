@@ -352,7 +352,7 @@ def main():
 
     # TMDb lookup
     episode_assignments = {}
-    season_num = args.season or label_info.get("season")
+    season_num = args.season if args.season is not None else label_info.get("season")
     api_key = get_tmdb_api_key()
 
     if api_key is None:
@@ -362,12 +362,13 @@ def main():
             api_key = setup
             print(f"  Saved to {TMDB_API_KEY_FILE}")
 
-    if api_key is None and (args.season or args.start_episode):
+    if api_key is None and (args.season is not None or args.start_episode is not None):
         print("Warning: --season/--start-episode require TMDb. Ignoring.")
 
     if api_key:
         default_query = label_info.get("show", "")
-        episodes, show_id, season_num = prompt_tmdb(api_key, default_query, args.season or label_info.get("season"))
+        cli_season = args.season if args.season is not None else label_info.get("season")
+        episodes, show_id, season_num = prompt_tmdb(api_key, default_query, cli_season)
 
         if episodes:
             # Determine starting episode
