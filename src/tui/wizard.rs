@@ -39,13 +39,35 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     .block(Block::default().borders(Borders::ALL).title("Step 1: TMDb Search"));
     f.render_widget(title, chunks[0]);
 
-    let input = Paragraph::new(format!("{}|", app.input_buffer))
-        .block(Block::default().borders(Borders::ALL).title("Search query"));
-    f.render_widget(input, chunks[1]);
+    if app.api_key.is_none() {
+        let content_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(2), Constraint::Length(3), Constraint::Min(0)])
+            .split(chunks[1]);
 
-    let hints = Paragraph::new("Enter: Search | Esc: Skip TMDb | q: Quit")
-        .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(hints, chunks[2]);
+        let msg = Paragraph::new("No TMDb API key found. Enter your key to enable episode naming:");
+        f.render_widget(msg, content_chunks[0]);
+
+        let input = Paragraph::new(format!("{}|", app.input_buffer))
+            .block(Block::default().borders(Borders::ALL).title("TMDb API Key"));
+        f.render_widget(input, content_chunks[1]);
+
+        let hints = Paragraph::new("Enter: Save key | Esc: Skip TMDb")
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(hints, chunks[2]);
+    } else {
+        let mut lines = vec![Line::from(format!("{}|", app.input_buffer))];
+        if !app.status_message.is_empty() {
+            lines.push(Line::from(app.status_message.as_str()).style(Style::default().fg(Color::Yellow)));
+        }
+        let input = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Search query"));
+        f.render_widget(input, chunks[1]);
+
+        let hints = Paragraph::new("Enter: Search | Esc: Skip TMDb | q: Quit")
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(hints, chunks[2]);
+    }
 }
 
 pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
@@ -53,12 +75,26 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
         KeyCode::Char(c) => app.input_buffer.push(c),
         KeyCode::Backspace => { app.input_buffer.pop(); }
         KeyCode::Enter => {
-            let query = app.input_buffer.trim().to_string();
-            if query.is_empty() {
+            let input = app.input_buffer.trim().to_string();
+            if input.is_empty() {
                 return;
             }
+
+            // If no API key yet, treat input as the API key
+            if app.api_key.is_none() {
+                if let Err(e) = tmdb::save_api_key(&input) {
+                    app.status_message = format!("Failed to save API key: {}", e);
+                    return;
+                }
+                app.api_key = Some(input);
+                app.input_buffer = app.search_query.clone();
+                app.status_message.clear();
+                return;
+            }
+
+            // Otherwise treat input as search query
             if let Some(ref api_key) = app.api_key.clone() {
-                match tmdb::search_show(&query, api_key) {
+                match tmdb::search_show(&input, api_key) {
                     Ok(results) => {
                         if results.is_empty() {
                             app.status_message = "No results found.".into();
@@ -66,6 +102,7 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
                             app.search_results = results;
                             app.list_cursor = 0;
                             app.input_active = false;
+                            app.status_message.clear();
                             app.screen = Screen::ShowSelect;
                         }
                     }

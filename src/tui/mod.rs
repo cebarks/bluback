@@ -148,12 +148,14 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args) -
     if app.episodes_pl.is_empty() {
         app.status_message = "No episode-length playlists found.".into();
         app.screen = Screen::Done;
-    } else if app.api_key.is_some() {
+    } else {
         app.screen = Screen::TmdbSearch;
         app.input_active = true;
-        app.input_buffer = app.search_query.clone();
-    } else {
-        app.screen = Screen::PlaylistSelect;
+        app.input_buffer = if app.api_key.is_none() {
+            String::new() // Will prompt for API key first
+        } else {
+            app.search_query.clone()
+        };
     }
 
     // Event loop
