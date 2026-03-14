@@ -61,13 +61,13 @@ fn main() -> anyhow::Result<()> {
 
     disc::check_dependencies()?;
 
-    let config = config::load_config();
+    let _config = config::load_config(); // TODO(task7): Pass config to run functions
     let use_tui = !args.no_tui && atty_stdout();
 
     if use_tui {
-        tui::run(&args, &config)
+        tui::run(&args) // TODO(task7): Pass &config
     } else {
-        cli::run(&args, &config)
+        cli::run(&args) // TODO(task7): Pass &config
     }
 }
 
