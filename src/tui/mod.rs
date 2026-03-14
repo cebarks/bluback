@@ -134,6 +134,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args) -
     app.episodes_pl = crate::disc::filter_episodes(&app.playlists, args.min_duration)
         .into_iter().cloned().collect();
     app.api_key = crate::tmdb::get_api_key();
+    app.status_message.clear();
 
     // Pre-fill from label/args
     if let Some(ref info) = app.label_info {
