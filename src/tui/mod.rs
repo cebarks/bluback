@@ -8,6 +8,7 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use std::collections::HashMap;
 use std::io;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::types::*;
@@ -58,6 +59,10 @@ pub struct App {
     // Rip state
     pub rip_jobs: Vec<RipJob>,
     pub current_rip: usize,
+    pub rip_child: Option<std::process::Child>,
+    pub progress_rx: Option<mpsc::Receiver<String>>,
+    pub progress_state: HashMap<String, String>,
+    pub confirm_abort: bool,
 
     // Status/error messages
     pub status_message: String,
@@ -88,6 +93,10 @@ impl App {
             input_active: false,
             rip_jobs: Vec::new(),
             current_rip: 0,
+            rip_child: None,
+            progress_rx: None,
+            progress_state: HashMap::new(),
+            confirm_abort: false,
             status_message: String::new(),
         }
     }
@@ -169,8 +178,11 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args) -
         // Poll for events
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                // Global quit
-                if key.code == KeyCode::Char('q') && !app.input_active {
+                // Global quit (not during ripping -- dashboard handles its own q)
+                if key.code == KeyCode::Char('q')
+                    && !app.input_active
+                    && app.screen != Screen::Ripping
+                {
                     app.quit = true;
                     continue;
                 }
