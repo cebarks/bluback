@@ -193,6 +193,15 @@ def assign_episodes(playlists: list[dict], episodes: list[dict], start_episode: 
     return assignments
 
 
+def format_size(num_bytes: int) -> str:
+    """Format byte count with adaptive units (B, KiB, MiB, GiB, TiB)."""
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if abs(num_bytes) < 1024:
+            return f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024
+    return f"{num_bytes:.1f} TiB"
+
+
 def check_dependencies():
     """Verify ffmpeg and ffprobe are available on PATH."""
     missing = []
@@ -476,6 +485,8 @@ def main():
 
         cmd = [
             "ffmpeg", "-y",
+            "-loglevel", "error", "-nostats",
+            "-progress", "pipe:1",
             "-playlist", pl["num"],
             "-i", f"bluray:{device}",
             *map_args,
@@ -483,13 +494,64 @@ def main():
             str(outfile),
         ]
 
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            print(f"Error: ffmpeg exited with code {result.returncode}")
+        total_seconds = pl["seconds"]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+        progress = {}
+        for line in proc.stdout:
+            line = line.strip()
+            if "=" in line:
+                key, val = line.split("=", 1)
+                progress[key] = val
+            if line.startswith("progress="):
+                frame = progress.get("frame", "0")
+                fps = progress.get("fps", "0")
+                raw_size = progress.get("total_size", "0")
+                size_bytes = int(raw_size) if raw_size.lstrip("-").isdigit() else 0
+                size = format_size(size_bytes)
+                raw_time = progress.get("out_time", "00:00:00")
+                time_display = raw_time.split(".")[0] if "." in raw_time else raw_time
+                bitrate = progress.get("bitrate", "0")
+                speed_str = progress.get("speed", "0x")
+
+                # Estimate final size and ETA
+                current_us = progress.get("out_time_us", "0")
+                current_secs = int(current_us) / 1_000_000 if current_us.lstrip("-").isdigit() else 0
+
+                est_size = ""
+                if current_secs > 0 and total_seconds > 0:
+                    est_bytes = int(size_bytes / current_secs * total_seconds)
+                    est_size = f"~{format_size(est_bytes)}"
+
+                eta = ""
+                try:
+                    spd = float(speed_str.rstrip("x"))
+                    if spd > 0 and total_seconds > 0:
+                        remaining = (total_seconds - current_secs) / spd
+                        if remaining > 0:
+                            mins, secs = divmod(int(remaining), 60)
+                            hrs, mins = divmod(mins, 60)
+                            eta = f"{hrs}:{mins:02d}:{secs:02d}" if hrs else f"{mins}:{secs:02d}"
+                except (ValueError, ZeroDivisionError):
+                    pass
+
+                parts = [f"frame={frame}", f"fps={fps}", f"size={size}",
+                         f"time={time_display}", f"bitrate={bitrate}", f"speed={speed_str}"]
+                if est_size:
+                    parts.append(f"est={est_size}")
+                if eta:
+                    parts.append(f"eta={eta}")
+                status = "  " + " ".join(parts)
+                print(f"\r{status:<100}", end="", flush=True)
+
+        proc.wait()
+        print()
+
+        if proc.returncode != 0:
+            print(f"Error: ffmpeg exited with code {proc.returncode}")
             continue
 
-        size = outfile.stat().st_size / (1024 ** 3)
-        print(f"Done: {outfile.name} ({size:.1f} GB)")
+        final_size = outfile.stat().st_size
+        print(f"Done: {outfile.name} ({format_size(final_size)})")
 
     print(f"\nAll done! Ripped {len(selected)} playlist(s) to {outdir}")
 

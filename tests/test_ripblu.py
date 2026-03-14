@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label, filter_episodes, guess_start_episode, assign_episodes, parse_selection
+from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label, filter_episodes, guess_start_episode, assign_episodes, parse_selection, format_size
 
 
 class TestDurationToSeconds:
@@ -186,3 +186,23 @@ class TestParseSelection:
 
     def test_open_ended_range_from_1(self):
         assert parse_selection("1-", max_val=3) == [0, 1, 2]
+
+
+class TestFormatSize:
+    def test_bytes(self):
+        assert format_size(500) == "500.0 B"
+
+    def test_kib(self):
+        assert format_size(2048) == "2.0 KiB"
+
+    def test_mib(self):
+        assert format_size(5 * 1024 * 1024) == "5.0 MiB"
+
+    def test_gib(self):
+        assert format_size(3 * 1024 ** 3) == "3.0 GiB"
+
+    def test_tib(self):
+        assert format_size(2 * 1024 ** 4) == "2.0 TiB"
+
+    def test_fractional(self):
+        assert format_size(int(1.5 * 1024 ** 3)) == "1.5 GiB"
