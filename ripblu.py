@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -178,6 +179,47 @@ def assign_episodes(playlists: list[dict], episodes: list[dict], start_episode: 
         if ep_num in ep_by_num:
             assignments[pl["num"]] = ep_by_num[ep_num]
     return assignments
+
+
+def check_dependencies():
+    """Verify ffmpeg and ffprobe are available on PATH."""
+    missing = []
+    for cmd in ("ffmpeg", "ffprobe"):
+        if shutil.which(cmd) is None:
+            missing.append(cmd)
+    if missing:
+        print(f"Error: required commands not found: {', '.join(missing)}")
+        print("Install ffmpeg with libbluray support.")
+        sys.exit(1)
+
+
+def parse_selection(text: str, max_val: int) -> list[int] | None:
+    """Parse a playlist selection string into 0-based indices.
+    Returns None if the input is invalid."""
+    text = text.strip()
+    if not text:
+        return None
+    if text == "all":
+        return list(range(max_val))
+
+    indices = []
+    try:
+        for part in text.split(","):
+            part = part.strip()
+            if "-" in part:
+                start_s, end_s = part.split("-", 1)
+                start, end = int(start_s), int(end_s)
+                if start > end or start < 1 or end > max_val:
+                    return None
+                indices.extend(range(start - 1, end))
+            else:
+                val = int(part)
+                if val < 1 or val > max_val:
+                    return None
+                indices.append(val - 1)
+    except ValueError:
+        return None
+    return indices if indices else None
 
 
 def prompt_tmdb(api_key: str) -> tuple[list[dict] | None, int | None, int | None]:

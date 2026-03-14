@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label, filter_episodes, guess_start_episode, assign_episodes
+from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label, filter_episodes, guess_start_episode, assign_episodes, parse_selection
 
 
 class TestDurationToSeconds:
@@ -148,3 +148,35 @@ class TestAssignEpisodes:
         ]
         result = assign_episodes(playlists, [], start_episode=1)
         assert result == {}
+
+
+class TestParseSelection:
+    def test_single_number(self):
+        assert parse_selection("2", max_val=5) == [1]
+
+    def test_comma_separated(self):
+        assert parse_selection("1,3,5", max_val=5) == [0, 2, 4]
+
+    def test_range(self):
+        assert parse_selection("2-4", max_val=5) == [1, 2, 3]
+
+    def test_mixed(self):
+        assert parse_selection("1,3-5", max_val=5) == [0, 2, 3, 4]
+
+    def test_all(self):
+        assert parse_selection("all", max_val=3) == [0, 1, 2]
+
+    def test_out_of_bounds(self):
+        assert parse_selection("6", max_val=5) is None
+
+    def test_zero(self):
+        assert parse_selection("0", max_val=5) is None
+
+    def test_invalid(self):
+        assert parse_selection("abc", max_val=5) is None
+
+    def test_empty(self):
+        assert parse_selection("", max_val=5) is None
+
+    def test_reversed_range(self):
+        assert parse_selection("4-2", max_val=5) is None
