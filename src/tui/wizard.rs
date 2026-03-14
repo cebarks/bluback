@@ -543,7 +543,7 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     .block(Block::default().borders(Borders::ALL).title("Step 5: Confirm"));
     f.render_widget(title, chunks[0]);
 
-    let header = Row::new(vec!["Playlist", "Duration", "Output File"])
+    let header = Row::new(vec!["Playlist", "Duration", "~Size", "Output File"])
         .style(Style::default().fg(Color::Yellow));
 
     let selected_playlists: Vec<&crate::types::Playlist> = app.episodes_pl.iter()
@@ -552,19 +552,42 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         .map(|(_, pl)| pl)
         .collect();
 
+    // Estimate ~40 Mbps (5 MB/s) for Blu-ray remux
+    const ESTIMATED_BYTERATE: u64 = 5 * 1024 * 1024;
+
+    let mut total_seconds: u32 = 0;
+    let mut total_est_bytes: u64 = 0;
+
     let rows: Vec<Row> = selected_playlists.iter().zip(app.filenames.iter()).map(|(pl, name)| {
-        Row::new(vec![pl.num.clone(), pl.duration.clone(), name.clone()])
+        total_seconds += pl.seconds;
+        let est_bytes = pl.seconds as u64 * ESTIMATED_BYTERATE;
+        total_est_bytes += est_bytes;
+        Row::new(vec![
+            pl.num.clone(),
+            pl.duration.clone(),
+            format!("~{}", crate::util::format_size(est_bytes)),
+            name.clone(),
+        ])
     }).collect();
 
     let widths = [
         Constraint::Length(10),
         Constraint::Length(10),
+        Constraint::Length(12),
         Constraint::Min(30),
     ];
 
+    let total_h = total_seconds / 3600;
+    let total_m = (total_seconds % 3600) / 60;
+    let summary_title = format!(
+        "Summary — ~{} total, ~{}h {:02}m of content",
+        crate::util::format_size(total_est_bytes),
+        total_h, total_m,
+    );
+
     let table = Table::new(rows, &widths)
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title("Summary"));
+        .block(Block::default().borders(Borders::ALL).title(summary_title));
     f.render_widget(table, chunks[1]);
 
     let hints = Paragraph::new("Enter: Start Ripping | Esc: Back")
