@@ -22,7 +22,7 @@ pub fn duration_to_seconds(dur: &str) -> u32 {
 pub fn sanitize_filename(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .filter(|c| !r#"/<>:"|?*"#.contains(*c))
+        .filter(|c| !UNSAFE_PATH_CHARS.contains(c) && *c != '\0')
         .collect();
     cleaned.replace(' ', "_")
 }
@@ -297,6 +297,11 @@ mod tests {
     #[test]
     fn test_sanitize_preserves_parens() {
         assert_eq!(sanitize_filename("Earth (Part 1)"), "Earth_(Part_1)");
+    }
+
+    #[test]
+    fn test_sanitize_backslash_and_null() {
+        assert_eq!(sanitize_filename("test\\path\0here"), "testpathhere");
     }
 
     #[test]
