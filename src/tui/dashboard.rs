@@ -22,15 +22,20 @@ pub fn render(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // title
+            Constraint::Length(3),  // title + stats
             Constraint::Min(4),    // job table
-            Constraint::Length(3), // stats / status bar
             Constraint::Length(1), // key hints
         ])
         .split(f.area());
 
-    // Title
-    let title = Paragraph::new(format!("Ripping: {}/{} complete", done_count, total))
+    // Title with stats
+    let stats_text = active_rip_stats(app);
+    let title_text = if stats_text.is_empty() {
+        format!("Ripping: {}/{} complete", done_count, total)
+    } else {
+        format!("Ripping: {}/{} complete  │  {}", done_count, total, stats_text)
+    };
+    let title = Paragraph::new(title_text)
         .block(Block::default().borders(Borders::ALL).title("bluback"));
     f.render_widget(title, chunks[0]);
 
@@ -98,12 +103,6 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Jobs"));
     f.render_widget(table, chunks[1]);
 
-    // Stats bar: show ffmpeg details for the active rip
-    let stats_text = active_rip_stats(app);
-    let stats = Paragraph::new(stats_text)
-        .block(Block::default().borders(Borders::ALL).title("Stats"));
-    f.render_widget(stats, chunks[2]);
-
     // Key hints / abort confirmation
     let hint = if app.confirm_abort {
         Paragraph::new("Really abort? [y] Yes  [n] No")
@@ -112,7 +111,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Paragraph::new("[q] Abort")
             .style(Style::default().fg(Color::DarkGray))
     };
-    f.render_widget(hint, chunks[3]);
+    f.render_widget(hint, chunks[2]);
 }
 
 pub fn render_done(f: &mut Frame, app: &App) {
