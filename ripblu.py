@@ -259,9 +259,11 @@ def prompt_tmdb(api_key: str, default_query: str = "",
         print(f"    {i+1}. {show['name']} ({year})")
 
     while True:
-        pick = input("  Select show (1-5, or Enter to skip): ").strip()
-        if not pick:
+        pick = input("  Select show (1-5, Enter for 1, 's' to skip): ").strip()
+        if pick.lower() == "s":
             return None, None, None
+        if not pick:
+            pick = "1"
         if pick.isdigit() and 1 <= int(pick) <= len(results[:5]):
             break
         print("  Invalid selection.")
