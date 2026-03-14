@@ -514,8 +514,7 @@ def main():
                 speed_str = progress.get("speed", "0x")
 
                 # Estimate final size and ETA
-                current_us = progress.get("out_time_us", "0")
-                current_secs = int(current_us) / 1_000_000 if current_us.lstrip("-").isdigit() else 0
+                current_secs = duration_to_seconds(time_display)
 
                 est_size = ""
                 if current_secs > 0 and total_seconds > 0:
