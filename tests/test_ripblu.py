@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label, filter_episodes
+from ripblu import duration_to_seconds, sanitize_filename, parse_volume_label, filter_episodes, guess_start_episode, assign_episodes
 
 
 class TestDurationToSeconds:
@@ -84,3 +84,67 @@ class TestFilterEpisodes:
         ]
         result = filter_episodes(playlists, min_duration=900)
         assert len(result) == 0
+
+
+class TestGuessStartEpisode:
+    def test_disc_1(self):
+        assert guess_start_episode(disc_number=1, episodes_on_disc=5) == 1
+
+    def test_disc_2(self):
+        assert guess_start_episode(disc_number=2, episodes_on_disc=5) == 6
+
+    def test_disc_3(self):
+        assert guess_start_episode(disc_number=3, episodes_on_disc=4) == 9
+
+    def test_no_disc_number(self):
+        assert guess_start_episode(disc_number=None, episodes_on_disc=5) == 1
+
+    def test_zero_episodes(self):
+        assert guess_start_episode(disc_number=2, episodes_on_disc=0) == 1
+
+
+class TestAssignEpisodes:
+    def test_basic_assignment(self):
+        playlists = [
+            {"num": "00001", "duration": "0:43:00", "seconds": 2580},
+            {"num": "00002", "duration": "0:44:00", "seconds": 2640},
+        ]
+        episodes = [
+            {"episode_number": 1, "name": "Pilot", "runtime": 44},
+            {"episode_number": 2, "name": "Second", "runtime": 44},
+            {"episode_number": 3, "name": "Third", "runtime": 44},
+        ]
+        result = assign_episodes(playlists, episodes, start_episode=1)
+        assert result["00001"]["name"] == "Pilot"
+        assert result["00002"]["name"] == "Second"
+
+    def test_start_offset(self):
+        playlists = [
+            {"num": "00003", "duration": "0:43:00", "seconds": 2580},
+        ]
+        episodes = [
+            {"episode_number": 1, "name": "Pilot", "runtime": 44},
+            {"episode_number": 2, "name": "Second", "runtime": 44},
+            {"episode_number": 3, "name": "Third", "runtime": 44},
+        ]
+        result = assign_episodes(playlists, episodes, start_episode=3)
+        assert result["00003"]["name"] == "Third"
+
+    def test_overflow_past_episode_list(self):
+        playlists = [
+            {"num": "00001", "duration": "0:43:00", "seconds": 2580},
+            {"num": "00002", "duration": "0:44:00", "seconds": 2640},
+        ]
+        episodes = [
+            {"episode_number": 1, "name": "Pilot", "runtime": 44},
+        ]
+        result = assign_episodes(playlists, episodes, start_episode=1)
+        assert result["00001"]["name"] == "Pilot"
+        assert "00002" not in result
+
+    def test_empty_episodes(self):
+        playlists = [
+            {"num": "00001", "duration": "0:43:00", "seconds": 2580},
+        ]
+        result = assign_episodes(playlists, [], start_episode=1)
+        assert result == {}

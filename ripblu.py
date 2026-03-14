@@ -80,6 +80,13 @@ def filter_episodes(playlists: list[dict], min_duration: int = 900) -> list[dict
     return [pl for pl in playlists if pl["seconds"] >= min_duration]
 
 
+def guess_start_episode(disc_number: int | None, episodes_on_disc: int) -> int:
+    """Guess starting episode number based on disc number and episodes per disc."""
+    if not disc_number or disc_number < 1 or episodes_on_disc < 1:
+        return 1
+    return 1 + episodes_on_disc * (disc_number - 1)
+
+
 def probe_streams(device: str, playlist_num: str) -> dict:
     result = subprocess.run(
         ["ffprobe", "-playlist", playlist_num, "-i", f"bluray:{device}"],
@@ -161,25 +168,16 @@ def get_volume_label(device: str) -> str:
         return ""
 
 
-def match_episodes(playlists: list[dict], episodes: list[dict], threshold: int = 120) -> dict[str, dict]:
-    """Match playlists to episodes by duration. Returns {playlist_num: episode}."""
-    matches = {}
-    unmatched_episodes = list(episodes)
-
-    for pl in playlists:
-        best_match = None
-        best_diff = threshold + 1
-        for ep in unmatched_episodes:
-            ep_seconds = (ep.get("runtime") or 0) * 60
-            diff = abs(pl["seconds"] - ep_seconds)
-            if diff < best_diff:
-                best_diff = diff
-                best_match = ep
-        if best_match and best_diff <= threshold:
-            matches[pl["num"]] = best_match
-            unmatched_episodes.remove(best_match)
-
-    return matches
+def assign_episodes(playlists: list[dict], episodes: list[dict], start_episode: int) -> dict[str, dict]:
+    """Assign episodes to playlists sequentially starting from start_episode.
+    Returns {playlist_num: episode} for playlists that have a matching episode."""
+    assignments = {}
+    ep_by_num = {ep["episode_number"]: ep for ep in episodes}
+    for i, pl in enumerate(playlists):
+        ep_num = start_episode + i
+        if ep_num in ep_by_num:
+            assignments[pl["num"]] = ep_by_num[ep_num]
+    return assignments
 
 
 def prompt_tmdb(api_key: str) -> tuple[list[dict] | None, int | None, int | None]:
@@ -265,7 +263,7 @@ def main():
     if api_key:
         episodes, show_id, season_num = prompt_tmdb(api_key)
         if episodes:
-            episode_matches = match_episodes(playlists, episodes)
+            episode_matches = assign_episodes(playlists, episodes, start_episode=1)
 
     # Display playlists
     print(f"\nFound {len(playlists)} playlists:\n")
