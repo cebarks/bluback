@@ -391,16 +391,27 @@ fn render_progress_bar(pct: u32, width: usize) -> String {
 fn active_rip_stats(app: &App) -> String {
     if let Some(job) = app.rip_jobs.get(app.current_rip) {
         if let PlaylistStatus::Ripping(ref prog) = job.status {
-            let mins = prog.out_time_secs / 60;
-            let secs = prog.out_time_secs % 60;
+            let time_str = rip::format_eta(prog.out_time_secs);
+            let bitrate_str = if prog.bitrate.is_empty()
+                || prog.bitrate == "N/A"
+                || prog.bitrate == "0"
+            {
+                "-".to_string()
+            } else {
+                prog.bitrate.clone()
+            };
+            let speed_str = if prog.speed > 0.0 {
+                format!("{:.2}x", prog.speed)
+            } else {
+                "-".to_string()
+            };
             return format!(
-                "fps: {:.1}  size: {}  time: {:02}:{:02}  bitrate: {}  speed: {:.2}x",
+                "fps: {:.1}  size: {}  time: {}  bitrate: {}  speed: {}",
                 prog.fps,
                 format_size(prog.total_size),
-                mins,
-                secs,
-                prog.bitrate,
-                prog.speed,
+                time_str,
+                bitrate_str,
+                speed_str,
             );
         }
     }
