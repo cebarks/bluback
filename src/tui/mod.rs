@@ -162,6 +162,10 @@ fn start_disc_scan(app: &mut App) {
             std::thread::sleep(Duration::from_secs(2));
         };
 
+        if tx.send(BackgroundResult::DiscFound(found.clone())).is_err() {
+            return;
+        }
+
         if max_speed {
             crate::disc::set_max_speed(&found);
         }
@@ -374,26 +378,27 @@ fn poll_background(app: &mut App) {
         }
     };
 
-    if let BackgroundResult::WaitingForDisc(ref msg) = result {
-        // Replace the last log entry if it's for the same device, otherwise append
-        let device_prefix = msg.split(" — ").next().unwrap_or("");
-        if let Some(last) = app.scan_log.last() {
-            if last.starts_with(device_prefix) {
-                // Same device, no change needed
-            } else {
+    match result {
+        BackgroundResult::WaitingForDisc(ref msg) => {
+            // Append log entry for each new device tried
+            let device_prefix = msg.split(" — ").next().unwrap_or("");
+            if !app.scan_log.iter().any(|l| l.starts_with(device_prefix)) {
                 app.scan_log.push(msg.clone());
             }
-        } else {
-            app.scan_log.push(msg.clone());
+            app.status_message = "Waiting for disc...".into();
+            return; // Keep pending_rx alive
         }
-        app.status_message = "Waiting for disc...".into();
-        return; // Keep pending_rx alive
+        BackgroundResult::DiscFound(ref device) => {
+            app.status_message = format!("Scanning {}...", device);
+            return; // Keep pending_rx alive
+        }
+        _ => {}
     }
 
     app.pending_rx = None;
 
     match result {
-        BackgroundResult::WaitingForDisc(_) => unreachable!(),
+        BackgroundResult::WaitingForDisc(_) | BackgroundResult::DiscFound(_) => unreachable!(),
         BackgroundResult::DiscScan(Ok((device, label, playlists))) => {
             // Update device to the one that had the disc
             app.args.device = Some(std::path::PathBuf::from(device));

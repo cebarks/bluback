@@ -128,6 +128,8 @@ pub struct TmdbLookupResult {
 pub enum BackgroundResult {
     /// No disc detected on this device
     WaitingForDisc(String),
+    /// Disc found, now scanning playlists
+    DiscFound(String),
     /// Disc scan completed: (device, label, playlists)
     DiscScan(anyhow::Result<(String, String, Vec<Playlist>)>),
     /// TMDb show search completed
