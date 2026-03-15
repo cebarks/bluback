@@ -6,10 +6,12 @@ use std::sync::LazyLock;
 use crate::types::{LabelInfo, MediaInfo, Playlist, StreamInfo};
 use crate::util::duration_to_seconds;
 
-static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| [
-    Regex::new(r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)").unwrap(),
-    Regex::new(r"(?i)^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)").unwrap(),
-]);
+static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
+    [
+        Regex::new(r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)").unwrap(),
+        Regex::new(r"(?i)^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)").unwrap(),
+    ]
+});
 
 static PLAYLIST_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").unwrap());
@@ -73,18 +75,30 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>> {
         let num = caps[1].to_string();
         let duration = caps[2].to_string();
         let seconds = duration_to_seconds(&duration);
-        playlists.push(Playlist { num, duration, seconds });
+        playlists.push(Playlist {
+            num,
+            duration,
+            seconds,
+        });
     }
     Ok(playlists)
 }
 
 pub fn filter_episodes(playlists: &[Playlist], min_duration: u32) -> Vec<&Playlist> {
-    playlists.iter().filter(|pl| pl.seconds >= min_duration).collect()
+    playlists
+        .iter()
+        .filter(|pl| pl.seconds >= min_duration)
+        .collect()
 }
 
 pub fn probe_streams(device: &str, playlist_num: &str) -> Option<StreamInfo> {
     let output = Command::new("ffprobe")
-        .args(["-playlist", playlist_num, "-i", &format!("bluray:{}", device)])
+        .args([
+            "-playlist",
+            playlist_num,
+            "-i",
+            &format!("bluray:{}", device),
+        ])
         .output()
         .ok()?;
 
@@ -105,36 +119,64 @@ pub fn probe_streams(device: &str, playlist_num: &str) -> Option<StreamInfo> {
             sub_count += 1;
         }
     }
-    Some(StreamInfo { audio_streams, sub_count })
+    Some(StreamInfo {
+        audio_streams,
+        sub_count,
+    })
 }
 
 pub fn parse_media_info_json(json: &serde_json::Value) -> Option<MediaInfo> {
     let streams = json.get("streams")?.as_array()?;
 
-    let video = streams.iter().find(|s| {
-        s.get("codec_type").and_then(|v| v.as_str()) == Some("video")
-    })?;
+    let video = streams
+        .iter()
+        .find(|s| s.get("codec_type").and_then(|v| v.as_str()) == Some("video"))?;
 
-    let audio = streams.iter().find(|s| {
-        s.get("codec_type").and_then(|v| v.as_str()) == Some("audio")
-    });
+    let audio = streams
+        .iter()
+        .find(|s| s.get("codec_type").and_then(|v| v.as_str()) == Some("audio"));
 
     let width = video.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let height = video.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    let resolution = if height > 0 { format!("{}p", height) } else { String::new() };
+    let resolution = if height > 0 {
+        format!("{}p", height)
+    } else {
+        String::new()
+    };
 
-    let codec = video.get("codec_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let aspect_ratio = video.get("display_aspect_ratio").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let bit_depth = video.get("bits_per_raw_sample").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let profile_str = video.get("profile").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let codec = video
+        .get("codec_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let aspect_ratio = video
+        .get("display_aspect_ratio")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let bit_depth = video
+        .get("bits_per_raw_sample")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let profile_str = video
+        .get("profile")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
-    let framerate = video.get("r_frame_rate")
+    let framerate = video
+        .get("r_frame_rate")
         .and_then(|v| v.as_str())
         .map(|fr| {
             if let Some((num, den)) = fr.split_once('/') {
                 let n: f64 = num.parse().unwrap_or(0.0);
                 let d: f64 = den.parse().unwrap_or(1.0);
-                if d > 0.0 { format!("{:.3}", n / d) } else { fr.to_string() }
+                if d > 0.0 {
+                    format!("{:.3}", n / d)
+                } else {
+                    fr.to_string()
+                }
             } else {
                 fr.to_string()
             }
@@ -142,25 +184,38 @@ pub fn parse_media_info_json(json: &serde_json::Value) -> Option<MediaInfo> {
         .unwrap_or_default();
 
     // HDR detection
-    let color_transfer = video.get("color_transfer").and_then(|v| v.as_str()).unwrap_or("");
+    let color_transfer = video
+        .get("color_transfer")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let side_data = video.get("side_data_list").and_then(|v| v.as_array());
 
-    let has_dovi = side_data.map(|sd| {
-        sd.iter().any(|entry| {
-            entry.get("side_data_type").and_then(|v| v.as_str()) == Some("DOVI configuration record")
+    let has_dovi = side_data
+        .map(|sd| {
+            sd.iter().any(|entry| {
+                entry.get("side_data_type").and_then(|v| v.as_str())
+                    == Some("DOVI configuration record")
+            })
         })
-    }).unwrap_or(false);
+        .unwrap_or(false);
 
-    let has_hdr10plus = side_data.map(|sd| {
-        sd.iter().any(|entry| {
-            entry.get("side_data_type").and_then(|v| v.as_str()) == Some("HDR Dynamic Metadata SMPTE2094-40")
+    let has_hdr10plus = side_data
+        .map(|sd| {
+            sd.iter().any(|entry| {
+                entry.get("side_data_type").and_then(|v| v.as_str())
+                    == Some("HDR Dynamic Metadata SMPTE2094-40")
+            })
         })
-    }).unwrap_or(false);
+        .unwrap_or(false);
 
     let hdr = if color_transfer == "smpte2084" {
-        if has_dovi { "DV".to_string() }
-        else if has_hdr10plus { "HDR10+".to_string() }
-        else { "HDR10".to_string() }
+        if has_dovi {
+            "DV".to_string()
+        } else if has_hdr10plus {
+            "HDR10+".to_string()
+        } else {
+            "HDR10".to_string()
+        }
     } else if color_transfer == "arib-std-b67" {
         "HLG".to_string()
     } else {
@@ -178,7 +233,10 @@ pub fn parse_media_info_json(json: &serde_json::Value) -> Option<MediaInfo> {
             codec_name.to_string()
         };
 
-        let channels = a.get("channel_layout").and_then(|v| v.as_str()).unwrap_or("");
+        let channels = a
+            .get("channel_layout")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let channel_count = a.get("channels").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
         let ch_str = if !channels.is_empty() {
             if channels.starts_with("stereo") {
@@ -199,7 +257,8 @@ pub fn parse_media_info_json(json: &serde_json::Value) -> Option<MediaInfo> {
             }
         };
 
-        let lang = a.get("tags")
+        let lang = a
+            .get("tags")
             .and_then(|t| t.get("language"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -211,20 +270,33 @@ pub fn parse_media_info_json(json: &serde_json::Value) -> Option<MediaInfo> {
     };
 
     Some(MediaInfo {
-        resolution, width, height, codec, hdr, aspect_ratio,
-        framerate, bit_depth, profile: profile_str,
-        audio: audio_codec, channels: audio_channels, audio_lang,
+        resolution,
+        width,
+        height,
+        codec,
+        hdr,
+        aspect_ratio,
+        framerate,
+        bit_depth,
+        profile: profile_str,
+        audio: audio_codec,
+        channels: audio_channels,
+        audio_lang,
     })
 }
 
 pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
     let output = Command::new("ffprobe")
         .args([
-            "-playlist", playlist_num,
-            "-print_format", "json",
+            "-playlist",
+            playlist_num,
+            "-print_format",
+            "json",
             "-show_streams",
-            "-loglevel", "quiet",
-            "-i", &format!("bluray:{}", device),
+            "-loglevel",
+            "quiet",
+            "-i",
+            &format!("bluray:{}", device),
         ])
         .output()
         .ok()?;
@@ -238,21 +310,14 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
 }
 
 pub fn set_max_speed(device: &str) {
-    let _ = Command::new("eject")
-        .args(["-x", "0", device])
-        .status();
+    let _ = Command::new("eject").args(["-x", "0", device]).status();
 }
 
 pub fn eject_disc(device: &str) -> anyhow::Result<()> {
-    let status = Command::new("eject")
-        .arg(device)
-        .status()?;
+    let status = Command::new("eject").arg(device).status()?;
 
     if !status.success() {
-        bail!(
-            "eject exited with code {}",
-            status.code().unwrap_or(-1)
-        );
+        bail!("eject exited with code {}", status.code().unwrap_or(-1));
     }
     Ok(())
 }
@@ -306,10 +371,26 @@ mod tests {
     #[test]
     fn test_filter_episodes() {
         let playlists = vec![
-            Playlist { num: "00001".into(), duration: "0:00:30".into(), seconds: 30 },
-            Playlist { num: "00002".into(), duration: "0:43:00".into(), seconds: 2580 },
-            Playlist { num: "00003".into(), duration: "0:44:00".into(), seconds: 2640 },
-            Playlist { num: "00004".into(), duration: "0:02:00".into(), seconds: 120 },
+            Playlist {
+                num: "00001".into(),
+                duration: "0:00:30".into(),
+                seconds: 30,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "0:43:00".into(),
+                seconds: 2580,
+            },
+            Playlist {
+                num: "00003".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+            },
+            Playlist {
+                num: "00004".into(),
+                duration: "0:02:00".into(),
+                seconds: 120,
+            },
         ];
         let result = filter_episodes(&playlists, 900);
         assert_eq!(result.len(), 2);

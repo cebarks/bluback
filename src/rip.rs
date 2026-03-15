@@ -7,8 +7,7 @@ use std::sync::LazyLock;
 use crate::types::{RipProgress, StreamInfo};
 use crate::util::duration_to_seconds;
 
-static SURROUND_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"5\.1|7\.1|surround").unwrap());
+static SURROUND_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"5\.1|7\.1|surround").unwrap());
 
 pub fn build_map_args(streams: &StreamInfo) -> Vec<String> {
     let mut args = vec!["-map".into(), "0:v:0".into()];
@@ -48,8 +47,20 @@ pub fn start_rip(
     outfile: &Path,
 ) -> anyhow::Result<Child> {
     let child = Command::new("ffmpeg")
-        .args(["-y", "-loglevel", "error", "-nostats", "-progress", "pipe:1"])
-        .args(["-playlist", playlist_num, "-i", &format!("bluray:{}", device)])
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-nostats",
+            "-progress",
+            "pipe:1",
+        ])
+        .args([
+            "-playlist",
+            playlist_num,
+            "-i",
+            &format!("bluray:{}", device),
+        ])
         .args(map_args)
         .args(["-c", "copy"])
         .arg(outfile)
@@ -60,10 +71,7 @@ pub fn start_rip(
     Ok(child)
 }
 
-pub fn parse_progress_line(
-    line: &str,
-    state: &mut HashMap<String, String>,
-) -> Option<RipProgress> {
+pub fn parse_progress_line(line: &str, state: &mut HashMap<String, String>) -> Option<RipProgress> {
     let line = line.trim();
     if let Some((key, val)) = line.split_once('=') {
         state.insert(key.to_string(), val.to_string());
@@ -73,30 +81,27 @@ pub fn parse_progress_line(
         return None;
     }
 
-    let frame = state.get("frame")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    let fps = state.get("fps")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0.0);
+    let frame = state.get("frame").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let fps = state.get("fps").and_then(|v| v.parse().ok()).unwrap_or(0.0);
 
-    let total_size = state.get("total_size")
+    let total_size = state
+        .get("total_size")
         .and_then(|v| v.parse::<i64>().ok())
         .map(|v| v.max(0) as u64)
         .unwrap_or(0);
 
-    let out_time_secs = state.get("out_time")
+    let out_time_secs = state
+        .get("out_time")
         .map(|v| {
             let truncated = v.split('.').next().unwrap_or("00:00:00");
             duration_to_seconds(truncated)
         })
         .unwrap_or(0);
 
-    let bitrate = state.get("bitrate")
-        .cloned()
-        .unwrap_or_else(|| "0".into());
+    let bitrate = state.get("bitrate").cloned().unwrap_or_else(|| "0".into());
 
-    let speed = state.get("speed")
+    let speed = state
+        .get("speed")
         .and_then(|v| v.trim_end_matches('x').parse().ok())
         .unwrap_or(0.0);
 
@@ -152,20 +157,16 @@ mod tests {
             sub_count: 2,
         };
         let args = build_map_args(&streams);
-        assert_eq!(args, vec![
-            "-map", "0:v:0",
-            "-map", "0:a:0",
-            "-map", "0:a:1",
-            "-map", "0:s?",
-        ]);
+        assert_eq!(
+            args,
+            vec!["-map", "0:v:0", "-map", "0:a:0", "-map", "0:a:1", "-map", "0:s?",]
+        );
     }
 
     #[test]
     fn test_build_map_args_no_surround() {
         let streams = StreamInfo {
-            audio_streams: vec![
-                "Stream #0:1: Audio: pcm, 48000 Hz, stereo, s16".into(),
-            ],
+            audio_streams: vec!["Stream #0:1: Audio: pcm, 48000 Hz, stereo, s16".into()],
             sub_count: 0,
         };
         let args = build_map_args(&streams);

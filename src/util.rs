@@ -44,42 +44,38 @@ pub fn render_template(template: &str, vars: &HashMap<&str, String>) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
 
+    const MARKER: char = '\u{200B}';
+
     static PLACEHOLDER_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\{([a-z_]+)\}").unwrap());
     static EMPTY_BRACKET_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\[[^\[\]]*\]").unwrap());
-    static MULTI_SPACE_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r" {2,}").unwrap());
-    static SPACE_BEFORE_DOT_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r" +\.").unwrap());
+    static MULTI_SPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" {2,}").unwrap());
+    static SPACE_BEFORE_DOT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" +\.").unwrap());
 
-    // 1. Substitute placeholders
+    // 1. Substitute placeholders; wrap non-empty values with zero-width space markers
     let result = PLACEHOLDER_RE.replace_all(template, |caps: &regex::Captures| {
         let key = &caps[1];
         match vars.get(key) {
-            Some(val) => val.clone(),
+            Some(val) if !val.is_empty() => format!("{}{}{}", MARKER, val, MARKER),
+            Some(_) => String::new(),
             None => caps[0].to_string(),
         }
     });
     let mut result = result.to_string();
 
-    // 2. Bracket cleanup: remove bracket groups whose contents are empty/whitespace/hyphens
-    // TODO(debt): This hardcodes "Bluray-" as a known filler prefix. Custom templates with
-    // other prefixes inside brackets would leave stale prefix text when placeholders are empty.
+    // 2. Bracket cleanup: collapse bracket groups that contain no markers
+    //    (i.e., all placeholders inside resolved to empty)
     loop {
         let cleaned = EMPTY_BRACKET_RE.replace_all(&result, |caps: &regex::Captures| {
             let full = &caps[0];
             let content = &full[1..full.len() - 1];
-            let stripped = content.replace("Bluray-", "").replace("Bluray", "");
-            if stripped.trim().is_empty()
-                || stripped.trim_matches(|c: char| c == '-' || c == ' ').is_empty()
-            {
-                String::new()
-            } else {
+            if content.contains(MARKER) {
                 full.to_string()
+            } else {
+                String::new()
             }
         });
-        // Also clean up double spaces after bracket removal
         let cleaned = MULTI_SPACE_RE.replace_all(&cleaned, " ").to_string();
         if cleaned == result {
             break;
@@ -87,13 +83,16 @@ pub fn render_template(template: &str, vars: &HashMap<&str, String>) -> String {
         result = cleaned;
     }
 
-    // 3. Clean up spaces before dots (e.g., " .mkv" -> ".mkv")
+    // 3. Strip markers
+    result = result.replace(MARKER, "");
+
+    // 4. Clean up spaces before dots (e.g., " .mkv" -> ".mkv")
     result = SPACE_BEFORE_DOT_RE.replace_all(&result, ".").to_string();
 
-    // 4. Trim
+    // 5. Trim
     result = result.trim().to_string();
 
-    // 5. Sanitize per path component (preserve /)
+    // 6. Sanitize per path component (preserve /)
     result = result
         .split('/')
         .map(sanitize_path_component)
@@ -137,14 +136,16 @@ pub fn parse_selection(text: &str, max_val: usize) -> Option<Vec<usize>> {
         }
     }
 
-    if indices.is_empty() { None } else { Some(indices) }
+    if indices.is_empty() {
+        None
+    } else {
+        Some(indices)
+    }
 }
 
 pub fn guess_start_episode(disc_number: Option<u32>, episodes_on_disc: usize) -> u32 {
     match disc_number {
-        Some(d) if d >= 1 && episodes_on_disc >= 1 => {
-            1 + (episodes_on_disc as u32) * (d - 1)
-        }
+        Some(d) if d >= 1 && episodes_on_disc >= 1 => 1 + (episodes_on_disc as u32) * (d - 1),
         _ => 1,
     }
 }
@@ -154,10 +155,8 @@ pub fn assign_episodes(
     episodes: &[Episode],
     start_episode: u32,
 ) -> HashMap<String, Episode> {
-    let ep_by_num: HashMap<u32, &Episode> = episodes
-        .iter()
-        .map(|ep| (ep.episode_number, ep))
-        .collect();
+    let ep_by_num: HashMap<u32, &Episode> =
+        episodes.iter().map(|ep| (ep.episode_number, ep)).collect();
 
     let mut assignments = HashMap::new();
     for (i, pl) in playlists.iter().enumerate() {
@@ -177,8 +176,8 @@ pub fn make_movie_filename(
     media_info: Option<&MediaInfo>,
     extra_vars: Option<&HashMap<&str, String>>,
 ) -> String {
-    // Default format: use legacy sanitize_filename (underscores) for backwards compat
-    if format.is_none() {
+    let Some(fmt) = format else {
+        // Default format: use legacy sanitize_filename (underscores) for backwards compat
         let name = sanitize_filename(title);
         let year_suffix = if year.is_empty() {
             String::new()
@@ -187,7 +186,7 @@ pub fn make_movie_filename(
         };
         let part_suffix = part.map(|p| format!("_pt{}", p)).unwrap_or_default();
         return format!("{}{}{}.mkv", name, year_suffix, part_suffix);
-    }
+    };
 
     let mut vars: HashMap<&str, String> = HashMap::new();
     vars.insert("title", title.to_string());
@@ -203,7 +202,7 @@ pub fn make_movie_filename(
         }
     }
 
-    render_template(format.unwrap(), &vars)
+    render_template(fmt, &vars)
 }
 
 pub fn make_filename(
@@ -214,20 +213,19 @@ pub fn make_filename(
     media_info: Option<&MediaInfo>,
     extra_vars: Option<&HashMap<&str, String>>,
 ) -> String {
-    if episode.is_none() {
+    let Some(ep) = episode else {
         return format!("playlist{}.mkv", playlist_num);
-    }
-    let ep = episode.unwrap();
+    };
 
-    // Default format: use legacy sanitize_filename (underscores) for backwards compat
-    if format.is_none() {
+    let Some(fmt) = format else {
+        // Default format: use legacy sanitize_filename (underscores) for backwards compat
         return format!(
             "S{:02}E{:02}_{}.mkv",
             season,
             ep.episode_number,
             sanitize_filename(&ep.name)
         );
-    }
+    };
 
     let mut vars: HashMap<&str, String> = HashMap::new();
     vars.insert("season", format!("{:02}", season));
@@ -244,7 +242,7 @@ pub fn make_filename(
         }
     }
 
-    render_template(format.unwrap(), &vars)
+    render_template(fmt, &vars)
 }
 
 pub fn format_size(bytes: u64) -> String {
@@ -380,12 +378,28 @@ mod tests {
     #[test]
     fn test_assign_basic() {
         let playlists = vec![
-            Playlist { num: "00001".into(), duration: "0:43:00".into(), seconds: 2580 },
-            Playlist { num: "00002".into(), duration: "0:44:00".into(), seconds: 2640 },
+            Playlist {
+                num: "00001".into(),
+                duration: "0:43:00".into(),
+                seconds: 2580,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+            },
         ];
         let episodes = vec![
-            Episode { episode_number: 1, name: "Pilot".into(), runtime: Some(44) },
-            Episode { episode_number: 2, name: "Second".into(), runtime: Some(44) },
+            Episode {
+                episode_number: 1,
+                name: "Pilot".into(),
+                runtime: Some(44),
+            },
+            Episode {
+                episode_number: 2,
+                name: "Second".into(),
+                runtime: Some(44),
+            },
         ];
         let result = assign_episodes(&playlists, &episodes, 1);
         assert_eq!(result["00001"].name, "Pilot");
@@ -394,13 +408,27 @@ mod tests {
 
     #[test]
     fn test_assign_offset() {
-        let playlists = vec![
-            Playlist { num: "00003".into(), duration: "0:43:00".into(), seconds: 2580 },
-        ];
+        let playlists = vec![Playlist {
+            num: "00003".into(),
+            duration: "0:43:00".into(),
+            seconds: 2580,
+        }];
         let episodes = vec![
-            Episode { episode_number: 1, name: "Pilot".into(), runtime: Some(44) },
-            Episode { episode_number: 2, name: "Second".into(), runtime: Some(44) },
-            Episode { episode_number: 3, name: "Third".into(), runtime: Some(44) },
+            Episode {
+                episode_number: 1,
+                name: "Pilot".into(),
+                runtime: Some(44),
+            },
+            Episode {
+                episode_number: 2,
+                name: "Second".into(),
+                runtime: Some(44),
+            },
+            Episode {
+                episode_number: 3,
+                name: "Third".into(),
+                runtime: Some(44),
+            },
         ];
         let result = assign_episodes(&playlists, &episodes, 3);
         assert_eq!(result["00003"].name, "Third");
@@ -409,12 +437,22 @@ mod tests {
     #[test]
     fn test_assign_overflow() {
         let playlists = vec![
-            Playlist { num: "00001".into(), duration: "0:43:00".into(), seconds: 2580 },
-            Playlist { num: "00002".into(), duration: "0:44:00".into(), seconds: 2640 },
+            Playlist {
+                num: "00001".into(),
+                duration: "0:43:00".into(),
+                seconds: 2580,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+            },
         ];
-        let episodes = vec![
-            Episode { episode_number: 1, name: "Pilot".into(), runtime: Some(44) },
-        ];
+        let episodes = vec![Episode {
+            episode_number: 1,
+            name: "Pilot".into(),
+            runtime: Some(44),
+        }];
         let result = assign_episodes(&playlists, &episodes, 1);
         assert_eq!(result["00001"].name, "Pilot");
         assert!(!result.contains_key("00002"));
@@ -422,9 +460,11 @@ mod tests {
 
     #[test]
     fn test_assign_empty() {
-        let playlists = vec![
-            Playlist { num: "00001".into(), duration: "0:43:00".into(), seconds: 2580 },
-        ];
+        let playlists = vec![Playlist {
+            num: "00001".into(),
+            duration: "0:43:00".into(),
+            seconds: 2580,
+        }];
         let result = assign_episodes(&playlists, &[], 1);
         assert!(result.is_empty());
     }
@@ -464,7 +504,10 @@ mod tests {
 
     #[test]
     fn test_movie_filename_no_year() {
-        assert_eq!(make_movie_filename("Inception", "", None, None, None, None), "Inception.mkv");
+        assert_eq!(
+            make_movie_filename("Inception", "", None, None, None, None),
+            "Inception.mkv"
+        );
     }
 
     #[test]
@@ -485,22 +528,43 @@ mod tests {
 
     #[test]
     fn test_make_filename_with_episode() {
-        let ep = Episode { episode_number: 3, name: "The Pilot".into(), runtime: Some(44) };
-        assert_eq!(make_filename("00001", Some(&ep), 1, None, None, None), "S01E03_The_Pilot.mkv");
+        let ep = Episode {
+            episode_number: 3,
+            name: "The Pilot".into(),
+            runtime: Some(44),
+        };
+        assert_eq!(
+            make_filename("00001", Some(&ep), 1, None, None, None),
+            "S01E03_The_Pilot.mkv"
+        );
     }
 
     #[test]
     fn test_make_filename_no_episode() {
-        assert_eq!(make_filename("00042", None, 1, None, None, None), "playlist00042.mkv");
+        assert_eq!(
+            make_filename("00042", None, 1, None, None, None),
+            "playlist00042.mkv"
+        );
     }
 
     #[test]
     fn test_make_filename_custom_format_with_show() {
-        let ep = Episode { episode_number: 3, name: "The Pilot".into(), runtime: Some(44) };
+        let ep = Episode {
+            episode_number: 3,
+            name: "The Pilot".into(),
+            runtime: Some(44),
+        };
         let mut extra = HashMap::new();
         extra.insert("show", "Test Show".to_string());
         assert_eq!(
-            make_filename("00001", Some(&ep), 1, Some("{show}/S{season}E{episode} - {title}.mkv"), None, Some(&extra)),
+            make_filename(
+                "00001",
+                Some(&ep),
+                1,
+                Some("{show}/S{season}E{episode} - {title}.mkv"),
+                None,
+                Some(&extra)
+            ),
             "Test Show/S01E03 - The Pilot.mkv"
         );
     }
@@ -516,8 +580,12 @@ mod tests {
         };
         assert_eq!(
             make_movie_filename(
-                "The Matrix", "1999", None,
-                Some("{title} ({year})/Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv"),
+                "The Matrix",
+                "1999",
+                None,
+                Some(
+                    "{title} ({year})/Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv"
+                ),
                 Some(&media),
                 None,
             ),
@@ -566,7 +634,10 @@ mod tests {
         vars.insert("episode", "05".to_string());
         vars.insert("title", "Ep Name".to_string());
         assert_eq!(
-            render_template("{show}/Season {season}/S{season}E{episode} - {title}.mkv", &vars),
+            render_template(
+                "{show}/Season {season}/S{season}E{episode} - {title}.mkv",
+                &vars
+            ),
             "Test Show/Season 02/S02E05 - Ep Name.mkv"
         );
     }
@@ -574,10 +645,7 @@ mod tests {
     #[test]
     fn test_render_template_unknown_placeholder_preserved() {
         let vars = HashMap::new();
-        assert_eq!(
-            render_template("{foo}_{bar}.mkv", &vars),
-            "{foo}_{bar}.mkv"
-        );
+        assert_eq!(render_template("{foo}_{bar}.mkv", &vars), "{foo}_{bar}.mkv");
     }
 
     #[test]
@@ -588,7 +656,10 @@ mod tests {
         vars.insert("channels", String::new());
         vars.insert("codec", "hevc".to_string());
         assert_eq!(
-            render_template("Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv", &vars),
+            render_template(
+                "Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv",
+                &vars
+            ),
             "Movie [Bluray-1080p][hevc].mkv"
         );
     }
@@ -601,7 +672,10 @@ mod tests {
         vars.insert("channels", String::new());
         vars.insert("codec", String::new());
         assert_eq!(
-            render_template("Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv", &vars),
+            render_template(
+                "Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv",
+                &vars
+            ),
             "Movie.mkv"
         );
     }
@@ -633,6 +707,16 @@ mod tests {
         assert_eq!(
             render_template("{title} [{codec}] end.mkv", &vars),
             "Test end.mkv"
+        );
+    }
+
+    #[test]
+    fn test_render_template_custom_prefix_bracket_cleanup() {
+        let mut vars = HashMap::new();
+        vars.insert("resolution", String::new());
+        assert_eq!(
+            render_template("Movie [DVD-{resolution}].mkv", &vars),
+            "Movie.mkv"
         );
     }
 }

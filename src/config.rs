@@ -6,7 +6,8 @@ pub const DEFAULT_TV_FORMAT: &str = "S{season}E{episode}_{title}.mkv";
 pub const DEFAULT_MOVIE_FORMAT: &str = "{title}_({year}).mkv";
 
 pub const PLEX_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title} [Bluray-{resolution}][{audio} {channels}][{codec}].mkv";
-pub const PLEX_MOVIE_FORMAT: &str = "{title} ({year})/Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv";
+pub const PLEX_MOVIE_FORMAT: &str =
+    "{title} ({year})/Movie [Bluray-{resolution}][{audio} {channels}][{codec}].mkv";
 
 pub const JELLYFIN_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title}.mkv";
 pub const JELLYFIN_MOVIE_FORMAT: &str = "{title} ({year})/{title} ({year}).mkv";
@@ -71,7 +72,11 @@ impl Config {
         if let Some(preset) = cli_preset {
             return preset_format(preset, is_movie);
         }
-        let custom = if is_movie { &self.movie_format } else { &self.tv_format };
+        let custom = if is_movie {
+            &self.movie_format
+        } else {
+            &self.tv_format
+        };
         if let Some(ref fmt) = custom {
             return fmt.clone();
         }
@@ -144,7 +149,10 @@ mod tests {
             tv_format: Some("config/{show}.mkv".into()),
             ..Default::default()
         };
-        assert_eq!(config.resolve_format(false, Some("cli/{title}.mkv"), None), "cli/{title}.mkv");
+        assert_eq!(
+            config.resolve_format(false, Some("cli/{title}.mkv"), None),
+            "cli/{title}.mkv"
+        );
     }
 
     #[test]
@@ -153,7 +161,10 @@ mod tests {
             preset: Some("plex".into()),
             ..Default::default()
         };
-        assert_eq!(config.resolve_format(false, None, Some("jellyfin")), JELLYFIN_TV_FORMAT);
+        assert_eq!(
+            config.resolve_format(false, None, Some("jellyfin")),
+            JELLYFIN_TV_FORMAT
+        );
     }
 
     #[test]
@@ -163,7 +174,10 @@ mod tests {
             tv_format: Some("custom/{show}/{title}.mkv".into()),
             ..Default::default()
         };
-        assert_eq!(config.resolve_format(false, None, None), "custom/{show}/{title}.mkv");
+        assert_eq!(
+            config.resolve_format(false, None, None),
+            "custom/{show}/{title}.mkv"
+        );
     }
 
     #[test]
@@ -180,7 +194,10 @@ mod tests {
     fn test_resolve_default_fallback() {
         let config = Config::default();
         assert_eq!(config.resolve_format(false, None, None), DEFAULT_TV_FORMAT);
-        assert_eq!(config.resolve_format(true, None, None), DEFAULT_MOVIE_FORMAT);
+        assert_eq!(
+            config.resolve_format(true, None, None),
+            DEFAULT_MOVIE_FORMAT
+        );
     }
 
     #[test]
@@ -223,19 +240,28 @@ mod tests {
 
     #[test]
     fn test_should_eject_cli_true_overrides_config() {
-        let config = Config { eject: Some(false), ..Default::default() };
+        let config = Config {
+            eject: Some(false),
+            ..Default::default()
+        };
         assert!(config.should_eject(Some(true)));
     }
 
     #[test]
     fn test_should_eject_cli_false_overrides_config() {
-        let config = Config { eject: Some(true), ..Default::default() };
+        let config = Config {
+            eject: Some(true),
+            ..Default::default()
+        };
         assert!(!config.should_eject(Some(false)));
     }
 
     #[test]
     fn test_should_eject_no_cli_uses_config() {
-        let config = Config { eject: Some(true), ..Default::default() };
+        let config = Config {
+            eject: Some(true),
+            ..Default::default()
+        };
         assert!(config.should_eject(None));
     }
 
@@ -253,13 +279,19 @@ mod tests {
 
     #[test]
     fn test_max_speed_cli_disables() {
-        let config = Config { max_speed: Some(true), ..Default::default() };
+        let config = Config {
+            max_speed: Some(true),
+            ..Default::default()
+        };
         assert!(!config.should_max_speed(true));
     }
 
     #[test]
     fn test_max_speed_config_disables() {
-        let config = Config { max_speed: Some(false), ..Default::default() };
+        let config = Config {
+            max_speed: Some(false),
+            ..Default::default()
+        };
         assert!(!config.should_max_speed(false));
     }
 

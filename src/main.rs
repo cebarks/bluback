@@ -13,7 +13,11 @@ use std::path::PathBuf;
 const DEFAULT_DEVICE: &str = "/dev/sr0";
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "bluback", version, about = "Back up Blu-ray discs to MKV files using ffmpeg + libaacs")]
+#[command(
+    name = "bluback",
+    version,
+    about = "Back up Blu-ray discs to MKV files using ffmpeg + libaacs"
+)]
 pub struct Args {
     /// Blu-ray device path
     #[arg(short, long, default_value = DEFAULT_DEVICE)]

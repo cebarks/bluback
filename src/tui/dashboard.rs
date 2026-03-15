@@ -21,7 +21,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // title + stats
+            Constraint::Length(3), // title + stats
             Constraint::Min(4),    // job table
             Constraint::Length(1), // key hints
         ])
@@ -32,10 +32,13 @@ pub fn render(f: &mut Frame, app: &App) {
     let title_text = if stats_text.is_empty() {
         format!("Ripping: {}/{} complete", done_count, total)
     } else {
-        format!("Ripping: {}/{} complete  │  {}", done_count, total, stats_text)
+        format!(
+            "Ripping: {}/{} complete  │  {}",
+            done_count, total, stats_text
+        )
     };
-    let title = Paragraph::new(title_text)
-        .block(Block::default().borders(Borders::ALL).title("bluback"));
+    let title =
+        Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title("bluback"));
     f.render_widget(title, chunks[0]);
 
     // Job table
@@ -57,8 +60,8 @@ pub fn render(f: &mut Frame, app: &App) {
                 PlaylistStatus::Pending => ("Pending".to_string(), String::new(), String::new()),
                 PlaylistStatus::Ripping(prog) => {
                     let pct = if job.playlist.seconds > 0 {
-                        (prog.out_time_secs as f64 / job.playlist.seconds as f64 * 100.0)
-                            .min(100.0) as u32
+                        (prog.out_time_secs as f64 / job.playlist.seconds as f64 * 100.0).min(100.0)
+                            as u32
                     } else {
                         0
                     };
@@ -69,9 +72,7 @@ pub fn render(f: &mut Frame, app: &App) {
                         .unwrap_or_default();
                     (format!("{} {}%", bar, pct), size_str, eta_str)
                 }
-                PlaylistStatus::Done(sz) => {
-                    ("Done".to_string(), format_size(*sz), String::new())
-                }
+                PlaylistStatus::Done(sz) => ("Done".to_string(), format_size(*sz), String::new()),
                 PlaylistStatus::Failed(msg) => {
                     (format!("Failed: {}", msg), String::new(), String::new())
                 }
@@ -109,11 +110,13 @@ pub fn render(f: &mut Frame, app: &App) {
         Paragraph::new("Really abort? [y] Yes  [n] No")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
     } else if app.confirm_rescan {
-        Paragraph::new("Rescan disc? This will abort the current rip. [y] Yes  [n] No")
-            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+        Paragraph::new("Rescan disc? This will abort the current rip. [y] Yes  [n] No").style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
-        Paragraph::new("[q] Abort  [Ctrl+R] Rescan")
-            .style(Style::default().fg(Color::DarkGray))
+        Paragraph::new("[q] Abort  [Ctrl+R] Rescan").style(Style::default().fg(Color::DarkGray))
     };
     f.render_widget(hint, chunks[2]);
 }
@@ -155,8 +158,8 @@ pub fn render_done(f: &mut Frame, app: &App) {
         format!("All done! Backed up {} playlist(s)", completed.len())
     };
 
-    let title = Paragraph::new(summary)
-        .block(Block::default().borders(Borders::ALL).title("bluback"));
+    let title =
+        Paragraph::new(summary).block(Block::default().borders(Borders::ALL).title("bluback"));
     f.render_widget(title, chunks[0]);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -179,8 +182,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         }
     }
 
-    let body = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::ALL).title("Results"));
+    let body = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Results"));
     f.render_widget(body, chunks[1]);
 
     let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [any other key] Exit")
@@ -214,97 +216,113 @@ pub fn handle_input(app: &mut App, key: KeyEvent) {
 }
 
 pub fn tick(app: &mut App) -> anyhow::Result<()> {
+    if check_all_done(app) {
+        return Ok(());
+    }
+
+    if app.rip_child.is_none() {
+        start_next_job(app);
+        return Ok(());
+    }
+
+    poll_active_job(app);
+    Ok(())
+}
+
+fn check_all_done(app: &mut App) -> bool {
     let all_done = app.rip_jobs.iter().all(|j| {
-        matches!(j.status, PlaylistStatus::Done(_) | PlaylistStatus::Failed(_))
+        matches!(
+            j.status,
+            PlaylistStatus::Done(_) | PlaylistStatus::Failed(_)
+        )
     });
 
     if all_done && !app.rip_jobs.is_empty() {
-        // Clean up child if somehow still around
         if let Some(ref mut child) = app.rip_child {
             let _ = child.wait();
         }
         app.rip_child = None;
         app.progress_rx = None;
-
         app.screen = Screen::Done;
-        return Ok(());
+        true
+    } else {
+        false
+    }
+}
+
+fn start_next_job(app: &mut App) {
+    let next_idx = app
+        .rip_jobs
+        .iter()
+        .position(|j| matches!(j.status, PlaylistStatus::Pending));
+
+    let Some(idx) = next_idx else {
+        return;
+    };
+
+    app.current_rip = idx;
+    let job = &app.rip_jobs[idx];
+    let device = app.args.device.to_string_lossy().to_string();
+    let playlist_num = job.playlist.num.clone();
+    let outfile = app.args.output.join(&job.filename);
+    if let Some(parent) = outfile.parent() {
+        std::fs::create_dir_all(parent).ok();
     }
 
-    // If no active rip, start the next pending job
-    if app.rip_child.is_none() {
-        let next_idx = app
-            .rip_jobs
-            .iter()
-            .position(|j| matches!(j.status, PlaylistStatus::Pending));
+    // Skip if output file already exists
+    if outfile.exists() {
+        let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
+        app.rip_jobs[idx].status = PlaylistStatus::Done(file_size);
+        return;
+    }
 
-        if let Some(idx) = next_idx {
-            app.current_rip = idx;
-            let job = &app.rip_jobs[idx];
-            let device = app.args.device.to_string_lossy().to_string();
-            let playlist_num = job.playlist.num.clone();
-            let outfile = app.args.output.join(&job.filename);
-            if let Some(parent) = outfile.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
+    let streams = disc::probe_streams(&device, &playlist_num);
+    let map_args = match streams {
+        Some(ref s) => rip::build_map_args(s),
+        None => vec!["-map".into(), "0".into()],
+    };
 
-            // Skip if output file already exists
-            if outfile.exists() {
-                let file_size = std::fs::metadata(&outfile)
-                    .map(|m| m.len())
-                    .unwrap_or(0);
-                app.rip_jobs[idx].status = PlaylistStatus::Done(file_size);
-                return Ok(());
-            }
-
-            let streams = disc::probe_streams(&device, &playlist_num);
-            let map_args = match streams {
-                Some(ref s) => rip::build_map_args(s),
-                None => vec!["-map".into(), "0".into()],
-            };
-
-            match rip::start_rip(&device, &playlist_num, &map_args, &outfile) {
-                Ok(mut child) => {
-                    let stdout = child.stdout.take().expect("stdout piped");
-                    let (tx, rx) = mpsc::channel();
-                    thread::spawn(move || {
-                        let reader = std::io::BufReader::new(stdout);
-                        for line in reader.lines().map_while(Result::ok) {
-                            if tx.send(line).is_err() {
-                                break;
-                            }
-                        }
-                    });
-
-                    let stderr = child.stderr.take().expect("stderr piped");
-                    let stderr_buf = Arc::new(Mutex::new(String::new()));
-                    let stderr_clone = stderr_buf.clone();
-                    thread::spawn(move || {
-                        let reader = std::io::BufReader::new(stderr);
-                        for line in reader.lines().map_while(Result::ok) {
-                            let mut buf = stderr_clone.lock().unwrap();
-                            if !buf.is_empty() {
-                                buf.push('\n');
-                            }
-                            buf.push_str(&line);
-                        }
-                    });
-
-                    app.rip_child = Some(child);
-                    app.progress_rx = Some(rx);
-                    app.stderr_buffer = Some(stderr_buf);
-                    app.progress_state.clear();
-                    app.rip_jobs[idx].status =
-                        PlaylistStatus::Ripping(crate::types::RipProgress::default());
+    match rip::start_rip(&device, &playlist_num, &map_args, &outfile) {
+        Ok(mut child) => {
+            let stdout = child.stdout.take().expect("stdout piped");
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                let reader = std::io::BufReader::new(stdout);
+                for line in reader.lines().map_while(Result::ok) {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
                 }
-                Err(e) => {
-                    app.rip_jobs[idx].status =
-                        PlaylistStatus::Failed(format!("Failed to start: {}", e));
+            });
+
+            let stderr = child.stderr.take().expect("stderr piped");
+            let stderr_buf = Arc::new(Mutex::new(String::new()));
+            let stderr_clone = stderr_buf.clone();
+            thread::spawn(move || {
+                let reader = std::io::BufReader::new(stderr);
+                for line in reader.lines().map_while(Result::ok) {
+                    let mut buf = stderr_clone.lock().unwrap();
+                    if !buf.is_empty() {
+                        buf.push('\n');
+                    }
+                    buf.push_str(&line);
                 }
-            }
+            });
+
+            app.rip_child = Some(child);
+            app.progress_rx = Some(rx);
+            app.stderr_buffer = Some(stderr_buf);
+            app.progress_state.clear();
+            app.rip_jobs[idx].status =
+                PlaylistStatus::Ripping(crate::types::RipProgress::default());
         }
-        return Ok(());
+        Err(e) => {
+            app.rip_jobs[idx].status = PlaylistStatus::Failed(format!("Failed to start: {}", e));
+        }
     }
+}
 
+fn poll_active_job(app: &mut App) {
     // Read progress from the channel
     if let Some(ref rx) = app.progress_rx {
         while let Ok(line) = rx.try_recv() {
@@ -322,12 +340,12 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
                 let idx = app.current_rip;
                 if status.success() {
                     let outfile = app.args.output.join(&app.rip_jobs[idx].filename);
-                    let file_size = std::fs::metadata(&outfile)
-                        .map(|m| m.len())
-                        .unwrap_or(0);
+                    let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
                     app.rip_jobs[idx].status = PlaylistStatus::Done(file_size);
                 } else {
-                    let stderr_msg = app.stderr_buffer.as_ref()
+                    let stderr_msg = app
+                        .stderr_buffer
+                        .as_ref()
                         .and_then(|b| b.lock().ok())
                         .map(|b| b.clone())
                         .unwrap_or_default();
@@ -353,8 +371,6 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
             }
         }
     }
-
-    Ok(())
 }
 
 fn render_progress_bar(pct: u32, width: usize) -> String {

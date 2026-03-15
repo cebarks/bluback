@@ -24,8 +24,6 @@ pub struct TmdbShow {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TmdbMovie {
-    #[allow(dead_code)]
-    pub id: u64,
     pub title: String,
     pub release_date: Option<String>,
 }
@@ -89,8 +87,22 @@ impl MediaInfo {
     pub fn to_vars(&self) -> std::collections::HashMap<&str, String> {
         let mut m = std::collections::HashMap::new();
         m.insert("resolution", self.resolution.clone());
-        m.insert("width", if self.width > 0 { self.width.to_string() } else { String::new() });
-        m.insert("height", if self.height > 0 { self.height.to_string() } else { String::new() });
+        m.insert(
+            "width",
+            if self.width > 0 {
+                self.width.to_string()
+            } else {
+                String::new()
+            },
+        );
+        m.insert(
+            "height",
+            if self.height > 0 {
+                self.height.to_string()
+            } else {
+                String::new()
+            },
+        );
         m.insert("codec", self.codec.clone());
         m.insert("hdr", self.hdr.clone());
         m.insert("aspect_ratio", self.aspect_ratio.clone());
@@ -105,6 +117,12 @@ impl MediaInfo {
 }
 
 pub type EpisodeAssignments = HashMap<String, Episode>;
+
+pub struct TmdbLookupResult {
+    pub episodes: Vec<Episode>,
+    pub season: u32,
+    pub show_name: String,
+}
 
 /// Result types for background operations in TUI mode
 pub enum BackgroundResult {

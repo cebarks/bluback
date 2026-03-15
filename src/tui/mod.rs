@@ -3,7 +3,9 @@ pub mod wizard;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use std::collections::HashMap;
@@ -217,7 +219,11 @@ pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
     result
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, config: &crate::config::Config) -> Result<()> {
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    args: &Args,
+    config: &crate::config::Config,
+) -> Result<()> {
     let mut app = App::new(args.clone());
     app.config = config.clone();
     app.eject = config.should_eject(args.cli_eject());
@@ -228,17 +234,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
 
     // Event loop
     loop {
-        terminal.draw(|f| {
-            match app.screen {
-                Screen::Scanning => wizard::render_scanning(f, &app),
-                Screen::TmdbSearch => wizard::render_tmdb_search(f, &app),
-                Screen::ShowSelect => wizard::render_show_select(f, &app),
-                Screen::SeasonEpisode => wizard::render_season_episode(f, &app),
-                Screen::PlaylistSelect => wizard::render_playlist_select(f, &app),
-                Screen::Confirm => wizard::render_confirm(f, &app),
-                Screen::Ripping => dashboard::render(f, &app),
-                Screen::Done => dashboard::render_done(f, &app),
-            }
+        terminal.draw(|f| match app.screen {
+            Screen::Scanning => wizard::render_scanning(f, &app),
+            Screen::TmdbSearch => wizard::render_tmdb_search(f, &app),
+            Screen::ShowSelect => wizard::render_show_select(f, &app),
+            Screen::SeasonEpisode => wizard::render_season_episode(f, &app),
+            Screen::PlaylistSelect => wizard::render_playlist_select(f, &app),
+            Screen::Confirm => wizard::render_confirm(f, &app),
+            Screen::Ripping => dashboard::render(f, &app),
+            Screen::Done => dashboard::render_done(f, &app),
         })?;
 
         if app.quit {
@@ -266,7 +270,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
                 }
 
                 // Global Ctrl+R: rescan disc
-                if key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL)
+                if key.code == KeyCode::Char('r')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
                     && !app.confirm_rescan
                 {
                     if app.screen == Screen::Ripping {
@@ -309,7 +314,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
                             start_disc_scan(&mut app);
                         } else {
                             // Eject on exit if enabled and all rips succeeded
-                            let all_succeeded = app.rip_jobs.iter().all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_)));
+                            let all_succeeded = app
+                                .rip_jobs
+                                .iter()
+                                .all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_)));
                             if app.eject && !app.rip_jobs.is_empty() && all_succeeded {
                                 let device = app.args.device.to_string_lossy().to_string();
                                 let _ = crate::disc::eject_disc(&device);
@@ -363,10 +371,13 @@ fn poll_background(app: &mut App) {
             app.label_info = crate::disc::parse_volume_label(&label);
             app.label = label;
             app.episodes_pl = crate::disc::filter_episodes(&playlists, app.args.min_duration)
-                .into_iter().cloned().collect();
+                .into_iter()
+                .cloned()
+                .collect();
             app.playlists = playlists;
 
-            app.movie_mode = app.args.movie || (app.episodes_pl.len() == 1 && app.args.season.is_none());
+            app.movie_mode =
+                app.args.movie || (app.episodes_pl.len() == 1 && app.args.season.is_none());
 
             if let Some(ref info) = app.label_info {
                 app.search_query = info.show.clone();
@@ -442,12 +453,17 @@ fn poll_background(app: &mut App) {
             app.episodes.clear();
         }
         BackgroundResult::MediaProbe(infos) => {
-            let selected_indices: Vec<usize> = app.episodes_pl.iter().enumerate()
+            let selected_indices: Vec<usize> = app
+                .episodes_pl
+                .iter()
+                .enumerate()
                 .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
                 .map(|(i, _)| i)
                 .collect();
 
-            let filenames: Vec<String> = infos.iter().zip(selected_indices.iter())
+            let filenames: Vec<String> = infos
+                .iter()
+                .zip(selected_indices.iter())
                 .map(|(info, &idx)| wizard::playlist_filename(app, idx, info.as_ref()))
                 .collect();
 

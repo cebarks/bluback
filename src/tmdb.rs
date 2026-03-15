@@ -58,25 +58,22 @@ fn tmdb_get(path: &str, api_key: &str, extra_params: &[(&str, &str)]) -> Result<
 
 pub fn search_show(query: &str, api_key: &str) -> Result<Vec<TmdbShow>> {
     let data = tmdb_get("/search/tv", api_key, &[("query", query)])?;
-    let results: Vec<TmdbShow> = serde_json::from_value(
-        data.get("results").cloned().unwrap_or_default()
-    )?;
+    let results: Vec<TmdbShow> =
+        serde_json::from_value(data.get("results").cloned().unwrap_or_default())?;
     Ok(results)
 }
 
 pub fn search_movie(query: &str, api_key: &str) -> Result<Vec<TmdbMovie>> {
     let data = tmdb_get("/search/movie", api_key, &[("query", query)])?;
-    let results: Vec<TmdbMovie> = serde_json::from_value(
-        data.get("results").cloned().unwrap_or_default()
-    )?;
+    let results: Vec<TmdbMovie> =
+        serde_json::from_value(data.get("results").cloned().unwrap_or_default())?;
     Ok(results)
 }
 
 pub fn get_season(show_id: u64, season: u32, api_key: &str) -> Result<Vec<Episode>> {
     let path = format!("/tv/{}/season/{}", show_id, season);
     let data = tmdb_get(&path, api_key, &[])?;
-    let episodes: Vec<Episode> = serde_json::from_value(
-        data.get("episodes").cloned().unwrap_or_default()
-    )?;
+    let episodes: Vec<Episode> =
+        serde_json::from_value(data.get("episodes").cloned().unwrap_or_default())?;
     Ok(episodes)
 }

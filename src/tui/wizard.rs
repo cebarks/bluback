@@ -8,7 +8,11 @@ use crate::tmdb;
 use crate::types::BackgroundResult;
 use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename};
 
-pub fn playlist_filename(app: &App, playlist_index: usize, media_info: Option<&crate::types::MediaInfo>) -> String {
+pub fn playlist_filename(
+    app: &App,
+    playlist_index: usize,
+    media_info: Option<&crate::types::MediaInfo>,
+) -> String {
     let pl = &app.episodes_pl[playlist_index];
 
     let format_template = app.config.resolve_format(
@@ -21,17 +25,30 @@ pub fn playlist_filename(app: &App, playlist_index: usize, media_info: Option<&c
         || app.config.tv_format.is_some()
         || app.config.movie_format.is_some()
         || app.config.preset.is_some();
-    let fmt = if use_custom { Some(format_template.as_str()) } else { None };
+    let fmt = if use_custom {
+        Some(format_template.as_str())
+    } else {
+        None
+    };
 
     // Build extra vars
     let mut extra: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     let show_name = if !app.show_name.is_empty() {
         app.show_name.clone()
     } else {
-        app.label_info.as_ref().map(|l| l.show.clone()).unwrap_or_else(|| "Unknown".to_string())
+        app.label_info
+            .as_ref()
+            .map(|l| l.show.clone())
+            .unwrap_or_else(|| "Unknown".to_string())
     };
     extra.insert("show", show_name);
-    extra.insert("disc", app.label_info.as_ref().map(|l| l.disc.to_string()).unwrap_or_default());
+    extra.insert(
+        "disc",
+        app.label_info
+            .as_ref()
+            .map(|l| l.disc.to_string())
+            .unwrap_or_default(),
+    );
     extra.insert("label", app.label.clone());
     extra.insert("playlist", pl.num.clone());
 
@@ -74,15 +91,18 @@ fn standard_layout(area: Rect) -> std::rc::Rc<[Rect]> {
 pub fn render_scanning(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
-    let title = Paragraph::new("bluback")
-        .block(Block::default().borders(Borders::ALL).title("Blu-ray Backup"));
+    let title = Paragraph::new("bluback").block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Blu-ray Backup"),
+    );
     f.render_widget(title, chunks[0]);
 
     let body = Paragraph::new(app.status_message.as_str());
     f.render_widget(body, chunks[1]);
 
-    let hints = Paragraph::new("q: Quit | Ctrl+R: Rescan")
-        .style(Style::default().fg(Color::DarkGray));
+    let hints =
+        Paragraph::new("q: Quit | Ctrl+R: Rescan").style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -93,7 +113,11 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     let step_title = format!("Step 1: TMDb Search ({})", mode_label);
     let title = Paragraph::new(format!(
         "Disc: {}  |  {} playlists",
-        if app.label.is_empty() { "(no label)" } else { &app.label },
+        if app.label.is_empty() {
+            "(no label)"
+        } else {
+            &app.label
+        },
         app.episodes_pl.len(),
     ))
     .block(Block::default().borders(Borders::ALL).title(step_title));
@@ -102,7 +126,11 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     if app.api_key.is_none() {
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Length(3), Constraint::Min(0)])
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(0),
+            ])
             .split(chunks[1]);
 
         let msg = Paragraph::new("No TMDb API key found. Enter your key to enable episode naming:");
@@ -118,7 +146,9 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     } else {
         let mut lines = vec![Line::from(format!("{}|", app.input_buffer))];
         if !app.status_message.is_empty() {
-            lines.push(Line::from(app.status_message.as_str()).style(Style::default().fg(Color::Yellow)));
+            lines.push(
+                Line::from(app.status_message.as_str()).style(Style::default().fg(Color::Yellow)),
+            );
         }
         let input = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title("Search query"));
@@ -126,9 +156,10 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
 
         let toggle = if app.movie_mode { "TV Show" } else { "Movie" };
         let hints = Paragraph::new(format!(
-            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit | Ctrl+R: Rescan", toggle
+            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit | Ctrl+R: Rescan",
+            toggle
         ))
-            .style(Style::default().fg(Color::DarkGray));
+        .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     }
 }
@@ -136,7 +167,9 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
 pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char(c) => app.input_buffer.push(c),
-        KeyCode::Backspace => { app.input_buffer.pop(); }
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+        }
         KeyCode::Enter => {
             let input = app.input_buffer.trim().to_string();
             if input.is_empty() {
@@ -165,15 +198,15 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
                 let (tx, rx) = mpsc::channel();
                 if app.movie_mode {
                     std::thread::spawn(move || {
-                        let _ = tx.send(BackgroundResult::MovieSearch(
-                            tmdb::search_movie(&query, &api_key),
-                        ));
+                        let _ = tx.send(BackgroundResult::MovieSearch(tmdb::search_movie(
+                            &query, &api_key,
+                        )));
                     });
                 } else {
                     std::thread::spawn(move || {
-                        let _ = tx.send(BackgroundResult::ShowSearch(
-                            tmdb::search_show(&query, &api_key),
-                        ));
+                        let _ = tx.send(BackgroundResult::ShowSearch(tmdb::search_show(
+                            &query, &api_key,
+                        )));
                     });
                 }
                 app.pending_rx = Some(rx);
@@ -207,28 +240,40 @@ pub fn render_show_select(f: &mut Frame, app: &App) {
     } else {
         "Select a show from the search results"
     };
-    let title = Paragraph::new(prompt)
-        .block(Block::default().borders(Borders::ALL).title(step_title));
+    let title =
+        Paragraph::new(prompt).block(Block::default().borders(Borders::ALL).title(step_title));
     f.render_widget(title, chunks[0]);
 
     let items: Vec<ListItem> = if app.movie_mode {
-        app.movie_results.iter().enumerate().map(|(i, movie)| {
-            let year = movie.release_date.as_deref()
-                .unwrap_or("")
-                .get(..4)
-                .unwrap_or("");
-            let marker = if i == app.list_cursor { "> " } else { "  " };
-            ListItem::new(format!("{}{} ({})", marker, movie.title, year))
-        }).collect()
+        app.movie_results
+            .iter()
+            .enumerate()
+            .map(|(i, movie)| {
+                let year = movie
+                    .release_date
+                    .as_deref()
+                    .unwrap_or("")
+                    .get(..4)
+                    .unwrap_or("");
+                let marker = if i == app.list_cursor { "> " } else { "  " };
+                ListItem::new(format!("{}{} ({})", marker, movie.title, year))
+            })
+            .collect()
     } else {
-        app.search_results.iter().enumerate().map(|(i, show)| {
-            let year = show.first_air_date.as_deref()
-                .unwrap_or("")
-                .get(..4)
-                .unwrap_or("");
-            let marker = if i == app.list_cursor { "> " } else { "  " };
-            ListItem::new(format!("{}{} ({})", marker, show.name, year))
-        }).collect()
+        app.search_results
+            .iter()
+            .enumerate()
+            .map(|(i, show)| {
+                let year = show
+                    .first_air_date
+                    .as_deref()
+                    .unwrap_or("")
+                    .get(..4)
+                    .unwrap_or("");
+                let marker = if i == app.list_cursor { "> " } else { "  " };
+                ListItem::new(format!("{}{} ({})", marker, show.name, year))
+            })
+            .collect()
     };
 
     let list = List::new(items)
@@ -282,9 +327,9 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
                         let show_id = show.id;
                         let (tx, rx) = mpsc::channel();
                         std::thread::spawn(move || {
-                            let _ = tx.send(BackgroundResult::SeasonFetch(
-                                tmdb::get_season(show_id, season, &api_key),
-                            ));
+                            let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
+                                show_id, season, &api_key,
+                            )));
                         });
                         app.pending_rx = Some(rx);
                         app.status_message = "Fetching season...".into();
@@ -311,13 +356,17 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
 pub fn render_season_episode(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
-    let show_name = app.selected_show
+    let show_name = app
+        .selected_show
         .and_then(|i| app.search_results.get(i))
         .map(|s| s.name.as_str())
         .unwrap_or("Unknown");
 
-    let title = Paragraph::new(format!("Show: {}", show_name))
-        .block(Block::default().borders(Borders::ALL).title("Step 3: Season & Starting Episode"));
+    let title = Paragraph::new(format!("Show: {}", show_name)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Step 3: Season & Starting Episode"),
+    );
     f.render_widget(title, chunks[0]);
 
     let content_chunks = Layout::default()
@@ -336,9 +385,17 @@ pub fn render_season_episode(f: &mut Frame, app: &App) {
     } else {
         app.season_num.map(|s| s.to_string()).unwrap_or_default()
     };
-    let season_style = if season_active { Style::default().fg(Color::Yellow) } else { Style::default() };
-    let season_input = Paragraph::new(season_display)
-        .block(Block::default().borders(Borders::ALL).title("Season number").border_style(season_style));
+    let season_style = if season_active {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let season_input = Paragraph::new(season_display).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Season number")
+            .border_style(season_style),
+    );
     f.render_widget(season_input, content_chunks[0]);
 
     // Start episode input
@@ -351,22 +408,38 @@ pub fn render_season_episode(f: &mut Frame, app: &App) {
     } else {
         app.start_episode.unwrap_or(guessed).to_string()
     };
-    let start_style = if start_active { Style::default().fg(Color::Yellow) } else { Style::default() };
-    let start_input = Paragraph::new(start_display)
-        .block(Block::default().borders(Borders::ALL).title(format!("Starting episode (guess: {})", guessed)).border_style(start_style));
+    let start_style = if start_active {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    let start_input = Paragraph::new(start_display).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Starting episode (guess: {})", guessed))
+            .border_style(start_style),
+    );
     f.render_widget(start_input, content_chunks[1]);
 
     // Episode list preview
     if !app.episodes.is_empty() {
-        let items: Vec<ListItem> = app.episodes.iter().map(|ep| {
-            let runtime = ep.runtime.unwrap_or(0);
-            ListItem::new(format!("  E{:02} - {} ({} min)", ep.episode_number, ep.name, runtime))
-        }).collect();
+        let items: Vec<ListItem> = app
+            .episodes
+            .iter()
+            .map(|ep| {
+                let runtime = ep.runtime.unwrap_or(0);
+                ListItem::new(format!(
+                    "  E{:02} - {} ({} min)",
+                    ep.episode_number, ep.name, runtime
+                ))
+            })
+            .collect();
 
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(
-                format!("Season {}: {} episodes", app.season_num.unwrap_or(0), app.episodes.len())
-            ));
+        let list = List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
+            "Season {}: {} episodes",
+            app.season_num.unwrap_or(0),
+            app.episodes.len()
+        )));
         f.render_widget(list, content_chunks[2]);
     } else if !app.status_message.is_empty() {
         let msg = Paragraph::new(app.status_message.as_str())
@@ -379,8 +452,9 @@ pub fn render_season_episode(f: &mut Frame, app: &App) {
         f.render_widget(empty, content_chunks[2]);
     }
 
-    let hints = Paragraph::new("Tab: Switch field | Enter: Confirm/Fetch | Esc: Back | Ctrl+R: Rescan")
-        .style(Style::default().fg(Color::DarkGray));
+    let hints =
+        Paragraph::new("Tab: Switch field | Enter: Confirm/Fetch | Esc: Back | Ctrl+R: Rescan")
+            .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -391,7 +465,9 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                 app.input_buffer.push(c);
             }
         }
-        KeyCode::Backspace => { app.input_buffer.pop(); }
+        KeyCode::Backspace => {
+            app.input_buffer.pop();
+        }
         KeyCode::Tab | KeyCode::BackTab => {
             // Save current field value before switching
             if app.season_field == 0 {
@@ -421,7 +497,8 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                 };
                 app.season_num = Some(season);
 
-                let show_id = app.selected_show
+                let show_id = app
+                    .selected_show
                     .and_then(|i| app.search_results.get(i))
                     .map(|s| s.id);
 
@@ -429,9 +506,9 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                     let api_key = api_key.clone();
                     let (tx, rx) = mpsc::channel();
                     std::thread::spawn(move || {
-                        let _ = tx.send(BackgroundResult::SeasonFetch(
-                            tmdb::get_season(show_id, season, &api_key),
-                        ));
+                        let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
+                            show_id, season, &api_key,
+                        )));
                     });
                     app.pending_rx = Some(rx);
                     app.status_message = "Fetching season...".into();
@@ -450,11 +527,8 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                 };
                 app.start_episode = Some(start_ep);
 
-                app.episode_assignments = assign_episodes(
-                    &app.episodes_pl,
-                    &app.episodes,
-                    start_ep,
-                );
+                app.episode_assignments =
+                    assign_episodes(&app.episodes_pl, &app.episodes, start_ep);
 
                 app.input_active = false;
                 app.input_buffer.clear();
@@ -484,9 +558,15 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
         app.episodes_pl.len(),
         selected_count,
     ))
-    .block(Block::default().borders(Borders::ALL).title(
-        if app.movie_mode { "Step 3: Select Playlists" } else { "Step 4: Select Playlists" }
-    ));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(if app.movie_mode {
+                "Step 3: Select Playlists"
+            } else {
+                "Step 4: Select Playlists"
+            }),
+    );
     f.render_widget(title, chunks[0]);
 
     let has_eps = !app.episode_assignments.is_empty();
@@ -497,42 +577,52 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
     };
     let header = Row::new(header_cells).style(Style::default().fg(Color::Yellow));
 
-    let rows: Vec<Row> = app.episodes_pl.iter().enumerate().map(|(i, pl)| {
-        let checked = if app.playlist_selected.get(i).copied().unwrap_or(false) {
-            "[x]"
-        } else {
-            "[ ]"
-        };
-        let cursor = if i == app.list_cursor { ">" } else { " " };
-        let marker = format!("{} {}", cursor, checked);
+    let rows: Vec<Row> = app
+        .episodes_pl
+        .iter()
+        .enumerate()
+        .map(|(i, pl)| {
+            let checked = if app.playlist_selected.get(i).copied().unwrap_or(false) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let cursor = if i == app.list_cursor { ">" } else { " " };
+            let marker = format!("{} {}", cursor, checked);
 
-        let ep_info = if let Some(ep) = app.episode_assignments.get(&pl.num) {
-            format!("S{:02}E{:02} - {}", app.season_num.unwrap_or(0), ep.episode_number, ep.name)
-        } else {
-            String::new()
-        };
+            let ep_info = if let Some(ep) = app.episode_assignments.get(&pl.num) {
+                format!(
+                    "S{:02}E{:02} - {}",
+                    app.season_num.unwrap_or(0),
+                    ep.episode_number,
+                    ep.name
+                )
+            } else {
+                String::new()
+            };
 
-        let filename = playlist_filename(app, i, None);
+            let filename = playlist_filename(app, i, None);
 
-        if has_eps {
-            Row::new(vec![
-                marker,
-                format!("{}", i + 1),
-                pl.num.clone(),
-                pl.duration.clone(),
-                ep_info,
-                filename,
-            ])
-        } else {
-            Row::new(vec![
-                marker,
-                format!("{}", i + 1),
-                pl.num.clone(),
-                pl.duration.clone(),
-                filename,
-            ])
-        }
-    }).collect();
+            if has_eps {
+                Row::new(vec![
+                    marker,
+                    format!("{}", i + 1),
+                    pl.num.clone(),
+                    pl.duration.clone(),
+                    ep_info,
+                    filename,
+                ])
+            } else {
+                Row::new(vec![
+                    marker,
+                    format!("{}", i + 1),
+                    pl.num.clone(),
+                    pl.duration.clone(),
+                    filename,
+                ])
+            }
+        })
+        .collect();
 
     let widths = if has_eps {
         vec![
@@ -558,8 +648,10 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(table, chunks[1]);
 
-    let hints = Paragraph::new("Space: Toggle | Up/Down: Navigate | Enter: Confirm | Esc: Back | Ctrl+R: Rescan")
-        .style(Style::default().fg(Color::DarkGray));
+    let hints = Paragraph::new(
+        "Space: Toggle | Up/Down: Navigate | Enter: Confirm | Esc: Back | Ctrl+R: Rescan",
+    )
+    .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -582,7 +674,10 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             // Spawn media info probes in background thread
-            let selected_nums: Vec<String> = app.episodes_pl.iter().enumerate()
+            let selected_nums: Vec<String> = app
+                .episodes_pl
+                .iter()
+                .enumerate()
                 .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
                 .map(|(_, pl)| pl.num.clone())
                 .collect();
@@ -599,7 +694,8 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
             let device = app.args.device.to_string_lossy().to_string();
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
-                let infos: Vec<Option<crate::types::MediaInfo>> = selected_nums.iter()
+                let infos: Vec<Option<crate::types::MediaInfo>> = selected_nums
+                    .iter()
                     .map(|num| crate::disc::probe_media_info(&device, num))
                     .collect();
                 let _ = tx.send(BackgroundResult::MediaProbe(infos));
@@ -615,9 +711,9 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
                 // Go back to season/episode if TMDb was used
                 app.input_active = true;
                 let disc_num = app.label_info.as_ref().map(|l| l.disc);
-                let guessed = app.start_episode.unwrap_or_else(|| {
-                    guess_start_episode(disc_num, app.episodes_pl.len())
-                });
+                let guessed = app
+                    .start_episode
+                    .unwrap_or_else(|| guess_start_episode(disc_num, app.episodes_pl.len()));
                 app.input_buffer = guessed.to_string();
                 app.screen = Screen::SeasonEpisode;
             } else {
@@ -638,15 +734,23 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         app.filenames.len(),
         app.args.output.display(),
     ))
-    .block(Block::default().borders(Borders::ALL).title(
-        if app.movie_mode { "Step 4: Confirm" } else { "Step 5: Confirm" }
-    ));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(if app.movie_mode {
+                "Step 4: Confirm"
+            } else {
+                "Step 5: Confirm"
+            }),
+    );
     f.render_widget(title, chunks[0]);
 
     let header = Row::new(vec!["Playlist", "Duration", "~Size", "Output File"])
         .style(Style::default().fg(Color::Yellow));
 
-    let selected_playlists: Vec<&crate::types::Playlist> = app.episodes_pl.iter()
+    let selected_playlists: Vec<&crate::types::Playlist> = app
+        .episodes_pl
+        .iter()
         .enumerate()
         .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
         .map(|(_, pl)| pl)
@@ -658,17 +762,21 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     let mut total_seconds: u32 = 0;
     let mut total_est_bytes: u64 = 0;
 
-    let rows: Vec<Row> = selected_playlists.iter().zip(app.filenames.iter()).map(|(pl, name)| {
-        total_seconds += pl.seconds;
-        let est_bytes = pl.seconds as u64 * ESTIMATED_BYTERATE;
-        total_est_bytes += est_bytes;
-        Row::new(vec![
-            pl.num.clone(),
-            pl.duration.clone(),
-            format!("~{}", crate::util::format_size(est_bytes)),
-            name.clone(),
-        ])
-    }).collect();
+    let rows: Vec<Row> = selected_playlists
+        .iter()
+        .zip(app.filenames.iter())
+        .map(|(pl, name)| {
+            total_seconds += pl.seconds;
+            let est_bytes = pl.seconds as u64 * ESTIMATED_BYTERATE;
+            total_est_bytes += est_bytes;
+            Row::new(vec![
+                pl.num.clone(),
+                pl.duration.clone(),
+                format!("~{}", crate::util::format_size(est_bytes)),
+                name.clone(),
+            ])
+        })
+        .collect();
 
     let widths = [
         Constraint::Length(10),
@@ -682,7 +790,8 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     let summary_title = format!(
         "Summary — ~{} total, ~{}h {:02}m of content",
         crate::util::format_size(total_est_bytes),
-        total_h, total_m,
+        total_h,
+        total_m,
     );
 
     let table = Table::new(rows, &widths)
@@ -695,8 +804,7 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     } else {
         "Enter: Start Ripping | Esc: Back | Ctrl+R: Rescan"
     };
-    let hints = Paragraph::new(hint_text)
-        .style(Style::default().fg(Color::DarkGray));
+    let hints = Paragraph::new(hint_text).style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -716,7 +824,9 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
             // Build RipJobs from selected playlists and filenames
             app.rip_jobs.clear();
 
-            let selected_playlists: Vec<crate::types::Playlist> = app.episodes_pl.iter()
+            let selected_playlists: Vec<crate::types::Playlist> = app
+                .episodes_pl
+                .iter()
                 .enumerate()
                 .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
                 .map(|(_, pl)| pl.clone())
