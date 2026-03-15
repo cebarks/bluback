@@ -262,7 +262,7 @@ fn start_next_job(app: &mut App) {
 
     app.current_rip = idx;
     let job = &app.rip_jobs[idx];
-    let device = app.args.device.to_string_lossy().to_string();
+    let device = app.args.device().to_string_lossy().to_string();
     let playlist_num = job.playlist.num.clone();
     let outfile = app.args.output.join(&job.filename);
     if let Some(parent) = outfile.parent() {

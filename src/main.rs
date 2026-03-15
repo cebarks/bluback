@@ -10,8 +10,6 @@ mod util;
 use clap::Parser;
 use std::path::PathBuf;
 
-const DEFAULT_DEVICE: &str = "/dev/sr0";
-
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "bluback",
@@ -19,9 +17,9 @@ const DEFAULT_DEVICE: &str = "/dev/sr0";
     about = "Back up Blu-ray discs to MKV files using ffmpeg + libaacs"
 )]
 pub struct Args {
-    /// Blu-ray device path
-    #[arg(short, long, default_value = DEFAULT_DEVICE)]
-    device: PathBuf,
+    /// Blu-ray device path [default: auto-detect]
+    #[arg(short, long)]
+    device: Option<PathBuf>,
 
     /// Output directory
     #[arg(short, long, default_value = ".")]
@@ -73,6 +71,12 @@ pub struct Args {
 }
 
 impl Args {
+    pub fn device(&self) -> &std::path::Path {
+        self.device
+            .as_deref()
+            .expect("device resolved before use")
+    }
+
     pub fn cli_eject(&self) -> Option<bool> {
         if self.eject {
             Some(true)
@@ -85,7 +89,10 @@ impl Args {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
+    if args.device.is_none() {
+        args.device = Some(disc::detect_optical_drive());
+    }
 
     disc::check_dependencies()?;
 

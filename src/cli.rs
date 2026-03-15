@@ -17,7 +17,7 @@ struct TmdbContext {
 }
 
 pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
-    let device = args.device.to_string_lossy();
+    let device = args.device().to_string_lossy();
 
     let (label, label_info, episodes_pl, movie_mode) = scan_disc(args, config)?;
 
@@ -48,9 +48,9 @@ fn scan_disc(
     args: &Args,
     config: &crate::config::Config,
 ) -> anyhow::Result<(String, Option<LabelInfo>, Vec<Playlist>, bool)> {
-    let device = args.device.to_string_lossy();
+    let device = args.device().to_string_lossy();
 
-    if !args.device.exists() {
+    if !args.device().exists() {
         anyhow::bail!("No Blu-ray device found at {}", device);
     }
 

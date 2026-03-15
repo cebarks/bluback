@@ -691,7 +691,7 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
                 return; // Already waiting
             }
 
-            let device = app.args.device.to_string_lossy().to_string();
+            let device = app.args.device().to_string_lossy().to_string();
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
                 let infos: Vec<Option<crate::types::MediaInfo>> = selected_nums

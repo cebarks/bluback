@@ -131,7 +131,7 @@ impl App {
 }
 
 fn start_disc_scan(app: &mut App) {
-    let device = app.args.device.to_string_lossy().to_string();
+    let device = app.args.device().to_string_lossy().to_string();
     let max_speed = app.config.should_max_speed(app.args.no_max_speed);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -158,7 +158,7 @@ fn start_disc_scan(app: &mut App) {
         let _ = tx.send(BackgroundResult::DiscScan(result));
     });
     app.pending_rx = Some(rx);
-    app.status_message = format!("Scanning disc at {}...", app.args.device.display());
+    app.status_message = format!("Scanning disc at {}...", app.args.device().display());
     app.screen = Screen::Scanning;
 }
 
@@ -319,7 +319,7 @@ fn run_app(
                                 .iter()
                                 .all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_)));
                             if app.eject && !app.rip_jobs.is_empty() && all_succeeded {
-                                let device = app.args.device.to_string_lossy().to_string();
+                                let device = app.args.device().to_string_lossy().to_string();
                                 let _ = crate::disc::eject_disc(&device);
                             }
                             app.quit = true;
@@ -359,7 +359,7 @@ fn poll_background(app: &mut App) {
     };
 
     if let BackgroundResult::WaitingForDisc = result {
-        app.status_message = format!("Waiting for disc at {}...", app.args.device.display());
+        app.status_message = format!("Waiting for disc at {}...", app.args.device().display());
         return; // Keep pending_rx alive
     }
 
