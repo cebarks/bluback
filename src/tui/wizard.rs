@@ -98,7 +98,15 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
     );
     f.render_widget(title, chunks[0]);
 
-    let body = Paragraph::new(app.status_message.as_str());
+    let mut lines: Vec<Line> = app
+        .scan_log
+        .iter()
+        .map(|s| Line::from(s.as_str()).style(Style::default().fg(Color::DarkGray)))
+        .collect();
+    if !app.status_message.is_empty() {
+        lines.push(Line::from(app.status_message.as_str()));
+    }
+    let body = Paragraph::new(lines);
     f.render_widget(body, chunks[1]);
 
     let hints =

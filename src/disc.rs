@@ -16,14 +16,15 @@ static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
 static PLAYLIST_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").unwrap());
 
-/// Auto-detect an optical drive by scanning lsblk for devices of type "rom".
-/// Returns the first one found (e.g. `/dev/sr1`), or falls back to `/dev/sr0`.
-pub fn detect_optical_drive() -> std::path::PathBuf {
+/// Return all optical drives (type "rom") found via lsblk.
+/// Falls back to `[/dev/sr0]` if none are found.
+pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
     let output = Command::new("lsblk")
         .args(["-rno", "NAME,TYPE"])
         .output()
         .ok();
 
+    let mut drives = Vec::new();
     if let Some(out) = output {
         if out.status.success() {
             let text = String::from_utf8_lossy(&out.stdout);
@@ -31,14 +32,17 @@ pub fn detect_optical_drive() -> std::path::PathBuf {
                 let mut parts = line.split_whitespace();
                 if let (Some(name), Some(typ)) = (parts.next(), parts.next()) {
                     if typ == "rom" {
-                        return std::path::PathBuf::from(format!("/dev/{}", name));
+                        drives.push(std::path::PathBuf::from(format!("/dev/{}", name)));
                     }
                 }
             }
         }
     }
 
-    std::path::PathBuf::from("/dev/sr0")
+    if drives.is_empty() {
+        drives.push(std::path::PathBuf::from("/dev/sr0"));
+    }
+    drives
 }
 
 pub fn check_dependencies() -> Result<()> {

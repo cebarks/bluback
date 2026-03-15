@@ -79,6 +79,7 @@ pub struct App {
 
     // Status/error messages
     pub status_message: String,
+    pub scan_log: Vec<String>,
 
     // Eject
     pub eject: bool,
@@ -124,6 +125,7 @@ impl App {
             config: crate::config::Config::default(),
             show_name: String::new(),
             status_message: String::new(),
+            scan_log: Vec::new(),
             eject: false,
             pending_rx: None,
         }
@@ -131,34 +133,47 @@ impl App {
 }
 
 fn start_disc_scan(app: &mut App) {
-    let device = app.args.device().to_string_lossy().to_string();
+    let explicit_device = app.args.device.clone();
     let max_speed = app.config.should_max_speed(app.args.no_max_speed);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        // Poll for disc presence
-        loop {
-            let label = crate::disc::get_volume_label(&device);
-            if !label.is_empty() {
-                break;
-            }
-            if tx.send(BackgroundResult::WaitingForDisc).is_err() {
-                return; // Receiver dropped (rescan or quit)
+        // Build device list: explicit device only, or all detected drives
+        let devices: Vec<String> = if let Some(ref dev) = explicit_device {
+            vec![dev.to_string_lossy().to_string()]
+        } else {
+            crate::disc::detect_optical_drives()
+                .into_iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect()
+        };
+
+        // Poll devices for disc presence
+        let found = 'poll: loop {
+            for dev in &devices {
+                let label = crate::disc::get_volume_label(dev);
+                if !label.is_empty() {
+                    break 'poll dev.clone();
+                }
+                let msg = format!("{} — no disc", dev);
+                if tx.send(BackgroundResult::WaitingForDisc(msg)).is_err() {
+                    return;
+                }
             }
             std::thread::sleep(Duration::from_secs(2));
-        }
+        };
 
         if max_speed {
-            crate::disc::set_max_speed(&device);
+            crate::disc::set_max_speed(&found);
         }
-        let result = (|| -> anyhow::Result<(String, Vec<Playlist>)> {
-            let label = crate::disc::get_volume_label(&device);
-            let playlists = crate::disc::scan_playlists(&device)?;
-            Ok((label, playlists))
+        let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>)> {
+            let label = crate::disc::get_volume_label(&found);
+            let playlists = crate::disc::scan_playlists(&found)?;
+            Ok((found, label, playlists))
         })();
         let _ = tx.send(BackgroundResult::DiscScan(result));
     });
     app.pending_rx = Some(rx);
-    app.status_message = format!("Scanning disc at {}...", app.args.device().display());
+    app.status_message = "Scanning for disc...".into();
     app.screen = Screen::Scanning;
 }
 
@@ -201,6 +216,7 @@ impl App {
         self.confirm_rescan = false;
         self.show_name = String::new();
         self.status_message = String::new();
+        self.scan_log = Vec::new();
         self.pending_rx = None;
     }
 }
@@ -358,16 +374,29 @@ fn poll_background(app: &mut App) {
         }
     };
 
-    if let BackgroundResult::WaitingForDisc = result {
-        app.status_message = format!("Waiting for disc at {}...", app.args.device().display());
+    if let BackgroundResult::WaitingForDisc(ref msg) = result {
+        // Replace the last log entry if it's for the same device, otherwise append
+        let device_prefix = msg.split(" — ").next().unwrap_or("");
+        if let Some(last) = app.scan_log.last() {
+            if last.starts_with(device_prefix) {
+                // Same device, no change needed
+            } else {
+                app.scan_log.push(msg.clone());
+            }
+        } else {
+            app.scan_log.push(msg.clone());
+        }
+        app.status_message = "Waiting for disc...".into();
         return; // Keep pending_rx alive
     }
 
     app.pending_rx = None;
 
     match result {
-        BackgroundResult::WaitingForDisc => unreachable!(),
-        BackgroundResult::DiscScan(Ok((label, playlists))) => {
+        BackgroundResult::WaitingForDisc(_) => unreachable!(),
+        BackgroundResult::DiscScan(Ok((device, label, playlists))) => {
+            // Update device to the one that had the disc
+            app.args.device = Some(std::path::PathBuf::from(device));
             app.label_info = crate::disc::parse_volume_label(&label);
             app.label = label;
             app.episodes_pl = crate::disc::filter_episodes(&playlists, app.args.min_duration)

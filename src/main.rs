@@ -91,7 +91,8 @@ impl Args {
 fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
     if args.device.is_none() {
-        args.device = Some(disc::detect_optical_drive());
+        let drives = disc::detect_optical_drives();
+        args.device = Some(drives[0].clone());
     }
 
     disc::check_dependencies()?;

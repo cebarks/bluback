@@ -126,10 +126,10 @@ pub struct TmdbLookupResult {
 
 /// Result types for background operations in TUI mode
 pub enum BackgroundResult {
-    /// No disc detected yet, still polling
-    WaitingForDisc,
-    /// Disc scan completed: (label, playlists)
-    DiscScan(anyhow::Result<(String, Vec<Playlist>)>),
+    /// No disc detected on this device
+    WaitingForDisc(String),
+    /// Disc scan completed: (device, label, playlists)
+    DiscScan(anyhow::Result<(String, String, Vec<Playlist>)>),
     /// TMDb show search completed
     ShowSearch(anyhow::Result<Vec<TmdbShow>>),
     /// TMDb movie search completed
