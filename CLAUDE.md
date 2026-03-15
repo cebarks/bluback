@@ -53,6 +53,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 
 ### Key Design Decisions
 
+- **Disc auto-detect** — TUI mode polls `lsblk` for a volume label every 2 seconds until a disc is detected, then proceeds with scanning. Works on startup and after rescan (Ctrl+R / Enter on Done screen).
 - **Blocking I/O** — no async runtime. ffmpeg progress read via reader thread + mpsc channel.
 - **Audio selection**: Prefers 5.1/7.1 surround, includes stereo as secondary track. All subtitle streams included.
 - **Sequential episode assignment** — user specifies starting episode, playlists assigned in order. Volume label parsing guesses the start from disc number.
