@@ -91,10 +91,34 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
     None
 }
 
+/// Default timeout for ffprobe playlist scan (seconds).
+const SCAN_TIMEOUT_SECS: u64 = 60;
+
 pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>> {
-    let output = Command::new("ffprobe")
+    let mut child = Command::new("ffprobe")
         .args(["-i", &format!("bluray:{}", device)])
-        .output()?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    let timeout = std::time::Duration::from_secs(SCAN_TIMEOUT_SECS);
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait()? {
+            Some(_) => break,
+            None if start.elapsed() >= timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!(
+                    "ffprobe timed out after {}s — AACS decryption may have failed. \
+                     Check your KEYDB.cfg or try a different disc.",
+                    SCAN_TIMEOUT_SECS
+                );
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(200)),
+        }
+    }
+    let output = child.wait_with_output()?;
 
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + &String::from_utf8_lossy(&output.stderr);
