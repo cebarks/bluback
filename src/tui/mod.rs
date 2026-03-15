@@ -295,6 +295,26 @@ fn run_app(
                     continue;
                 }
 
+                // Global Ctrl+E: eject disc (not during ripping or text input)
+                if key.code == KeyCode::Char('e')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !app.input_active
+                    && app.screen != Screen::Ripping
+                {
+                    if let Some(ref device) = app.args.device {
+                        let device_str = device.to_string_lossy().to_string();
+                        match crate::disc::eject_disc(&device_str) {
+                            Ok(()) => app.status_message = "Disc ejected.".into(),
+                            Err(e) => {
+                                app.status_message = format!("Eject failed: {}", e);
+                            }
+                        }
+                    } else {
+                        app.status_message = "No disc device detected yet.".into();
+                    }
+                    continue;
+                }
+
                 // Global Ctrl+R: rescan disc
                 if key.code == KeyCode::Char('r')
                     && key.modifiers.contains(KeyModifiers::CONTROL)

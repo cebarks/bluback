@@ -114,8 +114,8 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
     let body = Paragraph::new(lines);
     f.render_widget(body, chunks[1]);
 
-    let hints =
-        Paragraph::new("q: Quit | Ctrl+R: Rescan").style(Style::default().fg(Color::DarkGray));
+    let hints = Paragraph::new("q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan")
+        .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -153,8 +153,9 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
             .block(Block::default().borders(Borders::ALL).title("TMDb API Key"));
         f.render_widget(input, content_chunks[1]);
 
-        let hints = Paragraph::new("Enter: Save key | Esc: Skip TMDb | Ctrl+R: Rescan")
-            .style(Style::default().fg(Color::DarkGray));
+        let hints =
+            Paragraph::new("Enter: Save key | Esc: Skip TMDb | Ctrl+E: Eject | Ctrl+R: Rescan")
+                .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     } else {
         let mut lines = vec![Line::from(format!("{}|", app.input_buffer))];
@@ -169,7 +170,7 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
 
         let toggle = if app.movie_mode { "TV Show" } else { "Movie" };
         let hints = Paragraph::new(format!(
-            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit | Ctrl+R: Rescan",
+            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan",
             toggle
         ))
         .style(Style::default().fg(Color::DarkGray));
@@ -294,8 +295,10 @@ pub fn render_show_select(f: &mut Frame, app: &App) {
         .highlight_style(Style::default().fg(Color::Yellow));
     f.render_widget(list, chunks[1]);
 
-    let hints = Paragraph::new("Up/Down: Navigate | Enter: Select | Esc: Back | Ctrl+R: Rescan")
-        .style(Style::default().fg(Color::DarkGray));
+    let hints = Paragraph::new(
+        "Up/Down: Navigate | Enter: Select | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan",
+    )
+    .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -465,9 +468,10 @@ pub fn render_season_episode(f: &mut Frame, app: &App) {
         f.render_widget(empty, content_chunks[2]);
     }
 
-    let hints =
-        Paragraph::new("Tab: Switch field | Enter: Confirm/Fetch | Esc: Back | Ctrl+R: Rescan")
-            .style(Style::default().fg(Color::DarkGray));
+    let hints = Paragraph::new(
+        "Tab: Switch field | Enter: Confirm/Fetch | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan",
+    )
+    .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -644,7 +648,7 @@ pub fn render_episode_mapping(f: &mut Frame, app: &App) {
     let hints = if app.mapping_edit_row.is_some() {
         "Enter: Confirm | Esc: Cancel | Format: 3 or 3-4 or 3,5"
     } else {
-        "e: Edit | Enter: Accept | Up/Down: Navigate | Esc: Back | Ctrl+R: Rescan"
+        "e: Edit | Enter: Accept | Up/Down: Navigate | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan"
     };
     let hints = Paragraph::new(hints).style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
@@ -866,7 +870,7 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
     f.render_widget(table, chunks[1]);
 
     let hints = Paragraph::new(
-        "Space: Toggle | Up/Down: Navigate | Enter: Confirm | Esc: Back | Ctrl+R: Rescan",
+        "Space: Toggle | Up/Down: Navigate | Enter: Confirm | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan",
     )
     .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
@@ -1010,9 +1014,9 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     f.render_widget(table, chunks[1]);
 
     let hint_text = if app.args.dry_run {
-        "Enter: Exit (dry run) | Esc: Back | Ctrl+R: Rescan"
+        "Enter: Exit (dry run) | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan"
     } else {
-        "Enter: Start Ripping | Esc: Back | Ctrl+R: Rescan"
+        "Enter: Start Ripping | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan"
     };
     let hints = Paragraph::new(hint_text).style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
