@@ -153,8 +153,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
     app.api_key = crate::tmdb::get_api_key(config);
     {
         let device = args.device.to_string_lossy().to_string();
+        let max_speed = config.should_max_speed(args.no_max_speed);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
+            if max_speed {
+                crate::disc::set_max_speed(&device);
+            }
             let result = (|| -> anyhow::Result<(String, Vec<Playlist>)> {
                 let label = crate::disc::get_volume_label(&device);
                 let playlists = crate::disc::scan_playlists(&device)?;

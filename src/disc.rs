@@ -237,6 +237,12 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
     parse_media_info_json(&json)
 }
 
+pub fn set_max_speed(device: &str) {
+    let _ = Command::new("eject")
+        .args(["-x", "0", device])
+        .status();
+}
+
 pub fn eject_disc(device: &str) -> anyhow::Result<()> {
     let status = Command::new("eject")
         .arg(device)

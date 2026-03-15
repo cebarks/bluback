@@ -18,6 +18,7 @@ pub struct Config {
     pub tv_format: Option<String>,
     pub movie_format: Option<String>,
     pub eject: Option<bool>,
+    pub max_speed: Option<bool>,
 }
 
 fn config_dir() -> PathBuf {
@@ -82,6 +83,13 @@ impl Config {
 
     pub fn should_eject(&self, cli_eject: Option<bool>) -> bool {
         cli_eject.unwrap_or_else(|| self.eject.unwrap_or(false))
+    }
+
+    pub fn should_max_speed(&self, cli_no_max_speed: bool) -> bool {
+        if cli_no_max_speed {
+            return false;
+        }
+        self.max_speed.unwrap_or(true)
     }
 }
 
@@ -235,5 +243,29 @@ mod tests {
     fn test_should_eject_no_cli_no_config_defaults_false() {
         let config = Config::default();
         assert!(!config.should_eject(None));
+    }
+
+    #[test]
+    fn test_max_speed_defaults_true() {
+        let config = Config::default();
+        assert!(config.should_max_speed(false));
+    }
+
+    #[test]
+    fn test_max_speed_cli_disables() {
+        let config = Config { max_speed: Some(true), ..Default::default() };
+        assert!(!config.should_max_speed(true));
+    }
+
+    #[test]
+    fn test_max_speed_config_disables() {
+        let config = Config { max_speed: Some(false), ..Default::default() };
+        assert!(!config.should_max_speed(false));
+    }
+
+    #[test]
+    fn test_parse_max_speed() {
+        let config: Config = toml::from_str("max_speed = false").unwrap();
+        assert_eq!(config.max_speed, Some(false));
     }
 }

@@ -16,6 +16,10 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
         anyhow::bail!("No Blu-ray device found at {}", device);
     }
 
+    if config.should_max_speed(args.no_max_speed) {
+        disc::set_max_speed(&device);
+    }
+
     let label = disc::get_volume_label(&device);
     let label_info = disc::parse_volume_label(&label);
     if !label.is_empty() {

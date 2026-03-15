@@ -62,6 +62,10 @@ pub struct Args {
     /// Don't eject disc after rip (overrides config)
     #[arg(long, conflicts_with = "eject")]
     no_eject: bool,
+
+    /// Don't set drive to maximum read speed
+    #[arg(long)]
+    no_max_speed: bool,
 }
 
 impl Args {
