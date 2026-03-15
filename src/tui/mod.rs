@@ -80,8 +80,6 @@ pub struct App {
 
     // Eject
     pub eject: bool,
-    pub eject_rx: Option<mpsc::Receiver<anyhow::Result<()>>>,
-
     // Background task channel (disc scan, TMDb, media probes)
     pub pending_rx: Option<mpsc::Receiver<BackgroundResult>>,
 }
@@ -125,7 +123,6 @@ impl App {
             show_name: String::new(),
             status_message: String::new(),
             eject: false,
-            eject_rx: None,
             pending_rx: None,
         }
     }
@@ -190,7 +187,6 @@ impl App {
         self.confirm_rescan = false;
         self.show_name = String::new();
         self.status_message = String::new();
-        self.eject_rx = None;
         self.pending_rx = None;
     }
 }
@@ -300,6 +296,12 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
                             app.api_key = crate::tmdb::get_api_key(config);
                             start_disc_scan(&mut app);
                         } else {
+                            // Eject on exit if enabled and all rips succeeded
+                            let all_succeeded = app.rip_jobs.iter().all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_)));
+                            if app.eject && !app.rip_jobs.is_empty() && all_succeeded {
+                                let device = app.args.device.to_string_lossy().to_string();
+                                let _ = crate::disc::eject_disc(&device);
+                            }
                             app.quit = true;
                         }
                     }

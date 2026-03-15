@@ -80,6 +80,10 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
 
     let body = Paragraph::new(app.status_message.as_str());
     f.render_widget(body, chunks[1]);
+
+    let hints = Paragraph::new("q: Quit | Ctrl+R: Rescan")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
 }
 
 pub fn render_tmdb_search(f: &mut Frame, app: &App) {
