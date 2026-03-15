@@ -82,6 +82,9 @@ bluback [OPTIONS]
       --format-preset <NAME>   Built-in preset: default, plex, jellyfin
       --dry-run                Show what would be ripped
       --no-tui                 Plain text mode
+      --eject                  Eject disc after successful rip
+      --no-eject               Don't eject disc after rip (overrides config)
+      --no-max-speed           Don't set drive to maximum read speed
 ```
 
 `--format` and `--format-preset` are mutually exclusive (clap argument group).
