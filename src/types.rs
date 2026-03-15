@@ -108,6 +108,8 @@ pub type EpisodeAssignments = HashMap<String, Episode>;
 
 /// Result types for background operations in TUI mode
 pub enum BackgroundResult {
+    /// No disc detected yet, still polling
+    WaitingForDisc,
     /// Disc scan completed: (label, playlists)
     DiscScan(anyhow::Result<(String, Vec<Playlist>)>),
     /// TMDb show search completed

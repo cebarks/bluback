@@ -133,6 +133,18 @@ fn start_disc_scan(app: &mut App) {
     let max_speed = app.config.should_max_speed(app.args.no_max_speed);
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
+        // Poll for disc presence
+        loop {
+            let label = crate::disc::get_volume_label(&device);
+            if !label.is_empty() {
+                break;
+            }
+            if tx.send(BackgroundResult::WaitingForDisc).is_err() {
+                return; // Receiver dropped (rescan or quit)
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+
         if max_speed {
             crate::disc::set_max_speed(&device);
         }
@@ -338,9 +350,15 @@ fn poll_background(app: &mut App) {
         }
     };
 
+    if let BackgroundResult::WaitingForDisc = result {
+        app.status_message = format!("Waiting for disc at {}...", app.args.device.display());
+        return; // Keep pending_rx alive
+    }
+
     app.pending_rx = None;
 
     match result {
+        BackgroundResult::WaitingForDisc => unreachable!(),
         BackgroundResult::DiscScan(Ok((label, playlists))) => {
             app.label_info = crate::disc::parse_volume_label(&label);
             app.label = label;
