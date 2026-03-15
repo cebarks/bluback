@@ -54,6 +54,26 @@ pub struct Args {
     /// Use a built-in filename preset (default, plex, jellyfin)
     #[arg(long, group = "format_group")]
     format_preset: Option<String>,
+
+    /// Eject disc after successful rip
+    #[arg(long, conflicts_with = "no_eject")]
+    eject: bool,
+
+    /// Don't eject disc after rip (overrides config)
+    #[arg(long, conflicts_with = "eject")]
+    no_eject: bool,
+}
+
+impl Args {
+    pub fn cli_eject(&self) -> Option<bool> {
+        if self.eject {
+            Some(true)
+        } else if self.no_eject {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 fn main() -> anyhow::Result<()> {

@@ -220,6 +220,46 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
         }
         app.rip_child = None;
         app.progress_rx = None;
+
+        // Poll for eject completion if already in progress
+        if let Some(ref rx) = app.eject_rx {
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    app.eject_rx = None;
+                    app.status_message.clear();
+                    app.screen = Screen::Done;
+                }
+                Ok(Err(e)) => {
+                    app.eject_rx = None;
+                    app.status_message = format!("Warning: failed to eject disc: {}", e);
+                    app.screen = Screen::Done;
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    // Still ejecting, keep waiting
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.eject_rx = None;
+                    app.status_message = "Warning: eject thread terminated unexpectedly".into();
+                    app.screen = Screen::Done;
+                }
+            }
+            return Ok(());
+        }
+
+        let all_succeeded = app.rip_jobs.iter().all(|j| matches!(j.status, PlaylistStatus::Done(_)));
+
+        // If eject enabled and all succeeded, spawn eject thread
+        if app.eject && all_succeeded {
+            let device = app.args.device.to_string_lossy().to_string();
+            let (tx, rx) = mpsc::channel();
+            thread::spawn(move || {
+                let _ = tx.send(crate::disc::eject_disc(&device));
+            });
+            app.eject_rx = Some(rx);
+            app.status_message = "Ejecting disc...".into();
+            return Ok(());
+        }
+
         app.screen = Screen::Done;
         return Ok(());
     }

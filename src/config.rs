@@ -17,6 +17,7 @@ pub struct Config {
     pub preset: Option<String>,
     pub tv_format: Option<String>,
     pub movie_format: Option<String>,
+    pub eject: Option<bool>,
 }
 
 fn config_dir() -> PathBuf {
@@ -77,6 +78,10 @@ impl Config {
             return preset_format(preset, is_movie);
         }
         preset_format("default", is_movie)
+    }
+
+    pub fn should_eject(&self, cli_eject: Option<bool>) -> bool {
+        cli_eject.unwrap_or_else(|| self.eject.unwrap_or(false))
     }
 }
 
@@ -188,5 +193,47 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(config.resolve_format(false, None, None), DEFAULT_TV_FORMAT);
+    }
+
+    #[test]
+    fn test_parse_eject_true() {
+        let config: Config = toml::from_str("eject = true").unwrap();
+        assert_eq!(config.eject, Some(true));
+    }
+
+    #[test]
+    fn test_parse_eject_false() {
+        let config: Config = toml::from_str("eject = false").unwrap();
+        assert_eq!(config.eject, Some(false));
+    }
+
+    #[test]
+    fn test_parse_eject_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.eject.is_none());
+    }
+
+    #[test]
+    fn test_should_eject_cli_true_overrides_config() {
+        let config = Config { eject: Some(false), ..Default::default() };
+        assert!(config.should_eject(Some(true)));
+    }
+
+    #[test]
+    fn test_should_eject_cli_false_overrides_config() {
+        let config = Config { eject: Some(true), ..Default::default() };
+        assert!(!config.should_eject(Some(false)));
+    }
+
+    #[test]
+    fn test_should_eject_no_cli_uses_config() {
+        let config = Config { eject: Some(true), ..Default::default() };
+        assert!(config.should_eject(None));
+    }
+
+    #[test]
+    fn test_should_eject_no_cli_no_config_defaults_false() {
+        let config = Config::default();
+        assert!(!config.should_eject(None));
     }
 }

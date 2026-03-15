@@ -237,6 +237,20 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
     parse_media_info_json(&json)
 }
 
+pub fn eject_disc(device: &str) -> anyhow::Result<()> {
+    let status = Command::new("eject")
+        .arg(device)
+        .status()?;
+
+    if !status.success() {
+        bail!(
+            "eject exited with code {}",
+            status.code().unwrap_or(-1)
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

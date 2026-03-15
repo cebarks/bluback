@@ -76,6 +76,10 @@ pub struct App {
 
     // Status/error messages
     pub status_message: String,
+
+    // Eject
+    pub eject: bool,
+    pub eject_rx: Option<mpsc::Receiver<anyhow::Result<()>>>,
 }
 
 impl App {
@@ -115,6 +119,8 @@ impl App {
             config: crate::config::Config::default(),
             show_name: String::new(),
             status_message: String::new(),
+            eject: false,
+            eject_rx: None,
         }
     }
 }
@@ -136,6 +142,7 @@ pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, config: &crate::config::Config) -> Result<()> {
     let mut app = App::new(args.clone());
     app.config = config.clone();
+    app.eject = config.should_eject(args.cli_eject());
 
     // Initial scan (blocking -- runs before event loop)
     app.status_message = format!("Scanning disc at {}...", args.device.display());

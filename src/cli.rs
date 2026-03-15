@@ -252,6 +252,8 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
         }
     }
 
+    let mut had_failure = false;
+
     for (i, &idx) in selected.iter().enumerate() {
         let pl = episodes_pl[idx];
         let outfile = &outfiles[i];
@@ -279,6 +281,7 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
                     "Warning: Failed to probe streams for playlist {}, skipping.",
                     pl.num
                 );
+                had_failure = true;
                 continue;
             }
         };
@@ -337,6 +340,7 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
                 let last_line = stderr_msg.lines().last().unwrap_or("");
                 println!("Error: ffmpeg: {}", last_line);
             }
+            had_failure = true;
             continue;
         }
 
@@ -349,6 +353,14 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
         selected.len(),
         args.output.display()
     );
+
+    if !had_failure && config.should_eject(args.cli_eject()) {
+        println!("Ejecting disc...");
+        if let Err(e) = disc::eject_disc(&device) {
+            println!("Warning: failed to eject disc: {}", e);
+        }
+    }
+
     Ok(())
 }
 
