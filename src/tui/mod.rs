@@ -295,7 +295,13 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
                     Screen::Confirm => wizard::handle_confirm_input(&mut app, key),
                     Screen::Ripping => dashboard::handle_input(&mut app, key),
                     Screen::Done => {
-                        app.quit = true;
+                        if key.code == KeyCode::Enter {
+                            app.reset_for_rescan();
+                            app.api_key = crate::tmdb::get_api_key(config);
+                            start_disc_scan(&mut app);
+                        } else {
+                            app.quit = true;
+                        }
                     }
                     _ => {}
                 }

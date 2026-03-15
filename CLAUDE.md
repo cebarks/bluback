@@ -107,7 +107,8 @@ bluback [OPTIONS]
 - `q` — Abort (with confirmation)
 
 **Done screen:**
-- Any key — Exit
+- `Enter` — Rescan disc and restart wizard
+- Any other key — Exit
 
 ## Dependencies
 

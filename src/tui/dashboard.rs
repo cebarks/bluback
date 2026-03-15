@@ -183,7 +183,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Results"));
     f.render_widget(body, chunks[1]);
 
-    let hint = Paragraph::new("Press any key to exit  [Ctrl+R] Rescan")
+    let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [any other key] Exit")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 }
