@@ -89,6 +89,26 @@ bluback [OPTIONS]
 
 `--format` and `--format-preset` are mutually exclusive (clap argument group).
 
+## TUI Keybindings
+
+**Global (all screens):**
+- `Ctrl+R` — Rescan disc and restart wizard (confirms first during ripping)
+- `Ctrl+C` — Quit immediately
+- `q` — Quit (except during text input or ripping)
+
+**Wizard screens:**
+- `Enter` — Confirm / submit
+- `Esc` — Go back one step (or skip TMDb on search screen)
+- `Up/Down` — Navigate lists
+- `Space` — Toggle playlist selection
+- `Tab` — Switch between fields or toggle movie/TV mode
+
+**Ripping dashboard:**
+- `q` — Abort (with confirmation)
+
+**Done screen:**
+- Any key — Exit
+
 ## Dependencies
 
 | Crate | Purpose |
