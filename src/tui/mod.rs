@@ -69,6 +69,7 @@ pub struct App {
     pub progress_state: HashMap<String, String>,
     pub stderr_buffer: Option<Arc<Mutex<String>>>,
     pub confirm_abort: bool,
+    pub confirm_rescan: bool,
 
     // Config
     pub config: crate::config::Config,
@@ -119,6 +120,7 @@ impl App {
             progress_state: HashMap::new(),
             stderr_buffer: None,
             confirm_abort: false,
+            confirm_rescan: false,
             config: crate::config::Config::default(),
             show_name: String::new(),
             status_message: String::new(),
@@ -126,6 +128,70 @@ impl App {
             eject_rx: None,
             pending_rx: None,
         }
+    }
+}
+
+fn start_disc_scan(app: &mut App) {
+    let device = app.args.device.to_string_lossy().to_string();
+    let max_speed = app.config.should_max_speed(app.args.no_max_speed);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        if max_speed {
+            crate::disc::set_max_speed(&device);
+        }
+        let result = (|| -> anyhow::Result<(String, Vec<Playlist>)> {
+            let label = crate::disc::get_volume_label(&device);
+            let playlists = crate::disc::scan_playlists(&device)?;
+            Ok((label, playlists))
+        })();
+        let _ = tx.send(BackgroundResult::DiscScan(result));
+    });
+    app.pending_rx = Some(rx);
+    app.status_message = format!("Scanning disc at {}...", app.args.device.display());
+    app.screen = Screen::Scanning;
+}
+
+impl App {
+    pub fn reset_for_rescan(&mut self) {
+        // Kill any active rip
+        if let Some(ref mut child) = self.rip_child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+
+        // Clear all disc/TMDb/rip state, preserving args, config, api_key, eject
+        self.label = String::new();
+        self.label_info = None;
+        self.playlists = Vec::new();
+        self.episodes_pl = Vec::new();
+        self.search_query = String::new();
+        self.movie_mode = false;
+        self.search_results = Vec::new();
+        self.selected_show = None;
+        self.movie_results = Vec::new();
+        self.selected_movie = None;
+        self.season_num = None;
+        self.episodes = Vec::new();
+        self.start_episode = None;
+        self.episode_assignments = HashMap::new();
+        self.playlist_selected = Vec::new();
+        self.filenames = Vec::new();
+        self.list_cursor = 0;
+        self.input_buffer = String::new();
+        self.input_active = false;
+        self.season_field = 0;
+        self.rip_jobs = Vec::new();
+        self.current_rip = 0;
+        self.rip_child = None;
+        self.progress_rx = None;
+        self.progress_state = HashMap::new();
+        self.stderr_buffer = None;
+        self.confirm_abort = false;
+        self.confirm_rescan = false;
+        self.show_name = String::new();
+        self.status_message = String::new();
+        self.eject_rx = None;
+        self.pending_rx = None;
     }
 }
 
@@ -149,25 +215,8 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
     app.eject = config.should_eject(args.cli_eject());
 
     // Spawn disc scan in background thread
-    app.status_message = format!("Scanning disc at {}...", args.device.display());
     app.api_key = crate::tmdb::get_api_key(config);
-    {
-        let device = args.device.to_string_lossy().to_string();
-        let max_speed = config.should_max_speed(args.no_max_speed);
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            if max_speed {
-                crate::disc::set_max_speed(&device);
-            }
-            let result = (|| -> anyhow::Result<(String, Vec<Playlist>)> {
-                let label = crate::disc::get_volume_label(&device);
-                let playlists = crate::disc::scan_playlists(&device)?;
-                Ok((label, playlists))
-            })();
-            let _ = tx.send(BackgroundResult::DiscScan(result));
-        });
-        app.pending_rx = Some(rx);
-    }
+    start_disc_scan(&mut app);
 
     // Event loop
     loop {
@@ -205,6 +254,36 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
                 }
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     app.quit = true;
+                    continue;
+                }
+
+                // Global Ctrl+R: rescan disc
+                if key.code == KeyCode::Char('r') && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !app.confirm_rescan
+                {
+                    if app.screen == Screen::Ripping {
+                        app.confirm_rescan = true;
+                    } else {
+                        app.reset_for_rescan();
+                        app.api_key = crate::tmdb::get_api_key(config);
+                        start_disc_scan(&mut app);
+                    }
+                    continue;
+                }
+
+                // Handle rescan confirmation (during ripping)
+                if app.confirm_rescan {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            app.reset_for_rescan();
+                            app.api_key = crate::tmdb::get_api_key(config);
+                            start_disc_scan(&mut app);
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            app.confirm_rescan = false;
+                        }
+                        _ => {}
+                    }
                     continue;
                 }
 

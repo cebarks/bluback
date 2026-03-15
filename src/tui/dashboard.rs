@@ -39,7 +39,7 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     // Job table
-    let header = Row::new(["#", "Playlist", "Episode", "Status", "Size", "ETA"])
+    let header = Row::new(["#", "Playlist", "Episode", "File", "Status", "Size", "ETA"])
         .style(Style::default().add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
@@ -81,6 +81,7 @@ pub fn render(f: &mut Frame, app: &App) {
                 format!("{}", i + 1),
                 job.playlist.num.clone(),
                 ep_name,
+                job.filename.clone(),
                 status,
                 size,
                 eta,
@@ -91,6 +92,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let widths = [
         Constraint::Length(3),
         Constraint::Length(8),
+        Constraint::Min(15),
         Constraint::Min(20),
         Constraint::Length(30),
         Constraint::Length(12),
@@ -102,12 +104,15 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Jobs"));
     f.render_widget(table, chunks[1]);
 
-    // Key hints / abort confirmation
+    // Key hints / confirmation prompts
     let hint = if app.confirm_abort {
         Paragraph::new("Really abort? [y] Yes  [n] No")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+    } else if app.confirm_rescan {
+        Paragraph::new("Rescan disc? This will abort the current rip. [y] Yes  [n] No")
+            .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
     } else {
-        Paragraph::new("[q] Abort")
+        Paragraph::new("[q] Abort  [Ctrl+R] Rescan")
             .style(Style::default().fg(Color::DarkGray))
     };
     f.render_widget(hint, chunks[2]);
@@ -178,7 +183,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Results"));
     f.render_widget(body, chunks[1]);
 
-    let hint = Paragraph::new("Press any key to exit")
+    let hint = Paragraph::new("Press any key to exit  [Ctrl+R] Rescan")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 }

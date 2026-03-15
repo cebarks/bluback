@@ -108,7 +108,7 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
             .block(Block::default().borders(Borders::ALL).title("TMDb API Key"));
         f.render_widget(input, content_chunks[1]);
 
-        let hints = Paragraph::new("Enter: Save key | Esc: Skip TMDb")
+        let hints = Paragraph::new("Enter: Save key | Esc: Skip TMDb | Ctrl+R: Rescan")
             .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     } else {
@@ -122,7 +122,7 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
 
         let toggle = if app.movie_mode { "TV Show" } else { "Movie" };
         let hints = Paragraph::new(format!(
-            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit", toggle
+            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit | Ctrl+R: Rescan", toggle
         ))
             .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
@@ -232,7 +232,7 @@ pub fn render_show_select(f: &mut Frame, app: &App) {
         .highlight_style(Style::default().fg(Color::Yellow));
     f.render_widget(list, chunks[1]);
 
-    let hints = Paragraph::new("Up/Down: Navigate | Enter: Select | Esc: Back")
+    let hints = Paragraph::new("Up/Down: Navigate | Enter: Select | Esc: Back | Ctrl+R: Rescan")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
@@ -375,7 +375,7 @@ pub fn render_season_episode(f: &mut Frame, app: &App) {
         f.render_widget(empty, content_chunks[2]);
     }
 
-    let hints = Paragraph::new("Tab: Switch field | Enter: Confirm/Fetch | Esc: Back")
+    let hints = Paragraph::new("Tab: Switch field | Enter: Confirm/Fetch | Esc: Back | Ctrl+R: Rescan")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
@@ -554,7 +554,7 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(table, chunks[1]);
 
-    let hints = Paragraph::new("Space: Toggle | Up/Down: Navigate | Enter: Confirm | Esc: Back")
+    let hints = Paragraph::new("Space: Toggle | Up/Down: Navigate | Enter: Confirm | Esc: Back | Ctrl+R: Rescan")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
@@ -687,9 +687,9 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     f.render_widget(table, chunks[1]);
 
     let hint_text = if app.args.dry_run {
-        "Enter: Exit (dry run) | Esc: Back"
+        "Enter: Exit (dry run) | Esc: Back | Ctrl+R: Rescan"
     } else {
-        "Enter: Start Ripping | Esc: Back"
+        "Enter: Start Ripping | Esc: Back | Ctrl+R: Rescan"
     };
     let hints = Paragraph::new(hint_text)
         .style(Style::default().fg(Color::DarkGray));
