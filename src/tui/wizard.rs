@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use super::{App, Screen};
 use crate::tmdb;
 use crate::types::BackgroundResult;
-use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename};
+use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename, parse_episode_input};
 
 pub fn playlist_filename(
     app: &App,
@@ -66,9 +66,14 @@ pub fn playlist_filename(
         };
         make_movie_filename(title, year, part, fmt, media_info, Some(&extra))
     } else {
+        let episodes = app
+            .episode_assignments
+            .get(&pl.num)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         make_filename(
             &pl.num,
-            app.episode_assignments.get(&pl.num),
+            episodes,
             app.season_num.unwrap_or(0),
             fmt,
             media_info,
@@ -542,7 +547,7 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                 app.input_buffer.clear();
                 app.season_field = 0;
                 app.list_cursor = 0;
-                app.screen = Screen::PlaylistSelect;
+                app.screen = Screen::EpisodeMapping;
             }
         }
         KeyCode::Esc => {
@@ -552,6 +557,196 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
             app.list_cursor = 0;
             app.input_active = false;
             app.screen = Screen::ShowSelect;
+        }
+        _ => {}
+    }
+}
+
+pub fn render_episode_mapping(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
+
+    let show_name = app
+        .selected_show
+        .and_then(|i| app.search_results.get(i))
+        .map(|s| s.name.as_str())
+        .unwrap_or("Unknown");
+
+    let title = Paragraph::new(format!("Show: {}", show_name)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Step 4: Episode Mapping"),
+    );
+    f.render_widget(title, chunks[0]);
+
+    let header = Row::new(["", "#", "Playlist", "Duration", "Episode(s)"])
+        .style(Style::default().fg(Color::Yellow));
+
+    let rows: Vec<Row> = app
+        .episodes_pl
+        .iter()
+        .enumerate()
+        .map(|(i, pl)| {
+            let cursor = if i == app.list_cursor { ">" } else { " " };
+
+            let ep_str = if app.mapping_edit_row == Some(i) {
+                format!("{}|", app.input_buffer)
+            } else if let Some(eps) = app.episode_assignments.get(&pl.num) {
+                if eps.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    eps.iter()
+                        .map(|e| {
+                            if e.name.is_empty() {
+                                format!("E{:02}", e.episode_number)
+                            } else {
+                                format!("E{:02} - {}", e.episode_number, e.name)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            } else {
+                "(none)".to_string()
+            };
+
+            let row_style = if app.mapping_edit_row == Some(i) {
+                Style::default().fg(Color::Yellow)
+            } else if i == app.list_cursor {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default()
+            };
+
+            Row::new(vec![
+                cursor.to_string(),
+                format!("{}", i + 1),
+                pl.num.clone(),
+                pl.duration.clone(),
+                ep_str,
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(2),
+        Constraint::Length(4),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Min(30),
+    ];
+
+    let table = Table::new(rows, &widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(table, chunks[1]);
+
+    let hints = if app.mapping_edit_row.is_some() {
+        "Enter: Confirm | Esc: Cancel | Format: 3 or 3-4 or 3,5"
+    } else {
+        "e: Edit | Enter: Accept | Up/Down: Navigate | Esc: Back | Ctrl+R: Rescan"
+    };
+    let hints = Paragraph::new(hints).style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
+}
+
+pub fn handle_episode_mapping_input(app: &mut App, key: KeyEvent) {
+    if let Some(edit_row) = app.mapping_edit_row {
+        // Inline edit mode
+        match key.code {
+            KeyCode::Char(c) => {
+                if c.is_ascii_digit() || c == ',' || c == '-' {
+                    app.input_buffer.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                app.input_buffer.pop();
+            }
+            KeyCode::Enter => {
+                let pl_num = app.episodes_pl[edit_row].num.clone();
+                match parse_episode_input(&app.input_buffer) {
+                    Some(ep_nums) if ep_nums.is_empty() => {
+                        app.episode_assignments.remove(&pl_num);
+                    }
+                    Some(ep_nums) => {
+                        let ep_by_num: std::collections::HashMap<u32, &crate::types::Episode> =
+                            app.episodes.iter().map(|e| (e.episode_number, e)).collect();
+                        let eps: Vec<crate::types::Episode> = ep_nums
+                            .iter()
+                            .map(|&num| {
+                                ep_by_num
+                                    .get(&num)
+                                    .map(|e| (*e).clone())
+                                    .unwrap_or(crate::types::Episode {
+                                        episode_number: num,
+                                        name: String::new(),
+                                        runtime: None,
+                                    })
+                            })
+                            .collect();
+                        app.episode_assignments.insert(pl_num, eps);
+                    }
+                    None => {
+                        // Invalid input, stay in edit mode
+                        return;
+                    }
+                }
+                app.mapping_edit_row = None;
+                app.input_buffer.clear();
+                app.input_active = false;
+            }
+            KeyCode::Esc => {
+                app.mapping_edit_row = None;
+                app.input_buffer.clear();
+                app.input_active = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Navigation mode
+    match key.code {
+        KeyCode::Up => {
+            if app.list_cursor > 0 {
+                app.list_cursor -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.list_cursor + 1 < app.episodes_pl.len() {
+                app.list_cursor += 1;
+            }
+        }
+        KeyCode::Char('e') => {
+            let pl_num = &app.episodes_pl[app.list_cursor].num;
+            let current = app
+                .episode_assignments
+                .get(pl_num)
+                .map(|eps| {
+                    eps.iter()
+                        .map(|e| e.episode_number.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_default();
+            app.input_buffer = current;
+            app.mapping_edit_row = Some(app.list_cursor);
+            app.input_active = true;
+        }
+        KeyCode::Enter => {
+            app.list_cursor = 0;
+            app.screen = Screen::PlaylistSelect;
+        }
+        KeyCode::Esc => {
+            app.list_cursor = 0;
+            app.input_active = true;
+            let disc_num = app.label_info.as_ref().map(|l| l.disc);
+            let guessed = app
+                .start_episode
+                .unwrap_or_else(|| guess_start_episode(disc_num, app.episodes_pl.len()));
+            app.input_buffer = guessed.to_string();
+            app.season_field = 1;
+            app.screen = Screen::SeasonEpisode;
         }
         _ => {}
     }
@@ -572,7 +767,7 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
             .title(if app.movie_mode {
                 "Step 3: Select Playlists"
             } else {
-                "Step 4: Select Playlists"
+                "Step 5: Select Playlists"
             }),
     );
     f.render_widget(title, chunks[0]);
@@ -598,13 +793,27 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
             let cursor = if i == app.list_cursor { ">" } else { " " };
             let marker = format!("{} {}", cursor, checked);
 
-            let ep_info = if let Some(ep) = app.episode_assignments.get(&pl.num) {
-                format!(
-                    "S{:02}E{:02} - {}",
-                    app.season_num.unwrap_or(0),
-                    ep.episode_number,
-                    ep.name
-                )
+            let ep_info = if let Some(eps) = app.episode_assignments.get(&pl.num) {
+                if eps.len() == 1 {
+                    format!(
+                        "S{:02}E{:02} - {}",
+                        app.season_num.unwrap_or(0),
+                        eps[0].episode_number,
+                        eps[0].name
+                    )
+                } else if eps.len() > 1 {
+                    let first = &eps[0];
+                    let last = &eps[eps.len() - 1];
+                    format!(
+                        "S{:02}E{:02}-E{:02} - {}",
+                        app.season_num.unwrap_or(0),
+                        first.episode_number,
+                        last.episode_number,
+                        first.name
+                    )
+                } else {
+                    String::new()
+                }
             } else {
                 String::new()
             };
@@ -716,14 +925,7 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
             if app.movie_mode && app.selected_movie.is_some() {
                 app.screen = Screen::ShowSelect;
             } else if !app.episode_assignments.is_empty() {
-                // Go back to season/episode if TMDb was used
-                app.input_active = true;
-                let disc_num = app.label_info.as_ref().map(|l| l.disc);
-                let guessed = app
-                    .start_episode
-                    .unwrap_or_else(|| guess_start_episode(disc_num, app.episodes_pl.len()));
-                app.input_buffer = guessed.to_string();
-                app.screen = Screen::SeasonEpisode;
+                app.screen = Screen::EpisodeMapping;
             } else {
                 app.input_active = true;
                 app.input_buffer = app.search_query.clone();
@@ -748,7 +950,7 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
             .title(if app.movie_mode {
                 "Step 4: Confirm"
             } else {
-                "Step 5: Confirm"
+                "Step 6: Confirm"
             }),
     );
     f.render_widget(title, chunks[0]);
@@ -841,7 +1043,7 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
                 .collect();
 
             for (pl, filename) in selected_playlists.into_iter().zip(app.filenames.iter()) {
-                let episode = app.episode_assignments.get(&pl.num).cloned();
+                let episode = app.episode_assignments.get(&pl.num).cloned().unwrap_or_default();
                 app.rip_jobs.push(crate::types::RipJob {
                     playlist: pl,
                     episode,

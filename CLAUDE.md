@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Rust CLI/TUI tool for backing up Blu-ray discs to MKV files using ffmpeg + libaacs, with optional TMDb integration for automatic episode naming. Supports both TV shows (sequential episode assignment) and movies.
+A Rust CLI/TUI tool for backing up Blu-ray discs to MKV files using ffmpeg + libaacs, with optional TMDb integration for automatic episode naming. Supports both TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies.
 
 ## Background & Context
 
@@ -46,7 +46,7 @@ cargo clippy                   # Lint
 ### Data Flow
 
 1. `main.rs` parses CLI args, loads config, detects TTY, dispatches to TUI or CLI mode
-2. Both modes follow the same workflow: scan disc → filter playlists → TMDb lookup (optional) → assign episodes → build filenames → rip
+2. Both modes follow the same workflow: scan disc → filter playlists → TMDb lookup (optional) → assign episodes → review/manual mapping (optional) → build filenames → rip
 3. `disc.rs` handles all ffprobe interactions and volume label parsing
 4. `rip.rs` spawns ffmpeg processes and parses progress output via reader thread + mpsc channel
 5. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
@@ -54,7 +54,7 @@ cargo clippy                   # Lint
 
 ### Two UI Modes
 
-- **TUI mode** (default when stdout is TTY): ratatui wizard (5 screens in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`.
+- **TUI mode** (default when stdout is TTY): ratatui wizard (6 screens in TV mode, 5 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`.
 - **CLI mode** (`--no-tui` or non-TTY): plain-text interactive prompts in `cli.rs`.
 
 Both modes use the same underlying disc/rip/tmdb/util functions.
@@ -68,14 +68,14 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Disc auto-detect** — When no `-d` flag is given, scans `lsblk` for all devices of type `rom` and polls each for a volume label every 2 seconds. The scanning screen shows each tried device as a dimmed log line. The device that has a disc is used for the session. Works on startup and after rescan (Ctrl+R / Enter on Done screen).
 - **Blocking I/O** — no async runtime. ffmpeg progress read via reader thread + mpsc channel.
 - **Audio selection**: Prefers 5.1/7.1 surround, includes stereo as secondary track. All subtitle streams included.
-- **Sequential episode assignment** — user specifies starting episode, playlists assigned in order. Volume label parsing guesses the start from disc number.
+- **Episode assignment** — Default: sequential (user specifies starting episode, playlists assigned in order, volume label parsing guesses the start from disc number). A manual mapping mode allows overriding individual playlist assignments, including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
 
 ## Testing
 
 Unit tests live in `#[cfg(test)] mod tests` blocks within each module. All tests are for pure functions — no tests require hardware or network access.
 
-- `util.rs` — duration parsing, filename sanitization, selection parsing, episode assignment, template rendering
+- `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering
 - `disc.rs` — volume label parsing, playlist filtering, media info JSON parsing
 - `rip.rs` — ffmpeg map arg building, progress line parsing, size/ETA estimation
 - `config.rs` — TOML parsing, format resolution priority chain
@@ -115,6 +115,12 @@ bluback [OPTIONS]
 - `Up/Down` — Navigate lists
 - `Space` — Toggle playlist selection
 - `Tab` — Switch between fields or toggle movie/TV mode
+
+**Episode Mapping screen (TV mode only):**
+- `e` — Edit highlighted playlist's episode assignment (inline input)
+- `Enter` — Accept mappings / confirm edit
+- `Esc` — Go back to season/episode / cancel edit
+- Input format: `3` (single), `3-4` (range), `3,5` (non-consecutive)
 
 **Ripping dashboard:**
 - `q` — Abort (with confirmation)

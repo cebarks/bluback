@@ -62,7 +62,7 @@ pub enum PlaylistStatus {
 #[derive(Debug, Clone)]
 pub struct RipJob {
     pub playlist: Playlist,
-    pub episode: Option<Episode>,
+    pub episode: Vec<Episode>,
     pub filename: String,
     pub status: PlaylistStatus,
 }
@@ -116,7 +116,7 @@ impl MediaInfo {
     }
 }
 
-pub type EpisodeAssignments = HashMap<String, Episode>;
+pub type EpisodeAssignments = HashMap<String, Vec<Episode>>;
 
 pub struct TmdbLookupResult {
     pub episodes: Vec<Episode>,

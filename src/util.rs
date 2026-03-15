@@ -143,6 +143,35 @@ pub fn parse_selection(text: &str, max_val: usize) -> Option<Vec<usize>> {
     }
 }
 
+pub fn parse_episode_input(text: &str) -> Option<Vec<u32>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some(vec![]);
+    }
+
+    let mut episodes = Vec::new();
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.contains('-') {
+            let (start_s, end_s) = part.split_once('-')?;
+            let start: u32 = start_s.trim().parse().ok()?;
+            let end: u32 = end_s.trim().parse().ok()?;
+            if start == 0 || end == 0 || start > end {
+                return None;
+            }
+            episodes.extend(start..=end);
+        } else {
+            let val: u32 = part.parse().ok()?;
+            if val == 0 {
+                return None;
+            }
+            episodes.push(val);
+        }
+    }
+
+    Some(episodes)
+}
+
 pub fn guess_start_episode(disc_number: Option<u32>, episodes_on_disc: usize) -> u32 {
     match disc_number {
         Some(d) if d >= 1 && episodes_on_disc >= 1 => 1 + (episodes_on_disc as u32) * (d - 1),
@@ -154,7 +183,7 @@ pub fn assign_episodes(
     playlists: &[Playlist],
     episodes: &[Episode],
     start_episode: u32,
-) -> HashMap<String, Episode> {
+) -> HashMap<String, Vec<Episode>> {
     let ep_by_num: HashMap<u32, &Episode> =
         episodes.iter().map(|ep| (ep.episode_number, ep)).collect();
 
@@ -162,7 +191,7 @@ pub fn assign_episodes(
     for (i, pl) in playlists.iter().enumerate() {
         let ep_num = start_episode + i as u32;
         if let Some(ep) = ep_by_num.get(&ep_num) {
-            assignments.insert(pl.num.clone(), (*ep).clone());
+            assignments.insert(pl.num.clone(), vec![(*ep).clone()]);
         }
     }
     assignments
@@ -207,29 +236,38 @@ pub fn make_movie_filename(
 
 pub fn make_filename(
     playlist_num: &str,
-    episode: Option<&Episode>,
+    episodes: &[Episode],
     season: u32,
     format: Option<&str>,
     media_info: Option<&MediaInfo>,
     extra_vars: Option<&HashMap<&str, String>>,
 ) -> String {
-    let Some(ep) = episode else {
+    if episodes.is_empty() {
         return format!("playlist{}.mkv", playlist_num);
+    }
+
+    let ep = &episodes[0];
+
+    let episode_str = if episodes.len() > 1 {
+        let last = &episodes[episodes.len() - 1];
+        format!("{:02}-E{:02}", ep.episode_number, last.episode_number)
+    } else {
+        format!("{:02}", ep.episode_number)
     };
 
     let Some(fmt) = format else {
         // Default format: use legacy sanitize_filename (underscores) for backwards compat
         return format!(
-            "S{:02}E{:02}_{}.mkv",
+            "S{:02}E{}_{}.mkv",
             season,
-            ep.episode_number,
+            episode_str,
             sanitize_filename(&ep.name)
         );
     };
 
     let mut vars: HashMap<&str, String> = HashMap::new();
     vars.insert("season", format!("{:02}", season));
-    vars.insert("episode", format!("{:02}", ep.episode_number));
+    vars.insert("episode", episode_str);
     vars.insert("title", ep.name.clone());
     vars.insert("playlist", playlist_num.to_string());
 
@@ -402,8 +440,8 @@ mod tests {
             },
         ];
         let result = assign_episodes(&playlists, &episodes, 1);
-        assert_eq!(result["00001"].name, "Pilot");
-        assert_eq!(result["00002"].name, "Second");
+        assert_eq!(result["00001"][0].name, "Pilot");
+        assert_eq!(result["00002"][0].name, "Second");
     }
 
     #[test]
@@ -431,7 +469,7 @@ mod tests {
             },
         ];
         let result = assign_episodes(&playlists, &episodes, 3);
-        assert_eq!(result["00003"].name, "Third");
+        assert_eq!(result["00003"][0].name, "Third");
     }
 
     #[test]
@@ -454,7 +492,7 @@ mod tests {
             runtime: Some(44),
         }];
         let result = assign_episodes(&playlists, &episodes, 1);
-        assert_eq!(result["00001"].name, "Pilot");
+        assert_eq!(result["00001"][0].name, "Pilot");
         assert!(!result.contains_key("00002"));
     }
 
@@ -527,6 +565,75 @@ mod tests {
     }
 
     #[test]
+    fn test_make_filename_multi_episode_consecutive() {
+        let eps = vec![
+            Episode {
+                episode_number: 3,
+                name: "Third".into(),
+                runtime: Some(44),
+            },
+            Episode {
+                episode_number: 4,
+                name: "Fourth".into(),
+                runtime: Some(44),
+            },
+        ];
+        assert_eq!(
+            make_filename("00001", &eps, 1, None, None, None),
+            "S01E03-E04_Third.mkv"
+        );
+    }
+
+    #[test]
+    fn test_make_filename_multi_episode_non_consecutive() {
+        let eps = vec![
+            Episode {
+                episode_number: 3,
+                name: "Third".into(),
+                runtime: Some(44),
+            },
+            Episode {
+                episode_number: 5,
+                name: "Fifth".into(),
+                runtime: Some(44),
+            },
+        ];
+        assert_eq!(
+            make_filename("00001", &eps, 1, None, None, None),
+            "S01E03-E05_Third.mkv"
+        );
+    }
+
+    #[test]
+    fn test_make_filename_multi_episode_custom_format() {
+        let eps = vec![
+            Episode {
+                episode_number: 3,
+                name: "Third".into(),
+                runtime: Some(44),
+            },
+            Episode {
+                episode_number: 4,
+                name: "Fourth".into(),
+                runtime: Some(44),
+            },
+        ];
+        let mut extra = HashMap::new();
+        extra.insert("show", "Test Show".to_string());
+        assert_eq!(
+            make_filename(
+                "00001",
+                &eps,
+                1,
+                Some("{show}/S{season}E{episode} - {title}.mkv"),
+                None,
+                Some(&extra)
+            ),
+            "Test Show/S01E03-E04 - Third.mkv"
+        );
+    }
+
+    #[test]
     fn test_make_filename_with_episode() {
         let ep = Episode {
             episode_number: 3,
@@ -534,7 +641,7 @@ mod tests {
             runtime: Some(44),
         };
         assert_eq!(
-            make_filename("00001", Some(&ep), 1, None, None, None),
+            make_filename("00001", &[ep], 1, None, None, None),
             "S01E03_The_Pilot.mkv"
         );
     }
@@ -542,7 +649,7 @@ mod tests {
     #[test]
     fn test_make_filename_no_episode() {
         assert_eq!(
-            make_filename("00042", None, 1, None, None, None),
+            make_filename("00042", &[], 1, None, None, None),
             "playlist00042.mkv"
         );
     }
@@ -559,7 +666,7 @@ mod tests {
         assert_eq!(
             make_filename(
                 "00001",
-                Some(&ep),
+                &[ep],
                 1,
                 Some("{show}/S{season}E{episode} - {title}.mkv"),
                 None,
@@ -718,5 +825,50 @@ mod tests {
             render_template("Movie [DVD-{resolution}].mkv", &vars),
             "Movie.mkv"
         );
+    }
+
+    #[test]
+    fn test_parse_episode_input_single() {
+        assert_eq!(parse_episode_input("3"), Some(vec![3]));
+    }
+
+    #[test]
+    fn test_parse_episode_input_range() {
+        assert_eq!(parse_episode_input("3-5"), Some(vec![3, 4, 5]));
+    }
+
+    #[test]
+    fn test_parse_episode_input_comma() {
+        assert_eq!(parse_episode_input("3,5"), Some(vec![3, 5]));
+    }
+
+    #[test]
+    fn test_parse_episode_input_mixed() {
+        assert_eq!(parse_episode_input("1,3-5"), Some(vec![1, 3, 4, 5]));
+    }
+
+    #[test]
+    fn test_parse_episode_input_reversed_range() {
+        assert_eq!(parse_episode_input("5-3"), None);
+    }
+
+    #[test]
+    fn test_parse_episode_input_zero() {
+        assert_eq!(parse_episode_input("0"), None);
+    }
+
+    #[test]
+    fn test_parse_episode_input_empty() {
+        assert_eq!(parse_episode_input(""), Some(vec![]));
+    }
+
+    #[test]
+    fn test_parse_episode_input_non_numeric() {
+        assert_eq!(parse_episode_input("abc"), None);
+    }
+
+    #[test]
+    fn test_parse_episode_input_whitespace() {
+        assert_eq!(parse_episode_input(" 3 , 5 "), Some(vec![3, 5]));
     }
 }

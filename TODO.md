@@ -3,3 +3,5 @@
 - add manual eject hotkey in wizard
 - use some kind of ffmpeg library instead of subprocess
 - disc scan after no disc found still shows no disc was found on the drive even after scanning on a newly discovered disc has been found
+- bitrate, speed and playlist time don't show correctly in the ripping screen for movies
+- settings panel

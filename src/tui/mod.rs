@@ -22,6 +22,7 @@ pub enum Screen {
     TmdbSearch,
     ShowSelect,
     SeasonEpisode,
+    EpisodeMapping,
     PlaylistSelect,
     Confirm,
     Ripping,
@@ -62,6 +63,8 @@ pub struct App {
     pub input_active: bool,
     /// 0 = editing season, 1 = editing start episode
     pub season_field: u8,
+    /// Which row is being edited in EpisodeMapping screen (None = navigation mode)
+    pub mapping_edit_row: Option<usize>,
 
     // Rip state
     pub rip_jobs: Vec<RipJob>,
@@ -114,6 +117,7 @@ impl App {
             input_buffer: String::new(),
             input_active: false,
             season_field: 0,
+            mapping_edit_row: None,
             rip_jobs: Vec::new(),
             current_rip: 0,
             rip_child: None,
@@ -210,6 +214,7 @@ impl App {
         self.input_buffer = String::new();
         self.input_active = false;
         self.season_field = 0;
+        self.mapping_edit_row = None;
         self.rip_jobs = Vec::new();
         self.current_rip = 0;
         self.rip_child = None;
@@ -259,6 +264,7 @@ fn run_app(
             Screen::TmdbSearch => wizard::render_tmdb_search(f, &app),
             Screen::ShowSelect => wizard::render_show_select(f, &app),
             Screen::SeasonEpisode => wizard::render_season_episode(f, &app),
+            Screen::EpisodeMapping => wizard::render_episode_mapping(f, &app),
             Screen::PlaylistSelect => wizard::render_playlist_select(f, &app),
             Screen::Confirm => wizard::render_confirm(f, &app),
             Screen::Ripping => dashboard::render(f, &app),
@@ -324,6 +330,7 @@ fn run_app(
                     Screen::TmdbSearch => wizard::handle_tmdb_search_input(&mut app, key),
                     Screen::ShowSelect => wizard::handle_show_select_input(&mut app, key),
                     Screen::SeasonEpisode => wizard::handle_season_episode_input(&mut app, key),
+                    Screen::EpisodeMapping => wizard::handle_episode_mapping_input(&mut app, key),
                     Screen::PlaylistSelect => wizard::handle_playlist_select_input(&mut app, key),
                     Screen::Confirm => wizard::handle_confirm_input(&mut app, key),
                     Screen::Ripping => dashboard::handle_input(&mut app, key),

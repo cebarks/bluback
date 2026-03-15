@@ -150,6 +150,104 @@ fn lookup_tmdb(
                 };
 
                 ctx.episode_assignments = assign_episodes(episodes_pl, &lookup.episodes, start_ep);
+
+                // Show mappings and prompt for accept/manual
+                loop {
+                    println!("\n  Episode Mappings:");
+                    for pl in episodes_pl.iter() {
+                        let ep_str = if let Some(eps) = ctx.episode_assignments.get(&pl.num) {
+                            eps.iter()
+                                .map(|e| {
+                                    if e.name.is_empty() {
+                                        format!("E{:02}", e.episode_number)
+                                    } else {
+                                        format!(
+                                            "S{:02}E{:02} - {}",
+                                            ctx.season_num.unwrap_or(0),
+                                            e.episode_number,
+                                            e.name
+                                        )
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        } else {
+                            "(none)".to_string()
+                        };
+                        println!("    {} ({})  ->  {}", pl.num, pl.duration, ep_str);
+                    }
+
+                    let response = prompt("\n  Accept mappings? [Y/n/manual]: ")?;
+                    if response.is_empty()
+                        || response.eq_ignore_ascii_case("y")
+                        || response.eq_ignore_ascii_case("yes")
+                    {
+                        break;
+                    } else if response.eq_ignore_ascii_case("n") {
+                        let new_start = prompt_number(
+                            &format!("  Starting episode number [{}]: ", start_ep),
+                            Some(start_ep),
+                        )?;
+                        ctx.episode_assignments =
+                            assign_episodes(episodes_pl, &lookup.episodes, new_start);
+                        continue;
+                    } else if response.eq_ignore_ascii_case("manual") {
+                        let ep_by_num: std::collections::HashMap<u32, &crate::types::Episode> =
+                            lookup.episodes.iter().map(|e| (e.episode_number, e)).collect();
+                        for pl in episodes_pl.iter() {
+                            let current = ctx
+                                .episode_assignments
+                                .get(&pl.num)
+                                .map(|eps| {
+                                    eps.iter()
+                                        .map(|e| e.episode_number.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(",")
+                                })
+                                .unwrap_or_default();
+                            loop {
+                                let input = prompt(&format!(
+                                    "  Playlist {} ({}) [{}]: ",
+                                    pl.num, pl.duration, current
+                                ))?;
+                                let input = if input.is_empty() {
+                                    current.clone()
+                                } else {
+                                    input
+                                };
+                                match util::parse_episode_input(&input) {
+                                    Some(ep_nums) if ep_nums.is_empty() => {
+                                        ctx.episode_assignments.remove(&pl.num);
+                                        break;
+                                    }
+                                    Some(ep_nums) => {
+                                        let eps: Vec<crate::types::Episode> = ep_nums
+                                            .iter()
+                                            .map(|&num| {
+                                                ep_by_num
+                                                    .get(&num)
+                                                    .map(|e| (*e).clone())
+                                                    .unwrap_or(crate::types::Episode {
+                                                        episode_number: num,
+                                                        name: String::new(),
+                                                        runtime: None,
+                                                    })
+                                            })
+                                            .collect();
+                                        ctx.episode_assignments.insert(pl.num.clone(), eps);
+                                        break;
+                                    }
+                                    None => {
+                                        println!("  Invalid input. Use: 3, 3-4, or 3,5");
+                                    }
+                                }
+                            }
+                        }
+                        continue; // Loop back to show updated mappings
+                    } else {
+                        println!("  Invalid choice. Enter Y, n, or manual.");
+                    }
+                }
             }
         }
     }
@@ -177,13 +275,27 @@ fn display_and_select(
     );
 
     for (i, pl) in episodes_pl.iter().enumerate() {
-        let ep_str = if let Some(ep) = episode_assignments.get(&pl.num) {
-            format!(
-                "  S{:02}E{:02} - {}",
-                season_num.unwrap_or(0),
-                ep.episode_number,
-                ep.name
-            )
+        let ep_str = if let Some(eps) = episode_assignments.get(&pl.num) {
+            if eps.len() == 1 {
+                format!(
+                    "  S{:02}E{:02} - {}",
+                    season_num.unwrap_or(0),
+                    eps[0].episode_number,
+                    eps[0].name
+                )
+            } else if eps.len() > 1 {
+                let first = &eps[0];
+                let last = &eps[eps.len() - 1];
+                format!(
+                    "  S{:02}E{:02}-E{:02} - {}",
+                    season_num.unwrap_or(0),
+                    first.episode_number,
+                    last.episode_number,
+                    first.name
+                )
+            } else {
+                String::new()
+            }
         } else if has_eps {
             "  (no episode data)".into()
         } else {
@@ -299,9 +411,14 @@ fn build_filenames(
                     Some(&extra_vars),
                 )
             } else {
+                let episodes = tmdb_ctx
+                    .episode_assignments
+                    .get(&pl.num)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
                 util::make_filename(
                     &pl.num,
-                    tmdb_ctx.episode_assignments.get(&pl.num),
+                    episodes,
                     tmdb_ctx.season_num.unwrap_or(0),
                     fmt,
                     media_info.as_ref(),

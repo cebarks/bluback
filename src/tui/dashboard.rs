@@ -50,11 +50,15 @@ pub fn render(f: &mut Frame, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, job)| {
-            let ep_name = job
-                .episode
-                .as_ref()
-                .map(|e| format!("E{:02} {}", e.episode_number, e.name))
-                .unwrap_or_default();
+            let ep_name = if job.episode.is_empty() {
+                String::new()
+            } else if job.episode.len() == 1 {
+                format!("E{:02} {}", job.episode[0].episode_number, job.episode[0].name)
+            } else {
+                let first = &job.episode[0];
+                let last = &job.episode[job.episode.len() - 1];
+                format!("E{:02}-E{:02} {}", first.episode_number, last.episode_number, first.name)
+            };
 
             let (status, size, eta) = match &job.status {
                 PlaylistStatus::Pending => ("Pending".to_string(), String::new(), String::new()),
