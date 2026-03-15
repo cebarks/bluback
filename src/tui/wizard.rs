@@ -1,12 +1,14 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table};
+use std::sync::mpsc;
 
 use super::{App, Screen};
 use crate::tmdb;
+use crate::types::BackgroundResult;
 use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename};
 
-fn playlist_filename(app: &App, playlist_index: usize, media_info: Option<&crate::types::MediaInfo>) -> String {
+pub fn playlist_filename(app: &App, playlist_index: usize, media_info: Option<&crate::types::MediaInfo>) -> String {
     let pl = &app.episodes_pl[playlist_index];
 
     let format_template = app.config.resolve_format(
@@ -149,43 +151,29 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
                 return;
             }
 
-            // Otherwise treat input as search query
+            // Spawn TMDb search in background thread
             if let Some(ref api_key) = app.api_key.clone() {
-                if app.movie_mode {
-                    match tmdb::search_movie(&input, api_key) {
-                        Ok(results) => {
-                            if results.is_empty() {
-                                app.status_message = "No results found.".into();
-                            } else {
-                                app.movie_results = results;
-                                app.list_cursor = 0;
-                                app.input_active = false;
-                                app.status_message.clear();
-                                app.screen = Screen::ShowSelect;
-                            }
-                        }
-                        Err(e) => {
-                            app.status_message = format!("TMDb search failed: {}", e);
-                        }
-                    }
-                } else {
-                    match tmdb::search_show(&input, api_key) {
-                        Ok(results) => {
-                            if results.is_empty() {
-                                app.status_message = "No results found.".into();
-                            } else {
-                                app.search_results = results;
-                                app.list_cursor = 0;
-                                app.input_active = false;
-                                app.status_message.clear();
-                                app.screen = Screen::ShowSelect;
-                            }
-                        }
-                        Err(e) => {
-                            app.status_message = format!("TMDb search failed: {}", e);
-                        }
-                    }
+                if app.pending_rx.is_some() {
+                    return; // Already waiting for a result
                 }
+                let api_key = api_key.clone();
+                let query = input;
+                let (tx, rx) = mpsc::channel();
+                if app.movie_mode {
+                    std::thread::spawn(move || {
+                        let _ = tx.send(BackgroundResult::MovieSearch(
+                            tmdb::search_movie(&query, &api_key),
+                        ));
+                    });
+                } else {
+                    std::thread::spawn(move || {
+                        let _ = tx.send(BackgroundResult::ShowSearch(
+                            tmdb::search_show(&query, &api_key),
+                        ));
+                    });
+                }
+                app.pending_rx = Some(rx);
+                app.status_message = "Searching TMDb...".into();
             }
         }
         KeyCode::Tab => {
@@ -283,31 +271,24 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
                 let show = &app.search_results[app.list_cursor];
                 app.show_name = show.name.clone();
 
-                // If we already have a season number, fetch episodes immediately
+                // If we already have a season number, fetch episodes in background
                 if let Some(season) = app.season_num {
                     if let Some(ref api_key) = app.api_key.clone() {
-                        match tmdb::get_season(show.id, season, api_key) {
-                            Ok(eps) => {
-                                app.episodes = eps;
-                            }
-                            Err(e) => {
-                                app.status_message = format!("Failed to fetch season: {}", e);
-                                app.episodes.clear();
-                            }
-                        }
+                        let api_key = api_key.clone();
+                        let show_id = show.id;
+                        let (tx, rx) = mpsc::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(BackgroundResult::SeasonFetch(
+                                tmdb::get_season(show_id, season, &api_key),
+                            ));
+                        });
+                        app.pending_rx = Some(rx);
+                        app.status_message = "Fetching season...".into();
                     }
                 }
 
-                // If episodes already fetched, start on start-episode field
-                if !app.episodes.is_empty() {
-                    app.season_field = 1;
-                    let disc_num = app.label_info.as_ref().map(|l| l.disc);
-                    let guessed = guess_start_episode(disc_num, app.episodes_pl.len());
-                    app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
-                } else {
-                    app.season_field = 0;
-                    app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
-                }
+                app.season_field = 0;
+                app.input_buffer = app.season_num.map(|s| s.to_string()).unwrap_or_default();
                 app.input_active = true;
                 app.list_cursor = 0;
                 app.screen = Screen::SeasonEpisode;
@@ -441,16 +422,15 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                     .map(|s| s.id);
 
                 if let (Some(show_id), Some(ref api_key)) = (show_id, app.api_key.clone()) {
-                    match tmdb::get_season(show_id, season, api_key) {
-                        Ok(eps) => {
-                            app.episodes = eps;
-                            app.status_message.clear();
-                        }
-                        Err(e) => {
-                            app.status_message = format!("Failed to fetch season: {}", e);
-                            app.episodes.clear();
-                        }
-                    }
+                    let api_key = api_key.clone();
+                    let (tx, rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(BackgroundResult::SeasonFetch(
+                            tmdb::get_season(show_id, season, &api_key),
+                        ));
+                    });
+                    app.pending_rx = Some(rx);
+                    app.status_message = "Fetching season...".into();
                 }
 
                 // Switch to start episode field
@@ -597,24 +577,31 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Enter => {
-            // Generate filenames for selected playlists, probing media info
-            app.filenames.clear();
-            let device = app.args.device.to_string_lossy().to_string();
-            for (i, _pl) in app.episodes_pl.iter().enumerate() {
-                if !app.playlist_selected.get(i).copied().unwrap_or(false) {
-                    continue;
-                }
-                let media_info = crate::disc::probe_media_info(&device, &app.episodes_pl[i].num);
-                app.filenames.push(playlist_filename(app, i, media_info.as_ref()));
-            }
+            // Spawn media info probes in background thread
+            let selected_nums: Vec<String> = app.episodes_pl.iter().enumerate()
+                .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
+                .map(|(_, pl)| pl.num.clone())
+                .collect();
 
-            if app.filenames.is_empty() {
+            if selected_nums.is_empty() {
                 app.status_message = "No playlists selected.".into();
                 return;
             }
 
-            app.list_cursor = 0;
-            app.screen = Screen::Confirm;
+            if app.pending_rx.is_some() {
+                return; // Already waiting
+            }
+
+            let device = app.args.device.to_string_lossy().to_string();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let infos: Vec<Option<crate::types::MediaInfo>> = selected_nums.iter()
+                    .map(|num| crate::disc::probe_media_info(&device, num))
+                    .collect();
+                let _ = tx.send(BackgroundResult::MediaProbe(infos));
+            });
+            app.pending_rx = Some(rx);
+            app.status_message = "Probing media info...".into();
         }
         KeyCode::Esc => {
             app.list_cursor = 0;

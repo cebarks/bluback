@@ -106,6 +106,20 @@ impl MediaInfo {
 
 pub type EpisodeAssignments = HashMap<String, Episode>;
 
+/// Result types for background operations in TUI mode
+pub enum BackgroundResult {
+    /// Disc scan completed: (label, playlists)
+    DiscScan(anyhow::Result<(String, Vec<Playlist>)>),
+    /// TMDb show search completed
+    ShowSearch(anyhow::Result<Vec<TmdbShow>>),
+    /// TMDb movie search completed
+    MovieSearch(anyhow::Result<Vec<TmdbMovie>>),
+    /// TMDb season fetch completed
+    SeasonFetch(anyhow::Result<Vec<Episode>>),
+    /// Media info probes completed (one per selected playlist)
+    MediaProbe(Vec<Option<MediaInfo>>),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

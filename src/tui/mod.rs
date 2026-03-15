@@ -80,6 +80,9 @@ pub struct App {
     // Eject
     pub eject: bool,
     pub eject_rx: Option<mpsc::Receiver<anyhow::Result<()>>>,
+
+    // Background task channel (disc scan, TMDb, media probes)
+    pub pending_rx: Option<mpsc::Receiver<BackgroundResult>>,
 }
 
 impl App {
@@ -121,6 +124,7 @@ impl App {
             status_message: String::new(),
             eject: false,
             eject_rx: None,
+            pending_rx: None,
         }
     }
 }
@@ -144,49 +148,21 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
     app.config = config.clone();
     app.eject = config.should_eject(args.cli_eject());
 
-    // Initial scan (blocking -- runs before event loop)
+    // Spawn disc scan in background thread
     app.status_message = format!("Scanning disc at {}...", args.device.display());
-    terminal.draw(|f| wizard::render_scanning(f, &app))?;
-
-    // Perform scan
-    let device = args.device.to_string_lossy().to_string();
-    app.label = crate::disc::get_volume_label(&device);
-    app.label_info = crate::disc::parse_volume_label(&app.label);
-    app.playlists = crate::disc::scan_playlists(&device)?;
-    app.episodes_pl = crate::disc::filter_episodes(&app.playlists, args.min_duration)
-        .into_iter().cloned().collect();
     app.api_key = crate::tmdb::get_api_key(config);
-    app.status_message.clear();
-
-    // Set movie mode from flag or auto-detect (single playlist)
-    app.movie_mode = args.movie || (app.episodes_pl.len() == 1 && args.season.is_none());
-
-    // Pre-fill from label/args
-    if let Some(ref info) = app.label_info {
-        app.search_query = info.show.clone();
-        if !app.movie_mode {
-            app.season_num = Some(info.season);
-        }
-    }
-    if let Some(s) = args.season {
-        app.season_num = Some(s);
-    }
-    app.start_episode = args.start_episode;
-
-    // Initialize playlist selection (all selected)
-    app.playlist_selected = vec![true; app.episodes_pl.len()];
-
-    if app.episodes_pl.is_empty() {
-        app.status_message = "No episode-length playlists found.".into();
-        app.screen = Screen::Done;
-    } else {
-        app.screen = Screen::TmdbSearch;
-        app.input_active = true;
-        app.input_buffer = if app.api_key.is_none() {
-            String::new() // Will prompt for API key first
-        } else {
-            app.search_query.clone()
-        };
+    {
+        let device = args.device.to_string_lossy().to_string();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = (|| -> anyhow::Result<(String, Vec<Playlist>)> {
+                let label = crate::disc::get_volume_label(&device);
+                let playlists = crate::disc::scan_playlists(&device)?;
+                Ok((label, playlists))
+            })();
+            let _ = tx.send(BackgroundResult::DiscScan(result));
+        });
+        app.pending_rx = Some(rx);
     }
 
     // Event loop
@@ -243,6 +219,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
             }
         }
 
+        // Poll background tasks
+        poll_background(&mut app);
+
         // If ripping, check for progress updates
         if app.screen == Screen::Ripping {
             dashboard::tick(&mut app)?;
@@ -250,4 +229,128 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, args: &Args, c
     }
 
     Ok(())
+}
+
+fn poll_background(app: &mut App) {
+    let rx = match app.pending_rx {
+        Some(ref rx) => rx,
+        None => return,
+    };
+
+    let result = match rx.try_recv() {
+        Ok(r) => r,
+        Err(mpsc::TryRecvError::Empty) => return,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            app.pending_rx = None;
+            app.status_message = "Background task failed unexpectedly".into();
+            return;
+        }
+    };
+
+    app.pending_rx = None;
+
+    match result {
+        BackgroundResult::DiscScan(Ok((label, playlists))) => {
+            app.label_info = crate::disc::parse_volume_label(&label);
+            app.label = label;
+            app.episodes_pl = crate::disc::filter_episodes(&playlists, app.args.min_duration)
+                .into_iter().cloned().collect();
+            app.playlists = playlists;
+
+            app.movie_mode = app.args.movie || (app.episodes_pl.len() == 1 && app.args.season.is_none());
+
+            if let Some(ref info) = app.label_info {
+                app.search_query = info.show.clone();
+                if !app.movie_mode {
+                    app.season_num = Some(info.season);
+                }
+            }
+            if let Some(s) = app.args.season {
+                app.season_num = Some(s);
+            }
+            app.start_episode = app.args.start_episode;
+            app.playlist_selected = vec![true; app.episodes_pl.len()];
+            app.status_message.clear();
+
+            if app.episodes_pl.is_empty() {
+                app.status_message = "No episode-length playlists found.".into();
+                app.screen = Screen::Done;
+            } else {
+                app.screen = Screen::TmdbSearch;
+                app.input_active = true;
+                app.input_buffer = if app.api_key.is_none() {
+                    String::new()
+                } else {
+                    app.search_query.clone()
+                };
+            }
+        }
+        BackgroundResult::DiscScan(Err(e)) => {
+            app.status_message = format!("Scan failed: {}", e);
+            app.screen = Screen::Done;
+        }
+        BackgroundResult::ShowSearch(Ok(results)) => {
+            if results.is_empty() {
+                app.status_message = "No results found.".into();
+            } else {
+                app.search_results = results;
+                app.list_cursor = 0;
+                app.input_active = false;
+                app.status_message.clear();
+                app.screen = Screen::ShowSelect;
+            }
+        }
+        BackgroundResult::ShowSearch(Err(e)) => {
+            app.status_message = format!("TMDb search failed: {}", e);
+        }
+        BackgroundResult::MovieSearch(Ok(results)) => {
+            if results.is_empty() {
+                app.status_message = "No results found.".into();
+            } else {
+                app.movie_results = results;
+                app.list_cursor = 0;
+                app.input_active = false;
+                app.status_message.clear();
+                app.screen = Screen::ShowSelect;
+            }
+        }
+        BackgroundResult::MovieSearch(Err(e)) => {
+            app.status_message = format!("TMDb search failed: {}", e);
+        }
+        BackgroundResult::SeasonFetch(Ok(eps)) => {
+            app.episodes = eps;
+            app.status_message.clear();
+
+            if !app.episodes.is_empty() {
+                app.season_field = 1;
+                let disc_num = app.label_info.as_ref().map(|l| l.disc);
+                let guessed = crate::util::guess_start_episode(disc_num, app.episodes_pl.len());
+                app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
+            }
+        }
+        BackgroundResult::SeasonFetch(Err(e)) => {
+            app.status_message = format!("Failed to fetch season: {}", e);
+            app.episodes.clear();
+        }
+        BackgroundResult::MediaProbe(infos) => {
+            let selected_indices: Vec<usize> = app.episodes_pl.iter().enumerate()
+                .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
+                .map(|(i, _)| i)
+                .collect();
+
+            let filenames: Vec<String> = infos.iter().zip(selected_indices.iter())
+                .map(|(info, &idx)| wizard::playlist_filename(app, idx, info.as_ref()))
+                .collect();
+
+            app.filenames = filenames;
+
+            if app.filenames.is_empty() {
+                app.status_message = "No playlists selected.".into();
+            } else {
+                app.list_cursor = 0;
+                app.status_message.clear();
+                app.screen = Screen::Confirm;
+            }
+        }
+    }
 }
