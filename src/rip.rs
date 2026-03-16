@@ -74,7 +74,9 @@ pub fn start_rip(
 pub fn parse_progress_line(line: &str, state: &mut HashMap<String, String>) -> Option<RipProgress> {
     let line = line.trim();
     if let Some((key, val)) = line.split_once('=') {
-        state.insert(key.to_string(), val.to_string());
+        if val != "N/A" {
+            state.insert(key.to_string(), val.to_string());
+        }
     }
 
     if !line.starts_with("progress=") {
