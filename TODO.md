@@ -1,7 +1,5 @@
 - be able to rip another disk without restarting app
-- add visual feedback for loading screens
-- add manual eject hotkey in wizard
-- use some kind of ffmpeg library instead of subprocess
+- add visual feedback for loading screens ("rotating" pipe; looping elipses)
 - disc scan after no disc found still shows no disc was found on the drive even after scanning on a newly discovered disc has been found
-- bitrate, speed and playlist time don't show correctly in the ripping screen for movies
 - settings panel
+- speed and ETA randomly flash and disapear sometimes
