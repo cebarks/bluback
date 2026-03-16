@@ -1,4 +1,5 @@
-- be able to rip another disk without restarting app
 - add visual feedback for loading screens ("rotating" pipe; looping elipses)
 - disc scan after no disc found still shows no disc was found on the drive even after scanning on a newly discovered disc has been found
 - settings panel
+- setup ci/builds (dotm can be used as an example)
+- bump version, publish crate
