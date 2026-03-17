@@ -131,6 +131,10 @@ bluback relies on libaacs for AACS decryption. You need a `KEYDB.cfg` file at `~
 
 **USB drive caveat:** The only publicly available AACS host certificate is revoked in MKBv72+. Discs with newer MKBs require a per-disc VUK entry in the KEYDB. If ffprobe hangs during disc scanning, check for an orphaned `libmmbd.so.0` on your system — if present without a working MakeMKV backend, libaacs can hang indefinitely.
 
+## AI Disclosure
+
+Portions of this codebase were developed with the assistance of generative AI (Claude, Anthropic).
+
 ## License
 
-See [LICENSE](LICENSE) for details.
+[AGPL-3.0-or-later](LICENSE)
