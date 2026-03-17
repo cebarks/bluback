@@ -19,6 +19,14 @@ Optional:
 
 ## Installation
 
+### From crates.io
+
+```bash
+cargo install bluback
+```
+
+### From source
+
 ```bash
 git clone https://github.com/cebarks/bluback.git
 cd bluback
