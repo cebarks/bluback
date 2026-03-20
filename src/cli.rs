@@ -21,12 +21,32 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
 
     let (label, label_info, episodes_pl, movie_mode) = scan_disc(args, config)?;
 
+    // Extract chapter counts from MPLS files
+    let chapter_counts = {
+        let device_str = device.to_string();
+        match disc::ensure_mounted(&device_str) {
+            Ok((mount, did_mount)) => {
+                let nums: Vec<&str> = episodes_pl.iter().map(|pl| pl.num.as_str()).collect();
+                let counts = crate::chapters::count_chapters_for_playlists(
+                    std::path::Path::new(&mount),
+                    &nums,
+                );
+                if did_mount {
+                    let _ = disc::unmount_disc(&device_str);
+                }
+                counts
+            }
+            Err(_) => std::collections::HashMap::new(),
+        }
+    };
+
     let tmdb_ctx = lookup_tmdb(args, config, &label_info, &episodes_pl, movie_mode)?;
 
     let selected = display_and_select(
         &episodes_pl,
         &tmdb_ctx.episode_assignments,
         tmdb_ctx.season_num,
+        &chapter_counts,
     )?;
 
     let outfiles = build_filenames(
@@ -259,22 +279,37 @@ fn display_and_select(
     episodes_pl: &[Playlist],
     episode_assignments: &EpisodeAssignments,
     season_num: Option<u32>,
+    chapter_counts: &std::collections::HashMap<String, usize>,
 ) -> anyhow::Result<Vec<usize>> {
     let has_eps = !episode_assignments.is_empty();
+    let has_ch = !chapter_counts.is_empty();
+    let header_ch = if has_ch { "  Ch" } else { "" };
     let header_ep = if has_eps { "  Episode" } else { "" };
     println!(
-        "\n  {:<4}  {:<10}  {:<10}{}",
-        "#", "Playlist", "Duration", header_ep
+        "\n  {:<4}  {:<10}  {:<10}{}{}",
+        "#", "Playlist", "Duration", header_ch, header_ep
     );
     println!(
-        "  {:<4}  {:<10}  {:<10}{}",
+        "  {:<4}  {:<10}  {:<10}{}{}",
         "---",
         "--------",
         "--------",
+        if has_ch { "  --" } else { "" },
         "-".repeat(header_ep.len())
     );
 
     for (i, pl) in episodes_pl.iter().enumerate() {
+        let ch_str = if has_ch {
+            format!(
+                "  {:<2}",
+                chapter_counts
+                    .get(&pl.num)
+                    .map(|c| c.to_string())
+                    .unwrap_or_default()
+            )
+        } else {
+            String::new()
+        };
         let ep_str = if let Some(eps) = episode_assignments.get(&pl.num) {
             if eps.len() == 1 {
                 format!(
@@ -302,10 +337,11 @@ fn display_and_select(
             String::new()
         };
         println!(
-            "  {:<4}  {:<10}  {:<10}{}",
+            "  {:<4}  {:<10}  {:<10}{}{}",
             i + 1,
             pl.num,
             pl.duration,
+            ch_str,
             ep_str
         );
     }
@@ -481,6 +517,26 @@ fn rip_selected(
         return Ok(());
     }
 
+    let has_mkvpropedit = disc::has_mkvpropedit();
+    if !has_mkvpropedit {
+        println!("Note: mkvpropedit not found, chapters will not be added. Install mkvtoolnix for chapter support.");
+    }
+
+    let (mount_point, did_mount) = if has_mkvpropedit {
+        match disc::ensure_mounted(device) {
+            Ok((mount, did_mount)) => (Some(mount), did_mount),
+            Err(e) => {
+                println!(
+                    "Warning: could not mount disc for chapter extraction: {}",
+                    e
+                );
+                (None, false)
+            }
+        }
+    } else {
+        (None, false)
+    };
+
     // Create output directory and any template subdirectories
     for outfile in outfiles {
         if let Some(parent) = outfile.parent() {
@@ -586,6 +642,25 @@ fn rip_selected(
 
         let final_size = std::fs::metadata(outfile)?.len();
         println!("Done: {} ({})", filename, format_size(final_size));
+
+        // Apply chapter markers if mkvpropedit is available
+        if has_mkvpropedit {
+            if let Some(ref mount) = mount_point {
+                if let Some(chapters) =
+                    crate::chapters::extract_chapters(std::path::Path::new(mount), &pl.num)
+                {
+                    match crate::chapters::apply_chapters(outfile, &chapters) {
+                        Ok(true) => println!("  Added {} chapter markers", chapters.len()),
+                        Ok(false) => {}
+                        Err(e) => println!("  Warning: failed to add chapters: {}", e),
+                    }
+                }
+            }
+        }
+    }
+
+    if did_mount {
+        let _ = disc::unmount_disc(device);
     }
 
     println!(

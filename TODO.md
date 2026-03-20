@@ -2,3 +2,5 @@
 - disc scan after no disc found still shows no disc was found on the drive even after scanning on a newly discovered disc has been found
 - settings panel
 - setup ci/builds (dotm can be used as an example)
+- add pause/resume support during ripping (pause ffmpeg via SIGSTOP/SIGCONT)
+- investigate pure Rust MKV chapter writing via `mkv-element` crate to replace `mkvpropedit` shell-out (blocked on crate maturity and in-place EBML modification support)

@@ -41,6 +41,12 @@ pub struct StreamInfo {
     pub sub_count: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct ChapterMark {
+    pub index: u32,
+    pub start_secs: f64,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RipProgress {
     pub frame: u64,

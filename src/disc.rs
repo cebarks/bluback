@@ -61,6 +61,74 @@ pub fn check_dependencies() -> Result<()> {
     Ok(())
 }
 
+/// Check if mkvpropedit is available. Returns true if found on PATH.
+pub fn has_mkvpropedit() -> bool {
+    which::which("mkvpropedit").is_ok()
+}
+
+/// Get the mount point of a device if it's already mounted.
+pub fn get_mount_point(device: &str) -> Option<String> {
+    let output = Command::new("findmnt")
+        .args(["-n", "-o", "TARGET", device])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let mount = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if mount.is_empty() {
+            None
+        } else {
+            Some(mount)
+        }
+    } else {
+        None
+    }
+}
+
+/// Mount a disc using udisksctl. Returns the mount point on success.
+pub fn mount_disc(device: &str) -> Result<String> {
+    let output = Command::new("udisksctl")
+        .args(["mount", "-b", device])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to mount {}: {}", device, stderr.trim());
+    }
+
+    // udisksctl output: "Mounted /dev/sr0 at /run/media/user/LABEL."
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .split(" at ")
+        .nth(1)
+        .map(|s| s.trim().trim_end_matches('.').to_string())
+        .ok_or_else(|| anyhow::anyhow!("Could not parse mount point from udisksctl output"))
+}
+
+/// Unmount a disc using udisksctl.
+pub fn unmount_disc(device: &str) -> Result<()> {
+    let status = Command::new("udisksctl")
+        .args(["unmount", "-b", device])
+        .status()?;
+
+    if !status.success() {
+        bail!("Failed to unmount {}", device);
+    }
+    Ok(())
+}
+
+/// Ensure the disc is mounted, returning (mount_point, did_we_mount_it).
+/// If it was already mounted, returns the existing mount point.
+/// If we mounted it, the caller should unmount when done.
+pub fn ensure_mounted(device: &str) -> Result<(String, bool)> {
+    if let Some(mount) = get_mount_point(device) {
+        Ok((mount, false))
+    } else {
+        let mount = mount_disc(device)?;
+        Ok((mount, true))
+    }
+}
+
 pub fn get_volume_label(device: &str) -> String {
     Command::new("lsblk")
         .args(["-no", "LABEL", device])

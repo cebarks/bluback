@@ -1,3 +1,4 @@
+mod chapters;
 mod cli;
 mod config;
 mod disc;

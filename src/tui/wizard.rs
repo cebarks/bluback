@@ -777,10 +777,12 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     let has_eps = !app.episode_assignments.is_empty();
-    let header_cells = if has_eps {
-        vec!["", "#", "Playlist", "Duration", "Episode", "Filename"]
-    } else {
-        vec!["", "#", "Playlist", "Duration", "Filename"]
+    let has_ch = !app.chapter_counts.is_empty();
+    let header_cells = match (has_eps, has_ch) {
+        (true, true) => vec!["", "#", "Playlist", "Duration", "Ch", "Episode", "Filename"],
+        (true, false) => vec!["", "#", "Playlist", "Duration", "Episode", "Filename"],
+        (false, true) => vec!["", "#", "Playlist", "Duration", "Ch", "Filename"],
+        (false, false) => vec!["", "#", "Playlist", "Duration", "Filename"],
     };
     let header = Row::new(header_cells).style(Style::default().fg(Color::Yellow));
 
@@ -823,46 +825,42 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
             };
 
             let filename = playlist_filename(app, i, None);
+            let ch_str = app
+                .chapter_counts
+                .get(&pl.num)
+                .map(|c| c.to_string())
+                .unwrap_or_default();
 
-            if has_eps {
-                Row::new(vec![
-                    marker,
-                    format!("{}", i + 1),
-                    pl.num.clone(),
-                    pl.duration.clone(),
-                    ep_info,
-                    filename,
-                ])
-            } else {
-                Row::new(vec![
-                    marker,
-                    format!("{}", i + 1),
-                    pl.num.clone(),
-                    pl.duration.clone(),
-                    filename,
-                ])
+            let mut cells = vec![
+                marker,
+                format!("{}", i + 1),
+                pl.num.clone(),
+                pl.duration.clone(),
+            ];
+            if has_ch {
+                cells.push(ch_str);
             }
+            if has_eps {
+                cells.push(ep_info);
+            }
+            cells.push(filename);
+            Row::new(cells)
         })
         .collect();
 
-    let widths = if has_eps {
-        vec![
-            Constraint::Length(6),
-            Constraint::Length(4),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Min(20),
-            Constraint::Min(20),
-        ]
-    } else {
-        vec![
-            Constraint::Length(6),
-            Constraint::Length(4),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Min(20),
-        ]
-    };
+    let mut widths = vec![
+        Constraint::Length(6),
+        Constraint::Length(4),
+        Constraint::Length(10),
+        Constraint::Length(10),
+    ];
+    if has_ch {
+        widths.push(Constraint::Length(4));
+    }
+    if has_eps {
+        widths.push(Constraint::Min(20));
+    }
+    widths.push(Constraint::Min(20));
 
     let table = Table::new(rows, &widths)
         .header(header)
@@ -1058,6 +1056,19 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
 
             app.current_rip = 0;
             app.screen = Screen::Ripping;
+
+            if app.has_mkvpropedit {
+                match crate::disc::ensure_mounted(&app.args.device().to_string_lossy()) {
+                    Ok((mount, did_mount)) => {
+                        app.mount_point = Some(mount);
+                        app.did_mount = did_mount;
+                    }
+                    Err(_) => {
+                        app.mount_point = None;
+                        app.did_mount = false;
+                    }
+                }
+            }
         }
         KeyCode::Esc => {
             app.list_cursor = 0;

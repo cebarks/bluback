@@ -267,6 +267,10 @@ fn check_all_done(app: &mut App) -> bool {
         app.rip_child = None;
         app.progress_rx = None;
         app.screen = Screen::Done;
+        if app.did_mount {
+            let _ = crate::disc::unmount_disc(&app.args.device().to_string_lossy());
+            app.did_mount = false;
+        }
         true
     } else {
         false
@@ -365,6 +369,19 @@ fn poll_active_job(app: &mut App) {
                     let outfile = app.args.output.join(&app.rip_jobs[idx].filename);
                     let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
                     app.rip_jobs[idx].status = PlaylistStatus::Done(file_size);
+
+                    // Apply chapter markers
+                    if app.has_mkvpropedit {
+                        if let Some(ref mount) = app.mount_point {
+                            let playlist_num = &app.rip_jobs[idx].playlist.num;
+                            if let Some(chapters) = crate::chapters::extract_chapters(
+                                std::path::Path::new(mount.as_str()),
+                                playlist_num,
+                            ) {
+                                let _ = crate::chapters::apply_chapters(&outfile, &chapters);
+                            }
+                        }
+                    }
                 } else {
                     let stderr_msg = app
                         .stderr_buffer

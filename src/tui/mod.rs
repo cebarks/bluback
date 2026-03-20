@@ -86,6 +86,13 @@ pub struct App {
 
     // Eject
     pub eject: bool,
+
+    // Chapter extraction
+    pub has_mkvpropedit: bool,
+    pub mount_point: Option<String>,
+    pub did_mount: bool,
+    pub chapter_counts: HashMap<String, usize>,
+
     // Background task channel (disc scan, TMDb, media probes)
     pub pending_rx: Option<mpsc::Receiver<BackgroundResult>>,
 }
@@ -131,6 +138,10 @@ impl App {
             status_message: String::new(),
             scan_log: Vec::new(),
             eject: false,
+            has_mkvpropedit: false,
+            mount_point: None,
+            did_mount: false,
+            chapter_counts: HashMap::new(),
             pending_rx: None,
         }
     }
@@ -227,6 +238,12 @@ impl App {
         self.status_message = String::new();
         self.scan_log = Vec::new();
         self.pending_rx = None;
+        if self.did_mount {
+            let _ = crate::disc::unmount_disc(&self.args.device().to_string_lossy());
+        }
+        self.mount_point = None;
+        self.did_mount = false;
+        self.chapter_counts.clear();
     }
 }
 
@@ -252,6 +269,7 @@ fn run_app(
     let mut app = App::new(args.clone());
     app.config = config.clone();
     app.eject = config.should_eject(args.cli_eject());
+    app.has_mkvpropedit = crate::disc::has_mkvpropedit();
 
     // Spawn disc scan in background thread
     app.api_key = crate::tmdb::get_api_key(config);
@@ -451,6 +469,26 @@ fn poll_background(app: &mut App) {
             }
             app.start_episode = app.args.start_episode;
             app.playlist_selected = vec![true; app.episodes_pl.len()];
+
+            // Extract chapter counts from MPLS files
+            let device_str = app.args.device().to_string_lossy().to_string();
+            match crate::disc::ensure_mounted(&device_str) {
+                Ok((mount, did_mount)) => {
+                    let nums: Vec<&str> =
+                        app.episodes_pl.iter().map(|pl| pl.num.as_str()).collect();
+                    app.chapter_counts = crate::chapters::count_chapters_for_playlists(
+                        std::path::Path::new(&mount),
+                        &nums,
+                    );
+                    if did_mount {
+                        let _ = crate::disc::unmount_disc(&device_str);
+                    }
+                }
+                Err(_) => {
+                    app.chapter_counts.clear();
+                }
+            }
+
             app.status_message.clear();
 
             if app.episodes_pl.is_empty() {
