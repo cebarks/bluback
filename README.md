@@ -11,7 +11,7 @@ MakeMKV doesn't work reliably with USB Blu-ray drives using ASMedia USB-SATA bri
 ## Requirements
 
 - **ffmpeg** and **ffprobe** (with libbluray support)
-- **libaacs** with a populated `~/.config/aacs/KEYDB.cfg` (from the [FindVUK Online Database](http://fvonline-db.bplaced.net/))
+- **libaacs** with a populated `~/.config/aacs/KEYDB.cfg` (containing device keys, processing keys, and/or per-disc VUKs)
 - A Blu-ray drive accessible as a block device (e.g., `/dev/sr0`)
 
 Optional:
