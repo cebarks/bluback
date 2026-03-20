@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, Wrap};
 use std::io::BufRead;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -149,7 +149,19 @@ pub fn render_done(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    let summary = if !app.status_message.is_empty() {
+    // When showing an error with no rip jobs, put a short summary in the title
+    // and the full message in the results body where it can wrap.
+    let error_in_body = !app.status_message.is_empty()
+        && app.rip_jobs.is_empty()
+        && app.filenames.is_empty();
+
+    let summary = if error_in_body {
+        app.status_message
+            .split(':')
+            .next()
+            .unwrap()
+            .to_string()
+    } else if !app.status_message.is_empty() {
         app.status_message.clone()
     } else if failed_count > 0 {
         format!(
@@ -167,7 +179,12 @@ pub fn render_done(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     let mut lines: Vec<Line> = Vec::new();
-    if app.rip_jobs.is_empty() && !app.filenames.is_empty() {
+    if error_in_body {
+        lines.push(
+            Line::from(format!("  {}", app.status_message))
+                .style(Style::default().fg(Color::Red)),
+        );
+    } else if app.rip_jobs.is_empty() && !app.filenames.is_empty() {
         // Dry run: show what would have been ripped
         for name in &app.filenames {
             lines.push(Line::from(format!("  {}", name)));
@@ -186,7 +203,9 @@ pub fn render_done(f: &mut Frame, app: &App) {
         }
     }
 
-    let body = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Results"));
+    let body = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Results"))
+        .wrap(Wrap { trim: false });
     f.render_widget(body, chunks[1]);
 
     let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [any other key] Exit")
@@ -353,7 +372,9 @@ fn poll_active_job(app: &mut App) {
                         .and_then(|b| b.lock().ok())
                         .map(|b| b.clone())
                         .unwrap_or_default();
-                    let msg = if stderr_msg.is_empty() {
+                    let msg = if let Some(aacs_msg) = disc::check_aacs_error(&stderr_msg) {
+                        aacs_msg
+                    } else if stderr_msg.is_empty() {
                         format!("ffmpeg exited with code {}", status)
                     } else {
                         let last_line = stderr_msg.lines().last().unwrap_or("");

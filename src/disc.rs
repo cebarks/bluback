@@ -94,6 +94,35 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
 /// Default timeout for ffprobe playlist scan (seconds).
 const SCAN_TIMEOUT_SECS: u64 = 60;
 
+/// Check ffprobe/ffmpeg stderr for AACS decryption errors and return a user-friendly message.
+/// Distinguishes between revoked host certificates (MKBv72+) and general AACS failures.
+pub fn check_aacs_error(stderr: &str) -> Option<String> {
+    let lower = stderr.to_lowercase();
+
+    let revoked = lower.contains("revoked")
+        || lower.contains("no valid processing key");
+
+    let aacs_failure = revoked
+        || lower.contains("aacs_open() failed")
+        || lower.contains("unable to decrypt")
+        || lower.contains("error opening disc");
+
+    if revoked {
+        Some(
+            "AACS decryption failed — host certificate likely revoked by this disc's MKB (v72+). \
+             A per-disc VUK entry in ~/.config/aacs/KEYDB.cfg is required to decrypt this disc."
+                .to_string(),
+        )
+    } else if aacs_failure {
+        Some(
+            "AACS decryption failed. Ensure ~/.config/aacs/KEYDB.cfg exists and is up to date."
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>> {
     let mut child = Command::new("ffprobe")
         .args(["-i", &format!("bluray:{}", device)])
@@ -120,8 +149,8 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>> {
     }
     let output = child.wait_with_output()?;
 
-    let text = String::from_utf8_lossy(&output.stdout).to_string()
-        + &String::from_utf8_lossy(&output.stderr);
+    let stderr_text = String::from_utf8_lossy(&output.stderr).to_string();
+    let text = String::from_utf8_lossy(&output.stdout).to_string() + &stderr_text;
 
     let mut playlists = Vec::new();
     for caps in PLAYLIST_RE.captures_iter(&text) {
@@ -134,6 +163,13 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>> {
             seconds,
         });
     }
+
+    if playlists.is_empty() {
+        if let Some(aacs_msg) = check_aacs_error(&stderr_text) {
+            bail!("{}", aacs_msg);
+        }
+    }
+
     Ok(playlists)
 }
 
@@ -602,6 +638,35 @@ mod tests {
         });
         let info = parse_media_info_json(&json).unwrap();
         assert_eq!(info.hdr, "HDR10+");
+    }
+
+    #[test]
+    fn test_check_aacs_revoked_processing_key() {
+        let stderr = "libaacs: no valid processing key found in config file\naacs_open() failed!";
+        let msg = check_aacs_error(stderr).unwrap();
+        assert!(msg.contains("revoked"), "should mention revocation: {}", msg);
+        assert!(msg.contains("VUK"), "should mention VUK: {}", msg);
+    }
+
+    #[test]
+    fn test_check_aacs_revoked_certificate() {
+        let stderr = "Host certificate has been revoked";
+        let msg = check_aacs_error(stderr).unwrap();
+        assert!(msg.contains("revoked"));
+    }
+
+    #[test]
+    fn test_check_aacs_generic_failure() {
+        let stderr = "aacs_open() failed!\nError opening disc";
+        let msg = check_aacs_error(stderr).unwrap();
+        assert!(msg.contains("AACS decryption failed"));
+        assert!(msg.contains("KEYDB.cfg"));
+    }
+
+    #[test]
+    fn test_check_aacs_no_error() {
+        assert!(check_aacs_error("").is_none());
+        assert!(check_aacs_error("normal ffprobe output here").is_none());
     }
 
     #[test]

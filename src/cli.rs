@@ -569,7 +569,9 @@ fn rip_selected(
                     Some(buf)
                 })
                 .unwrap_or_default();
-            if stderr_msg.is_empty() {
+            if let Some(aacs_msg) = disc::check_aacs_error(&stderr_msg) {
+                println!("Error: {}", aacs_msg);
+            } else if stderr_msg.is_empty() {
                 println!(
                     "Error: ffmpeg exited with code {}",
                     status.code().unwrap_or(-1)
