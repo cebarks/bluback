@@ -46,11 +46,12 @@ cargo clippy                   # Lint
 ### Data Flow
 
 1. `main.rs` parses CLI args, loads config, detects TTY, dispatches to TUI or CLI mode
-2. Both modes follow the same workflow: scan disc → filter playlists → TMDb lookup (optional) → assign episodes → review/manual mapping (optional) → build filenames → rip
-3. `disc.rs` handles all ffprobe interactions and volume label parsing
-4. `rip.rs` spawns ffmpeg processes and parses progress output via reader thread + mpsc channel
-5. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
-6. `config.rs` loads TOML config from `~/.config/bluback/config.toml` and resolves filename format priority
+2. Both modes follow the same workflow: scan disc → filter playlists → TMDb lookup (optional) → assign episodes → review/manual mapping (optional) → build filenames → rip → apply chapters (if mkvpropedit available)
+3. `disc.rs` handles all ffprobe interactions, volume label parsing, and disc mount/unmount operations (via `udisksctl`)
+4. `chapters.rs` extracts chapter marks from MPLS playlist files on the mounted disc and applies them to ripped MKVs via `mkvpropedit`
+5. `rip.rs` spawns ffmpeg processes and parses progress output via reader thread + mpsc channel
+6. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
+7. `config.rs` loads TOML config from `~/.config/bluback/config.toml` and resolves filename format priority
 
 ### Two UI Modes
 
@@ -67,6 +68,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 
 - **Disc auto-detect** — When no `-d` flag is given, scans `lsblk` for all devices of type `rom` and polls each for a volume label every 2 seconds. The scanning screen shows each tried device as a dimmed log line. The device that has a disc is used for the session. Works on startup and after rescan (Ctrl+R / Enter on Done screen).
 - **Blocking I/O** — no async runtime. ffmpeg progress read via reader thread + mpsc channel.
+- **Chapter preservation** — After ripping, if `mkvpropedit` (mkvtoolnix) is available, bluback mounts the disc via `udisksctl`, reads MPLS playlist files from `BDMV/PLAYLIST/` to extract chapter marks, converts them to OGM format, and embeds them into the ripped MKVs. The disc is unmounted afterward if bluback mounted it. Chapter counts are displayed on the playlist selection screen in TUI mode.
 - **Audio selection**: Prefers 5.1/7.1 surround, includes stereo as secondary track. All subtitle streams included.
 - **Episode assignment** — Default: sequential (user specifies starting episode, playlists assigned in order, volume label parsing guesses the start from disc number). A manual mapping mode allows overriding individual playlist assignments, including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
@@ -78,8 +80,9 @@ Unit tests live in `#[cfg(test)] mod tests` blocks within each module. All tests
 - `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering
 - `disc.rs` — volume label parsing, playlist filtering, media info JSON parsing
 - `rip.rs` — ffmpeg map arg building, progress line parsing, size/ETA estimation
+- `chapters.rs` — MPLS chapter extraction, OGM formatting
 - `config.rs` — TOML parsing, format resolution priority chain
-- `types.rs` — MediaInfo field mapping
+- `types.rs` — MediaInfo field mapping, ChapterMark struct
 
 ## CLI Flags
 
@@ -140,4 +143,5 @@ bluback [OPTIONS]
 | `toml` | Config file parsing |
 | `regex` | Volume label parsing, ffprobe output parsing |
 | `anyhow` | Application error handling |
-| `which` | Check for ffmpeg/ffprobe on PATH |
+| `mpls` | MPLS playlist parsing for chapter extraction |
+| `which` | Check for ffmpeg/ffprobe/mkvpropedit on PATH |

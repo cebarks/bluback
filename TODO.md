@@ -22,6 +22,8 @@
 - update terminal title with basic status
 - show raw disc name in all screens
 
-# De-shellout
-- investigate ffmpeg bindings
-- investigate pure Rust MKV chapter writing via `mkv-element` crate to replace `mkvpropedit` shell-out (blocked on crate maturity and in-place EBML modification support)
+# Investigate Further
+- ffmpeg bindings
+- pure Rust MKV integration
+    - chapter writing via `mkv-element` crate to replace `mkvpropedit` shell-out (blocked on crate maturity and in-place EBML modification support)
+- macos/windows support

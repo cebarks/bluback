@@ -2,7 +2,7 @@
 
 A CLI/TUI tool for backing up Blu-ray discs to MKV files using ffmpeg + libaacs, with optional TMDb integration for automatic episode naming.
 
-Supports TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies. All rips are lossless remuxes (`-c copy`) — no re-encoding.
+Supports TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies. All rips are lossless remuxes (`-c copy`) — no re-encoding. Automatically preserves Blu-ray chapter markers when mkvpropedit is available.
 
 ## Why not MakeMKV?
 
@@ -15,6 +15,7 @@ MakeMKV doesn't work reliably with USB Blu-ray drives using ASMedia USB-SATA bri
 - A Blu-ray drive accessible as a block device (e.g., `/dev/sr0`)
 
 Optional:
+- **mkvpropedit** (from [mkvtoolnix](https://mkvtoolnix.download/)) — for preserving Blu-ray chapter markers in ripped MKVs
 - A [TMDb API key](https://www.themoviedb.org/settings/api) for automatic show/episode metadata lookup
 
 ## Installation
@@ -132,6 +133,12 @@ Bracket groups `[...]` auto-collapse when their contents are empty (useful for o
 | `Ctrl+E` | Eject disc |
 | `Ctrl+C` | Quit immediately |
 | `q` | Quit (except during input/ripping) |
+
+## Chapter Preservation
+
+When `mkvpropedit` (from mkvtoolnix) is installed, bluback automatically extracts chapter markers from the Blu-ray's MPLS playlist files and embeds them into the ripped MKV files. The disc is temporarily mounted via `udisksctl` to read the playlist data, then unmounted after extraction.
+
+Chapter counts are displayed alongside each playlist during selection in TUI mode. If `mkvpropedit` is not found, ripping proceeds normally without chapters.
 
 ## AACS Decryption Notes
 
