@@ -968,8 +968,8 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         .map(|(_, pl)| pl)
         .collect();
 
-    // Estimate ~40 Mbps (5 MB/s) for Blu-ray remux
-    const ESTIMATED_BYTERATE: u64 = 5 * 1024 * 1024;
+    // Fallback: ~20 Mbps (2.5 MB/s) if no probed bitrate available
+    const FALLBACK_BYTERATE: u64 = 2_500_000;
 
     let mut total_seconds: u32 = 0;
     let mut total_est_bytes: u64 = 0;
@@ -977,9 +977,17 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     let rows: Vec<Row> = selected_playlists
         .iter()
         .zip(app.filenames.iter())
-        .map(|(pl, name)| {
+        .enumerate()
+        .map(|(i, (pl, name))| {
             total_seconds += pl.seconds;
-            let est_bytes = pl.seconds as u64 * ESTIMATED_BYTERATE;
+            let byterate = app
+                .media_infos
+                .get(i)
+                .and_then(|info| info.as_ref())
+                .map(|info| info.bitrate_bps / 8)
+                .filter(|&br| br > 0)
+                .unwrap_or(FALLBACK_BYTERATE);
+            let est_bytes = pl.seconds as u64 * byterate;
             total_est_bytes += est_bytes;
             Row::new(vec![
                 pl.num.clone(),

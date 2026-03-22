@@ -426,6 +426,13 @@ pub fn parse_media_info_json(json: &serde_json::Value) -> Option<MediaInfo> {
         (String::new(), String::new(), String::new())
     };
 
+    let bitrate_bps = json
+        .get("format")
+        .and_then(|f| f.get("bit_rate"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+
     Some(MediaInfo {
         resolution,
         width,
@@ -439,6 +446,7 @@ pub fn parse_media_info_json(json: &serde_json::Value) -> Option<MediaInfo> {
         audio: audio_codec,
         channels: audio_channels,
         audio_lang,
+        bitrate_bps,
     })
 }
 
@@ -450,6 +458,7 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
             "-print_format",
             "json",
             "-show_streams",
+            "-show_format",
             "-loglevel",
             "quiet",
             "-i",

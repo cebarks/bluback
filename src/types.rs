@@ -87,6 +87,8 @@ pub struct MediaInfo {
     pub audio: String,
     pub channels: String,
     pub audio_lang: String,
+    /// Overall bitrate in bits/s from ffprobe format section
+    pub bitrate_bps: u64,
 }
 
 impl MediaInfo {
@@ -167,6 +169,7 @@ mod tests {
             audio: "truehd".into(),
             channels: "7.1".into(),
             audio_lang: "eng".into(),
+            bitrate_bps: 22587000,
         };
         let vars = info.to_vars();
         assert_eq!(vars["resolution"], "1080p");

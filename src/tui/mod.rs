@@ -56,6 +56,7 @@ pub struct App {
     // Selection state
     pub playlist_selected: Vec<bool>,
     pub filenames: Vec<String>,
+    pub media_infos: Vec<Option<MediaInfo>>,
     pub list_cursor: usize,
 
     // Text input
@@ -120,6 +121,7 @@ impl App {
             episode_assignments: HashMap::new(),
             playlist_selected: Vec::new(),
             filenames: Vec::new(),
+            media_infos: Vec::new(),
             list_cursor: 0,
             input_buffer: String::new(),
             input_active: false,
@@ -567,6 +569,7 @@ fn poll_background(app: &mut App) {
                 .collect();
 
             app.filenames = filenames;
+            app.media_infos = infos;
 
             if app.filenames.is_empty() {
                 app.status_message = "No playlists selected.".into();
