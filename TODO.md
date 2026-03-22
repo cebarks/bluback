@@ -13,11 +13,13 @@
 # Features
 - add loading screen 
 - add visual feedback for loading screens ("rotating" pipe; looping elipses)
-- settings panel
+- settings overhaul
+    - config panel
+    - more settings exposed
+    - 
 - specials/extras support?
     - step 5 -> 6
     - step 1 -> 2
-- setup ci/builds (dotm can be used as an example)
 - add pause/resume support during ripping (pause ffmpeg via SIGSTOP/SIGCONT)
 - update terminal title with basic status
 - show raw disc name in all screens
