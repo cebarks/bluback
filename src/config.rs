@@ -13,6 +13,10 @@ pub const PLEX_MOVIE_FORMAT: &str =
 pub const JELLYFIN_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title}.mkv";
 pub const JELLYFIN_MOVIE_FORMAT: &str = "{title} ({year})/{title} ({year}).mkv";
 
+pub const DEFAULT_OUTPUT_DIR: &str = ".";
+pub const DEFAULT_DEVICE: &str = "auto-detect";
+pub const DEFAULT_MIN_DURATION: u32 = 900;
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
     pub tmdb_api_key: Option<String>,
@@ -24,6 +28,8 @@ pub struct Config {
     pub max_speed: Option<bool>,
     pub min_duration: Option<u32>,
     pub show_filtered: Option<bool>,
+    pub output_dir: Option<String>,
+    pub device: Option<String>,
 }
 
 fn config_dir() -> PathBuf {
@@ -414,5 +420,29 @@ mod tests {
     fn test_parse_show_filtered() {
         let config: Config = toml::from_str("show_filtered = true").unwrap();
         assert_eq!(config.show_filtered, Some(true));
+    }
+
+    #[test]
+    fn test_parse_output_dir() {
+        let config: Config = toml::from_str(r#"output_dir = "/tmp/rips""#).unwrap();
+        assert_eq!(config.output_dir.as_deref(), Some("/tmp/rips"));
+    }
+
+    #[test]
+    fn test_parse_device() {
+        let config: Config = toml::from_str(r#"device = "/dev/sr1""#).unwrap();
+        assert_eq!(config.device.as_deref(), Some("/dev/sr1"));
+    }
+
+    #[test]
+    fn test_output_dir_default_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.output_dir.is_none());
+    }
+
+    #[test]
+    fn test_device_default_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.device.is_none());
     }
 }
