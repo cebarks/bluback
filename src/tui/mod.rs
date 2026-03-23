@@ -4,7 +4,7 @@ pub mod wizard;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
 };
 use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
@@ -210,8 +210,45 @@ impl App {
     }
 }
 
+fn terminal_title(app: &App) -> String {
+    match app.screen {
+        Screen::Scanning => {
+            if app.disc.label.is_empty() {
+                "bluback — Scanning...".into()
+            } else {
+                format!("bluback — Scanning {}", app.disc.label)
+            }
+        }
+        Screen::TmdbSearch | Screen::Season | Screen::PlaylistManager | Screen::Confirm => {
+            if app.disc.label.is_empty() {
+                "bluback".into()
+            } else {
+                format!("bluback — {}", app.disc.label)
+            }
+        }
+        Screen::Ripping => {
+            let done = app.rip.jobs.iter().filter(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_))).count();
+            let total = app.rip.jobs.len();
+            if let Some(job) = app.rip.jobs.get(app.rip.current_rip) {
+                if let crate::types::PlaylistStatus::Ripping(ref prog) = job.status {
+                    let pct = if job.playlist.seconds > 0 {
+                        (prog.out_time_secs as f64 / job.playlist.seconds as f64 * 100.0).min(100.0) as u32
+                    } else {
+                        0
+                    };
+                    return format!("bluback — Ripping {}/{} ({}%)", done + 1, total, pct);
+                }
+            }
+            format!("bluback — Ripping {}/{}", done, total)
+        }
+        Screen::Done => "bluback — Done".into(),
+    }
+}
+
 pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
     enable_raw_mode()?;
+    // Save terminal title, enter alternate screen
+    io::stdout().execute(crossterm::terminal::SetTitle("bluback"))?;
     io::stdout().execute(EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -220,6 +257,8 @@ pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
 
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
+    // Restore terminal title (empty resets to terminal default)
+    io::stdout().execute(SetTitle(""))?;
 
     result
 }
@@ -249,6 +288,9 @@ fn run_app(
             Screen::Ripping => dashboard::render(f, &app),
             Screen::Done => dashboard::render_done(f, &app),
         })?;
+
+        // Update terminal title with current status
+        let _ = io::stdout().execute(SetTitle(terminal_title(&app)));
 
         if app.quit {
             if let Some(ref mut child) = app.rip.child {
