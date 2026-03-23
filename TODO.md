@@ -2,6 +2,7 @@
 -
 
 # Features
+- full headless run via CLI (no user input needed)
 - add pause/resume support during ripping (AtomicBool-based pause in remux loop)
 - resume existing partial rip (confirmation on resume or overwrite)
 - auto-detect supported drive read speeds for settings dropdown (requires SCSI/MMC GET PERFORMANCE or MODE SENSE; unreliable through USB bridges)

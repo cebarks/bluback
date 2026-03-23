@@ -63,8 +63,7 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>, MediaError> {
     let captured_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let callback_lines = std::sync::Arc::clone(&captured_lines);
 
-    // Save current log level and set to INFO to capture libbluray playlist output
-    let prev_level = ffmpeg_the_third::log::get_level().ok();
+    // Temporarily raise log level to INFO to capture libbluray playlist output
     ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
 
     // Install custom log callback via FFI.
@@ -99,15 +98,14 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>, MediaError> {
         .recv_timeout(Duration::from_secs(SCAN_TIMEOUT_SECS))
         .map_err(|_| MediaError::AacsTimeout)?;
 
-    // Restore default log callback and level
+    // Set log level to quiet to suppress libbluray noise on subsequent calls.
+    // The default callback prints to stderr which corrupts TUI mode.
     unsafe {
         ffmpeg_the_third::ffi::av_log_set_callback(Some(
             ffmpeg_the_third::ffi::av_log_default_callback,
         ));
     }
-    if let Some(level) = prev_level {
-        ffmpeg_the_third::log::set_level(level);
-    }
+    ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Quiet);
 
     // Grab captured lines
     let lines = {

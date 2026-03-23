@@ -31,6 +31,7 @@ pub struct Config {
     pub output_dir: Option<String>,
     pub device: Option<String>,
     pub stream_selection: Option<String>,
+    pub verbose_libbluray: Option<bool>,
 }
 
 fn config_dir() -> PathBuf {
@@ -102,6 +103,7 @@ impl Config {
         emit_str(&mut out, "special_format", &self.special_format, DEFAULT_SPECIAL_FORMAT);
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
+        emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
 
@@ -190,6 +192,10 @@ impl Config {
 
     pub fn show_filtered(&self) -> bool {
         self.show_filtered.unwrap_or(false)
+    }
+
+    pub fn verbose_libbluray(&self) -> bool {
+        self.verbose_libbluray.unwrap_or(false)
     }
 
     pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
