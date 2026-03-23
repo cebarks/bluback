@@ -2,6 +2,7 @@ mod chapters;
 mod cli;
 mod config;
 mod disc;
+mod media;
 mod rip;
 mod tmdb;
 mod tui;
