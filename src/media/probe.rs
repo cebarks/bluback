@@ -153,46 +153,74 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>, MediaError> {
 static LOG_CAPTURE_LINES: std::sync::Mutex<Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>> =
     std::sync::Mutex::new(None);
 
-/// C-compatible log callback that captures formatted log lines.
+/// Shared implementation for the log capture callback.
 ///
-/// SAFETY: Called by FFmpeg's logging system. Uses av_log_format_line2 to format the
-/// variadic arguments, then stores the result in the global LOG_CAPTURE_LINES buffer.
+/// Formats the log message via `av_log_format_line2` and stores it in
+/// the global `LOG_CAPTURE_LINES` buffer. The `vl` parameter is passed
+/// through opaquely — its concrete type differs by architecture.
+///
+/// SAFETY: `vl` must be valid for `av_log_format_line2`. Called from the
+/// arch-specific `log_capture_callback` trampolines below.
+macro_rules! log_capture_body {
+    ($avcl:expr, $level:expr, $fmt:expr, $vl:expr) => {{
+        if $level > ffi::AV_LOG_INFO {
+            return;
+        }
+
+        let mut buf = [0u8; 1024];
+        let mut print_prefix: std::ffi::c_int = 1;
+
+        let len = ffi::av_log_format_line2(
+            $avcl,
+            $level,
+            $fmt,
+            $vl,
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            buf.len() as std::ffi::c_int,
+            &mut print_prefix,
+        );
+
+        if len > 0 {
+            let len = (len as usize).min(buf.len());
+            if let Ok(s) = std::str::from_utf8(&buf[..len]) {
+                if let Ok(guard) = LOG_CAPTURE_LINES.lock() {
+                    if let Some(ref arc) = *guard {
+                        if let Ok(mut lines) = arc.lock() {
+                            lines.push(s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }};
+}
+
+/// C-compatible log callback — x86_64 variant.
+///
+/// On x86_64, va_list is `[__va_list_tag; 1]` which decays to `*mut __va_list_tag`
+/// in function parameters.
+#[cfg(target_arch = "x86_64")]
 unsafe extern "C" fn log_capture_callback(
     avcl: *mut std::ffi::c_void,
     level: std::ffi::c_int,
     fmt: *const std::ffi::c_char,
     vl: *mut ffi::__va_list_tag,
 ) {
-    // Only capture INFO level and above (lower numeric value = higher priority)
-    if level > ffi::AV_LOG_INFO {
-        return;
-    }
+    log_capture_body!(avcl, level, fmt, vl);
+}
 
-    let mut buf = [0u8; 1024];
-    let mut print_prefix: std::ffi::c_int = 1;
-
-    let len = ffi::av_log_format_line2(
-        avcl,
-        level,
-        fmt,
-        vl,
-        buf.as_mut_ptr() as *mut std::ffi::c_char,
-        buf.len() as std::ffi::c_int,
-        &mut print_prefix,
-    );
-
-    if len > 0 {
-        let len = (len as usize).min(buf.len());
-        if let Ok(s) = std::str::from_utf8(&buf[..len]) {
-            if let Ok(guard) = LOG_CAPTURE_LINES.lock() {
-                if let Some(ref arc) = *guard {
-                    if let Ok(mut lines) = arc.lock() {
-                        lines.push(s.to_string());
-                    }
-                }
-            }
-        }
-    }
+/// C-compatible log callback — non-x86_64 variant.
+///
+/// On aarch64 and other architectures, va_list is an opaque type passed by value
+/// (e.g., `__BindgenOpaqueArray<u64, 4>` on aarch64).
+#[cfg(not(target_arch = "x86_64"))]
+unsafe extern "C" fn log_capture_callback(
+    avcl: *mut std::ffi::c_void,
+    level: std::ffi::c_int,
+    fmt: *const std::ffi::c_char,
+    vl: ffi::va_list,
+) {
+    log_capture_body!(avcl, level, fmt, vl);
 }
 
 /// Parse a single log line looking for playlist info from libbluray.
