@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_TV_FORMAT: &str = "S{season}E{episode}_{title}.mkv";
 pub const DEFAULT_MOVIE_FORMAT: &str = "{title}_({year}).mkv";
+pub const DEFAULT_SPECIAL_FORMAT: &str = "{show} S00E{episode} {title}.mkv";
 
 pub const PLEX_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title} [Bluray-{resolution}][{audio} {channels}][{codec}].mkv";
 pub const PLEX_MOVIE_FORMAT: &str =
@@ -18,8 +19,11 @@ pub struct Config {
     pub preset: Option<String>,
     pub tv_format: Option<String>,
     pub movie_format: Option<String>,
+    pub special_format: Option<String>,
     pub eject: Option<bool>,
     pub max_speed: Option<bool>,
+    pub min_duration: Option<u32>,
+    pub show_filtered: Option<bool>,
 }
 
 fn config_dir() -> PathBuf {
@@ -86,6 +90,16 @@ impl Config {
         preset_format("default", is_movie)
     }
 
+    pub fn resolve_special_format(&self, cli_format: Option<&str>) -> String {
+        if let Some(fmt) = cli_format {
+            return fmt.to_string();
+        }
+        if let Some(ref fmt) = self.special_format {
+            return fmt.clone();
+        }
+        DEFAULT_SPECIAL_FORMAT.to_string()
+    }
+
     pub fn should_eject(&self, cli_eject: Option<bool>) -> bool {
         cli_eject.unwrap_or_else(|| self.eject.unwrap_or(false))
     }
@@ -95,6 +109,17 @@ impl Config {
             return false;
         }
         self.max_speed.unwrap_or(true)
+    }
+
+    pub fn min_duration(&self, cli_min_duration: u32) -> u32 {
+        if cli_min_duration != 900 {
+            return cli_min_duration; // CLI explicitly set, takes priority
+        }
+        self.min_duration.unwrap_or(900)
+    }
+
+    pub fn show_filtered(&self) -> bool {
+        self.show_filtered.unwrap_or(false)
     }
 }
 
@@ -299,5 +324,95 @@ mod tests {
     fn test_parse_max_speed() {
         let config: Config = toml::from_str("max_speed = false").unwrap();
         assert_eq!(config.max_speed, Some(false));
+    }
+
+    #[test]
+    fn test_parse_special_format() {
+        let config: Config = toml::from_str(r#"special_format = "{show} S00E{episode}.mkv""#).unwrap();
+        assert_eq!(config.special_format.unwrap(), "{show} S00E{episode}.mkv");
+    }
+
+    #[test]
+    fn test_resolve_special_format_from_config() {
+        let config = Config {
+            special_format: Some("custom/{show} S00E{episode}.mkv".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_special_format(None),
+            "custom/{show} S00E{episode}.mkv"
+        );
+    }
+
+    #[test]
+    fn test_resolve_special_format_cli_overrides() {
+        let config = Config {
+            special_format: Some("config/{show}.mkv".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_special_format(Some("cli/{title}.mkv")),
+            "cli/{title}.mkv"
+        );
+    }
+
+    #[test]
+    fn test_resolve_special_format_default() {
+        let config = Config::default();
+        assert_eq!(
+            config.resolve_special_format(None),
+            DEFAULT_SPECIAL_FORMAT
+        );
+    }
+
+    #[test]
+    fn test_min_duration_default() {
+        let config = Config::default();
+        assert_eq!(config.min_duration(900), 900);
+    }
+
+    #[test]
+    fn test_min_duration_config_overrides_default() {
+        let config = Config {
+            min_duration: Some(600),
+            ..Default::default()
+        };
+        assert_eq!(config.min_duration(900), 600);
+    }
+
+    #[test]
+    fn test_min_duration_cli_overrides_config() {
+        let config = Config {
+            min_duration: Some(600),
+            ..Default::default()
+        };
+        assert_eq!(config.min_duration(1200), 1200);
+    }
+
+    #[test]
+    fn test_parse_min_duration() {
+        let config: Config = toml::from_str("min_duration = 600").unwrap();
+        assert_eq!(config.min_duration, Some(600));
+    }
+
+    #[test]
+    fn test_show_filtered_default_false() {
+        let config = Config::default();
+        assert!(!config.show_filtered());
+    }
+
+    #[test]
+    fn test_show_filtered_config_true() {
+        let config = Config {
+            show_filtered: Some(true),
+            ..Default::default()
+        };
+        assert!(config.show_filtered());
+    }
+
+    #[test]
+    fn test_parse_show_filtered() {
+        let config: Config = toml::from_str("show_filtered = true").unwrap();
+        assert_eq!(config.show_filtered, Some(true));
     }
 }

@@ -187,13 +187,44 @@ pub fn assign_episodes(
     let ep_by_num: HashMap<u32, &Episode> =
         episodes.iter().map(|ep| (ep.episode_number, ep)).collect();
 
+    // Compute median duration for multi-episode detection
+    let median_secs = {
+        let mut durations: Vec<u32> = playlists.iter().map(|pl| pl.seconds).collect();
+        durations.sort();
+        if durations.is_empty() {
+            0
+        } else {
+            durations[durations.len() / 2]
+        }
+    };
+
     let mut assignments = HashMap::new();
-    for (i, pl) in playlists.iter().enumerate() {
-        let ep_num = start_episode + i as u32;
-        if let Some(ep) = ep_by_num.get(&ep_num) {
-            assignments.insert(pl.num.clone(), vec![(*ep).clone()]);
+    let mut ep_cursor = start_episode;
+
+    for pl in playlists {
+        // Determine how many episodes this playlist likely contains
+        let ep_count = if playlists.len() > 1
+            && median_secs > 0
+            && pl.seconds as f64 >= median_secs as f64 * 1.5
+        {
+            (pl.seconds / median_secs).max(1)
+        } else {
+            1
+        };
+
+        let mut eps = Vec::new();
+        for _ in 0..ep_count {
+            if let Some(ep) = ep_by_num.get(&ep_cursor) {
+                eps.push((*ep).clone());
+            }
+            ep_cursor += 1;
+        }
+
+        if !eps.is_empty() {
+            assignments.insert(pl.num.clone(), eps);
         }
     }
+
     assignments
 }
 
@@ -870,5 +901,81 @@ mod tests {
     #[test]
     fn test_parse_episode_input_whitespace() {
         assert_eq!(parse_episode_input(" 3 , 5 "), Some(vec![3, 5]));
+    }
+
+    #[test]
+    fn test_assign_double_episode() {
+        // Three normal playlists + one double-length
+        let playlists = vec![
+            Playlist { num: "00001".into(), duration: "0:43:00".into(), seconds: 2580 },
+            Playlist { num: "00002".into(), duration: "0:44:00".into(), seconds: 2640 },
+            Playlist { num: "00003".into(), duration: "0:45:00".into(), seconds: 2700 },
+            Playlist { num: "00004".into(), duration: "1:30:00".into(), seconds: 5400 },
+        ];
+        let episodes: Vec<Episode> = (1..=5).map(|n| Episode {
+            episode_number: n,
+            name: format!("Episode {}", n),
+            runtime: Some(44),
+        }).collect();
+        let result = assign_episodes(&playlists, &episodes, 1);
+        // First three get one episode each
+        assert_eq!(result["00001"].len(), 1);
+        assert_eq!(result["00001"][0].episode_number, 1);
+        assert_eq!(result["00002"][0].episode_number, 2);
+        assert_eq!(result["00003"][0].episode_number, 3);
+        // Double-length playlist gets two episodes
+        assert_eq!(result["00004"].len(), 2);
+        assert_eq!(result["00004"][0].episode_number, 4);
+        assert_eq!(result["00004"][1].episode_number, 5);
+    }
+
+    #[test]
+    fn test_assign_all_same_length_no_doubles() {
+        let playlists = vec![
+            Playlist { num: "00001".into(), duration: "0:43:00".into(), seconds: 2580 },
+            Playlist { num: "00002".into(), duration: "0:44:00".into(), seconds: 2640 },
+        ];
+        let episodes: Vec<Episode> = (1..=2).map(|n| Episode {
+            episode_number: n,
+            name: format!("Episode {}", n),
+            runtime: Some(44),
+        }).collect();
+        let result = assign_episodes(&playlists, &episodes, 1);
+        assert_eq!(result["00001"].len(), 1);
+        assert_eq!(result["00002"].len(), 1);
+    }
+
+    #[test]
+    fn test_assign_single_playlist_no_double_detect() {
+        let playlists = vec![
+            Playlist { num: "00001".into(), duration: "1:30:00".into(), seconds: 5400 },
+        ];
+        let episodes: Vec<Episode> = (1..=2).map(|n| Episode {
+            episode_number: n,
+            name: format!("Episode {}", n),
+            runtime: Some(44),
+        }).collect();
+        let result = assign_episodes(&playlists, &episodes, 1);
+        // Single playlist — can't detect doubles, gets 1 episode
+        assert_eq!(result["00001"].len(), 1);
+        assert_eq!(result["00001"][0].episode_number, 1);
+    }
+
+    #[test]
+    fn test_assign_double_episode_exhausts_episodes() {
+        let playlists = vec![
+            Playlist { num: "00001".into(), duration: "0:44:00".into(), seconds: 2640 },
+            Playlist { num: "00002".into(), duration: "1:30:00".into(), seconds: 5400 },
+        ];
+        let episodes: Vec<Episode> = (1..=2).map(|n| Episode {
+            episode_number: n,
+            name: format!("Episode {}", n),
+            runtime: Some(44),
+        }).collect();
+        let result = assign_episodes(&playlists, &episodes, 1);
+        assert_eq!(result["00001"][0].episode_number, 1);
+        // Double wants 2 episodes but only 1 remains
+        assert_eq!(result["00002"].len(), 1);
+        assert_eq!(result["00002"][0].episode_number, 2);
     }
 }
