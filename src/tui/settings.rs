@@ -62,13 +62,28 @@ pub fn render(f: &mut Frame, state: &SettingsState) {
                 let style = if is_selected { Style::default().add_modifier(Modifier::REVERSED) } else { Style::default() };
                 f.render_widget(Paragraph::new(line).style(style), row_area);
             }
-            SettingItem::Choice { label, options, selected, .. } => {
-                let val_str = format!("[{}]", options[*selected]);
+            SettingItem::Choice { label, options, selected, custom_value, .. } => {
+                let is_editing = state.editing == Some(i);
+                let display_val = if is_editing {
+                    render_edit_buffer(&state.input_buffer, state.cursor_pos, max_val_width)
+                } else if options[*selected] == "Custom..." {
+                    match custom_value {
+                        Some(ref cv) if !cv.is_empty() => format!("[{}]", truncate(cv, max_val_width.saturating_sub(2))),
+                        _ => "[Custom...]".to_string(),
+                    }
+                } else {
+                    format!("[{}]", options[*selected])
+                };
+                let val_style = if is_editing {
+                    Style::default().fg(Color::White).add_modifier(Modifier::UNDERLINED)
+                } else {
+                    Style::default().fg(Color::Cyan)
+                };
                 let line = Line::from(vec![
                     Span::raw(format!("  {:width$}", label, width = label_width)),
-                    Span::styled(val_str, Style::default().fg(Color::Cyan)),
+                    Span::styled(display_val, val_style),
                 ]);
-                let style = if is_selected { Style::default().add_modifier(Modifier::REVERSED) } else { Style::default() };
+                let style = if is_selected && !is_editing { Style::default().add_modifier(Modifier::REVERSED) } else { Style::default() };
                 f.render_widget(Paragraph::new(line).style(style), row_area);
             }
             SettingItem::Text { label, key, value, .. } => {
@@ -234,7 +249,18 @@ fn handle_activate(state: &mut SettingsState) -> SettingsAction {
             }
             SettingsAction::None
         }
-        SettingItem::Choice { .. } => { handle_cycle(state, true); SettingsAction::None }
+        SettingItem::Choice { options, selected, custom_value, .. } => {
+            if options[*selected] == "Custom..." {
+                let cv = custom_value.clone().unwrap_or_default();
+                state.input_buffer = cv;
+                state.cursor_pos = state.input_buffer.len();
+                state.editing = Some(idx);
+                SettingsAction::None
+            } else {
+                handle_cycle(state, true);
+                SettingsAction::None
+            }
+        }
         SettingItem::Text { key, value, .. } => {
             if (key == "tv_format" || key == "movie_format") && is_preset_active(state) {
                 return SettingsAction::None;
@@ -304,6 +330,10 @@ fn confirm_edit(state: &mut SettingsState, idx: usize) {
             if let Ok(n) = new_value.parse::<u32>() {
                 if n > 0 { *value = n; state.dirty = true; }
             }
+        }
+        SettingItem::Choice { custom_value, .. } => {
+            *custom_value = Some(new_value);
+            state.dirty = true;
         }
         _ => {}
     }

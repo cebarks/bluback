@@ -4,6 +4,7 @@
 # Features
 - add pause/resume support during ripping (pause ffmpeg via SIGSTOP/SIGCONT)
 - resume existing partial rip (confirmation on resume or overwrite)
+- auto-detect supported drive read speeds for settings dropdown (requires SCSI/MMC GET PERFORMANCE or MODE SENSE; unreliable through USB bridges)
 
 # Investigate Further
 

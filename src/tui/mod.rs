@@ -183,7 +183,11 @@ pub(crate) fn start_disc_scan(app: &mut App) {
 
 impl App {
     pub fn open_settings(&mut self) {
-        let state = crate::types::SettingsState::from_config(&self.config);
+        let drives: Vec<String> = crate::disc::detect_optical_drives()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        let state = crate::types::SettingsState::from_config_with_drives(&self.config, &drives);
         self.overlay = Some(crate::types::Overlay::Settings(state));
     }
 

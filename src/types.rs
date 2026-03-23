@@ -179,6 +179,8 @@ pub enum SettingItem {
         key: String,
         options: Vec<String>,
         selected: usize,
+        /// For "Custom..." option: stores the user-entered value
+        custom_value: Option<String>,
     },
     Text {
         label: String,
@@ -200,7 +202,32 @@ pub enum SettingItem {
 
 impl SettingsState {
     pub fn from_config(config: &crate::config::Config) -> Self {
+        Self::from_config_with_drives(config, &[])
+    }
+
+    pub fn from_config_with_drives(config: &crate::config::Config, detected_drives: &[String]) -> Self {
         use crate::config::*;
+
+        // Build device options: auto-detect, detected drives, Custom...
+        let mut device_options = vec![DEFAULT_DEVICE.to_string()];
+        for drive in detected_drives {
+            let s = drive.to_string();
+            if s != DEFAULT_DEVICE && !device_options.contains(&s) {
+                device_options.push(s);
+            }
+        }
+        device_options.push("Custom...".to_string());
+
+        let configured_device = config.device.clone().unwrap_or_else(|| DEFAULT_DEVICE.into());
+        let (device_selected, device_custom) = if configured_device == DEFAULT_DEVICE {
+            (0, None)
+        } else if let Some(pos) = device_options.iter().position(|o| o == &configured_device) {
+            (pos, None)
+        } else {
+            // Custom value not in detected drives
+            (device_options.len() - 1, Some(configured_device))
+        };
+
         let items = vec![
             SettingItem::Separator { label: Some("General".into()) },
             SettingItem::Text {
@@ -208,13 +235,15 @@ impl SettingsState {
                 key: "output_dir".into(),
                 value: config.output_dir.clone().unwrap_or_else(|| DEFAULT_OUTPUT_DIR.into()),
             },
-            SettingItem::Text {
+            SettingItem::Choice {
                 label: "Device".into(),
                 key: "device".into(),
-                value: config.device.clone().unwrap_or_else(|| DEFAULT_DEVICE.into()),
+                options: device_options,
+                selected: device_selected,
+                custom_value: device_custom,
             },
             SettingItem::Toggle {
-                label: "Eject After Rip".into(),
+                label: "Auto-Eject After Rip".into(),
                 key: "eject".into(),
                 value: config.eject.unwrap_or(false),
             },
@@ -239,6 +268,7 @@ impl SettingsState {
                     Some("jellyfin") => 3,
                     _ => 0,
                 },
+                custom_value: None,
             },
             SettingItem::Text {
                 label: "TV Format".into(),
@@ -297,7 +327,6 @@ impl SettingsState {
             match item {
                 SettingItem::Text { key, value, .. } => match key.as_str() {
                     "output_dir" if value != DEFAULT_OUTPUT_DIR => config.output_dir = Some(value.clone()),
-                    "device" if value != DEFAULT_DEVICE => config.device = Some(value.clone()),
                     "tv_format" if value != DEFAULT_TV_FORMAT => config.tv_format = Some(value.clone()),
                     "movie_format" if value != DEFAULT_MOVIE_FORMAT => config.movie_format = Some(value.clone()),
                     "special_format" if value != DEFAULT_SPECIAL_FORMAT => config.special_format = Some(value.clone()),
@@ -314,11 +343,26 @@ impl SettingsState {
                     "min_duration" if *value != DEFAULT_MIN_DURATION => config.min_duration = Some(*value),
                     _ => {}
                 },
-                SettingItem::Choice { key, options, selected, .. } => if key.as_str() == "preset" {
-                    let val = &options[*selected];
-                    if val != "(none)" {
-                        config.preset = Some(val.clone());
+                SettingItem::Choice { key, options, selected, custom_value, .. } => match key.as_str() {
+                    "preset" => {
+                        let val = &options[*selected];
+                        if val != "(none)" {
+                            config.preset = Some(val.clone());
+                        }
                     }
+                    "device" => {
+                        let val = &options[*selected];
+                        if val == "Custom..." {
+                            if let Some(ref cv) = custom_value {
+                                if !cv.is_empty() && cv != DEFAULT_DEVICE {
+                                    config.device = Some(cv.clone());
+                                }
+                            }
+                        } else if val != DEFAULT_DEVICE {
+                            config.device = Some(val.clone());
+                        }
+                    }
+                    _ => {}
                 },
                 _ => {}
             }
@@ -421,6 +465,76 @@ mod tests {
         assert!(matches!(eject, Some(SettingItem::Toggle { value: true, .. })));
         let min_dur = state.items.iter().find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"));
         assert!(matches!(min_dur, Some(SettingItem::Number { value: 600, .. })));
+    }
+
+    #[test]
+    fn test_settings_device_with_detected_drives() {
+        let config = crate::config::Config::default();
+        let drives = vec!["/dev/sr0".to_string(), "/dev/sr1".to_string()];
+        let state = SettingsState::from_config_with_drives(&config, &drives);
+        let device = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
+        if let SettingItem::Choice { options, selected, .. } = device {
+            assert_eq!(options[0], "auto-detect");
+            assert!(options.contains(&"/dev/sr0".to_string()));
+            assert!(options.contains(&"/dev/sr1".to_string()));
+            assert_eq!(options.last().unwrap(), "Custom...");
+            assert_eq!(*selected, 0); // default is auto-detect
+        }
+    }
+
+    #[test]
+    fn test_settings_device_known_drive_selected() {
+        let config = crate::config::Config {
+            device: Some("/dev/sr1".into()),
+            ..Default::default()
+        };
+        let drives = vec!["/dev/sr0".to_string(), "/dev/sr1".to_string()];
+        let state = SettingsState::from_config_with_drives(&config, &drives);
+        let device = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
+        if let SettingItem::Choice { options, selected, .. } = device {
+            assert_eq!(options[*selected], "/dev/sr1");
+        }
+    }
+
+    #[test]
+    fn test_settings_device_custom_value() {
+        let config = crate::config::Config {
+            device: Some("/dev/custom0".into()),
+            ..Default::default()
+        };
+        let drives = vec!["/dev/sr0".to_string()];
+        let state = SettingsState::from_config_with_drives(&config, &drives);
+        let device = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
+        if let SettingItem::Choice { options, selected, custom_value, .. } = device {
+            assert_eq!(options[*selected], "Custom...");
+            assert_eq!(custom_value.as_deref(), Some("/dev/custom0"));
+        }
+    }
+
+    #[test]
+    fn test_settings_device_to_config_detected() {
+        let config = crate::config::Config::default();
+        let drives = vec!["/dev/sr0".to_string()];
+        let mut state = SettingsState::from_config_with_drives(&config, &drives);
+        // Select /dev/sr0
+        let device_idx = state.items.iter().position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
+        if let SettingItem::Choice { selected, .. } = &mut state.items[device_idx] {
+            *selected = 1; // /dev/sr0
+        }
+        let restored = state.to_config();
+        assert_eq!(restored.device.as_deref(), Some("/dev/sr0"));
+    }
+
+    #[test]
+    fn test_settings_device_to_config_custom() {
+        let config = crate::config::Config {
+            device: Some("/dev/custom0".into()),
+            ..Default::default()
+        };
+        let drives = vec!["/dev/sr0".to_string()];
+        let state = SettingsState::from_config_with_drives(&config, &drives);
+        let restored = state.to_config();
+        assert_eq!(restored.device.as_deref(), Some("/dev/custom0"));
     }
 
     #[test]
