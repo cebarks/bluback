@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_TV_FORMAT: &str = "S{season}E{episode}_{title}.mkv";
 pub const DEFAULT_MOVIE_FORMAT: &str = "{title}_({year}).mkv";
+pub const DEFAULT_SPECIAL_FORMAT: &str = "{show} S00E{episode} {title}.mkv";
 
 pub const PLEX_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title} [Bluray-{resolution}][{audio} {channels}][{codec}].mkv";
 pub const PLEX_MOVIE_FORMAT: &str =
@@ -18,6 +19,7 @@ pub struct Config {
     pub preset: Option<String>,
     pub tv_format: Option<String>,
     pub movie_format: Option<String>,
+    pub special_format: Option<String>,
     pub eject: Option<bool>,
     pub max_speed: Option<bool>,
 }
@@ -84,6 +86,16 @@ impl Config {
             return preset_format(preset, is_movie);
         }
         preset_format("default", is_movie)
+    }
+
+    pub fn resolve_special_format(&self, cli_format: Option<&str>) -> String {
+        if let Some(fmt) = cli_format {
+            return fmt.to_string();
+        }
+        if let Some(ref fmt) = self.special_format {
+            return fmt.clone();
+        }
+        DEFAULT_SPECIAL_FORMAT.to_string()
     }
 
     pub fn should_eject(&self, cli_eject: Option<bool>) -> bool {
@@ -299,5 +311,44 @@ mod tests {
     fn test_parse_max_speed() {
         let config: Config = toml::from_str("max_speed = false").unwrap();
         assert_eq!(config.max_speed, Some(false));
+    }
+
+    #[test]
+    fn test_parse_special_format() {
+        let config: Config = toml::from_str(r#"special_format = "{show} S00E{episode}.mkv""#).unwrap();
+        assert_eq!(config.special_format.unwrap(), "{show} S00E{episode}.mkv");
+    }
+
+    #[test]
+    fn test_resolve_special_format_from_config() {
+        let config = Config {
+            special_format: Some("custom/{show} S00E{episode}.mkv".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_special_format(None),
+            "custom/{show} S00E{episode}.mkv"
+        );
+    }
+
+    #[test]
+    fn test_resolve_special_format_cli_overrides() {
+        let config = Config {
+            special_format: Some("config/{show}.mkv".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            config.resolve_special_format(Some("cli/{title}.mkv")),
+            "cli/{title}.mkv"
+        );
+    }
+
+    #[test]
+    fn test_resolve_special_format_default() {
+        let config = Config::default();
+        assert_eq!(
+            config.resolve_special_format(None),
+            DEFAULT_SPECIAL_FORMAT
+        );
     }
 }
