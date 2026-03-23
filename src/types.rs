@@ -36,6 +36,7 @@ pub struct LabelInfo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Public API — fields read when media module is consumed directly
 pub struct AudioStream {
     pub index: usize,
     pub codec: String,
@@ -50,6 +51,7 @@ impl AudioStream {
         self.channels >= 6
     }
 
+    #[allow(dead_code)] // Public API
     pub fn display_line(&self) -> String {
         let lang = self.language.as_deref().unwrap_or("und");
         let codec_name = self.profile.as_deref().unwrap_or(&self.codec);
@@ -58,6 +60,7 @@ impl AudioStream {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // Public API — fields read when media module is consumed directly
 pub struct StreamInfo {
     pub audio_streams: Vec<AudioStream>,
     pub subtitle_count: u32,
@@ -65,6 +68,7 @@ pub struct StreamInfo {
 
 #[derive(Debug, Clone)]
 pub struct ChapterMark {
+    #[allow(dead_code)] // Used by media module's chapter injection logic
     pub index: u32,
     pub start_secs: f64,
 }

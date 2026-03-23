@@ -2,6 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug)]
+#[allow(dead_code)] // Public API — variants will be constructed when media module is consumed directly
 pub enum MediaError {
     /// AACS host certificate revoked (MKBv72+), need per-disc VUK in KEYDB.cfg
     AacsRevoked,

@@ -3,10 +3,8 @@ pub mod probe;
 pub mod remux;
 
 pub use error::MediaError;
-pub use probe::{
-    classify_hdr, format_aspect_ratio, format_channel_layout, format_framerate, probe_media_info,
-    probe_streams, scan_playlists,
-};
+#[allow(unused_imports)] // probe_streams is part of the public API for future direct consumption
+pub use probe::{probe_media_info, probe_streams, scan_playlists};
 pub use remux::{RemuxOptions, StreamSelection};
 
 use std::sync::Once;

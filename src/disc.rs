@@ -3,7 +3,7 @@ use regex::Regex;
 use std::process::Command;
 use std::sync::LazyLock;
 
-use crate::types::{LabelInfo, MediaInfo, Playlist, StreamInfo};
+use crate::types::{LabelInfo, MediaInfo, Playlist};
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     [
@@ -143,10 +143,6 @@ pub fn filter_episodes(playlists: &[Playlist], min_duration: u32) -> Vec<&Playli
         .iter()
         .filter(|pl| pl.seconds >= min_duration)
         .collect()
-}
-
-pub fn probe_streams(device: &str, playlist_num: &str) -> Option<StreamInfo> {
-    crate::media::probe_streams(device, playlist_num).ok()
 }
 
 pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {

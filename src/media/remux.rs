@@ -10,6 +10,7 @@ use crate::types::{AudioStream, ChapterMark, RipProgress, StreamInfo};
 
 /// How to select streams from the input for remuxing.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // Public API — Manual variant used when media module is consumed directly
 pub enum StreamSelection {
     /// Map every stream from the input.
     #[default]
