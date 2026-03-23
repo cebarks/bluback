@@ -141,6 +141,7 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     if app.tmdb.api_key.is_none() {
+        // API key input mode
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -162,89 +163,251 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
                 .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     } else {
-        let mut lines = vec![Line::from(format!("{}|", app.wizard.input_buffer))];
+        // Search input + inline results
+        let has_results = if app.tmdb.movie_mode {
+            !app.tmdb.movie_results.is_empty()
+        } else {
+            !app.tmdb.search_results.is_empty()
+        };
+
+        let content_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(1),
+            ])
+            .split(chunks[1]);
+
+        // Search input field
+        let input_style = if app.wizard.input_focus == InputFocus::TextInput {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        let cursor = if app.wizard.input_focus == InputFocus::TextInput { "|" } else { "" };
+        let mut lines = vec![Line::from(format!("{}{}", app.wizard.input_buffer, cursor))];
         if !app.status_message.is_empty() {
             lines.push(
                 Line::from(app.status_message.as_str()).style(Style::default().fg(Color::Yellow)),
             );
         }
         let input = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Search query"));
-        f.render_widget(input, chunks[1]);
+            .block(Block::default().borders(Borders::ALL).title("Search query").border_style(input_style));
+        f.render_widget(input, content_chunks[0]);
+
+        // Results list (when results exist)
+        if has_results {
+            let items: Vec<ListItem> = if app.tmdb.movie_mode {
+                app.tmdb
+                    .movie_results
+                    .iter()
+                    .enumerate()
+                    .map(|(i, movie)| {
+                        let year = movie
+                            .release_date
+                            .as_deref()
+                            .unwrap_or("")
+                            .get(..4)
+                            .unwrap_or("");
+                        let marker = if app.wizard.input_focus == InputFocus::List && i == app.wizard.list_cursor { "> " } else { "  " };
+                        ListItem::new(format!("{}{} ({})", marker, movie.title, year))
+                    })
+                    .collect()
+            } else {
+                app.tmdb
+                    .search_results
+                    .iter()
+                    .enumerate()
+                    .map(|(i, show)| {
+                        let year = show
+                            .first_air_date
+                            .as_deref()
+                            .unwrap_or("")
+                            .get(..4)
+                            .unwrap_or("");
+                        let marker = if app.wizard.input_focus == InputFocus::List && i == app.wizard.list_cursor { "> " } else { "  " };
+                        ListItem::new(format!("{}{} ({})", marker, show.name, year))
+                    })
+                    .collect()
+            };
+
+            let list_style = if app.wizard.input_focus == InputFocus::List {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Results").border_style(list_style))
+                .highlight_style(Style::default().fg(Color::Yellow));
+            f.render_widget(list, content_chunks[1]);
+        }
 
         let toggle = if app.tmdb.movie_mode { "TV Show" } else { "Movie" };
-        let hints = Paragraph::new(format!(
-            "Enter: Search | Tab: Switch to {} | Esc: Skip TMDb | q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan",
-            toggle
-        ))
-        .style(Style::default().fg(Color::DarkGray));
+        let hints_text = if app.wizard.input_focus == InputFocus::List {
+            "Up/Down: Navigate | Enter: Select | Esc: Back to search | Ctrl+R: Rescan".to_string()
+        } else {
+            format!(
+                "Enter: Search | Down: Results | Tab: Switch to {} | Esc: Skip TMDb | Ctrl+R: Rescan",
+                toggle
+            )
+        };
+        let hints = Paragraph::new(hints_text).style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     }
 }
 
 pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char(c) => app.wizard.input_buffer.push(c),
-        KeyCode::Backspace => {
-            app.wizard.input_buffer.pop();
-        }
-        KeyCode::Enter => {
-            let input = app.wizard.input_buffer.trim().to_string();
-            if input.is_empty() {
-                return;
-            }
+    match app.wizard.input_focus {
+        InputFocus::TextInput => {
+            match key.code {
+                KeyCode::Char(c) => app.wizard.input_buffer.push(c),
+                KeyCode::Backspace => {
+                    app.wizard.input_buffer.pop();
+                }
+                KeyCode::Enter => {
+                    let input = app.wizard.input_buffer.trim().to_string();
+                    if input.is_empty() {
+                        return;
+                    }
 
-            // If no API key yet, treat input as the API key
-            if app.tmdb.api_key.is_none() {
-                if let Err(e) = tmdb::save_api_key(&input) {
-                    app.status_message = format!("Failed to save API key: {}", e);
-                    return;
-                }
-                app.tmdb.api_key = Some(input);
-                app.wizard.input_buffer = app.tmdb.search_query.clone();
-                app.status_message.clear();
-                return;
-            }
+                    // If no API key yet, treat input as the API key
+                    if app.tmdb.api_key.is_none() {
+                        if let Err(e) = tmdb::save_api_key(&input) {
+                            app.status_message = format!("Failed to save API key: {}", e);
+                            return;
+                        }
+                        app.tmdb.api_key = Some(input);
+                        app.wizard.input_buffer = app.tmdb.search_query.clone();
+                        app.status_message.clear();
+                        return;
+                    }
 
-            // Spawn TMDb search in background thread
-            if let Some(ref api_key) = app.tmdb.api_key.clone() {
-                if app.pending_rx.is_some() {
-                    return; // Already waiting for a result
+                    // Spawn TMDb search in background thread
+                    if let Some(ref api_key) = app.tmdb.api_key.clone() {
+                        if app.pending_rx.is_some() {
+                            return; // Already waiting for a result
+                        }
+                        let api_key = api_key.clone();
+                        let query = input;
+                        let (tx, rx) = mpsc::channel();
+                        if app.tmdb.movie_mode {
+                            std::thread::spawn(move || {
+                                let _ = tx.send(BackgroundResult::MovieSearch(tmdb::search_movie(
+                                    &query, &api_key,
+                                )));
+                            });
+                        } else {
+                            std::thread::spawn(move || {
+                                let _ = tx.send(BackgroundResult::ShowSearch(tmdb::search_show(
+                                    &query, &api_key,
+                                )));
+                            });
+                        }
+                        app.pending_rx = Some(rx);
+                        app.status_message = "Searching TMDb...".into();
+                    }
                 }
-                let api_key = api_key.clone();
-                let query = input;
-                let (tx, rx) = mpsc::channel();
-                if app.tmdb.movie_mode {
-                    std::thread::spawn(move || {
-                        let _ = tx.send(BackgroundResult::MovieSearch(tmdb::search_movie(
-                            &query, &api_key,
-                        )));
-                    });
-                } else {
-                    std::thread::spawn(move || {
-                        let _ = tx.send(BackgroundResult::ShowSearch(tmdb::search_show(
-                            &query, &api_key,
-                        )));
-                    });
+                KeyCode::Down => {
+                    let has_results = if app.tmdb.movie_mode {
+                        !app.tmdb.movie_results.is_empty()
+                    } else {
+                        !app.tmdb.search_results.is_empty()
+                    };
+                    if has_results {
+                        app.wizard.input_focus = InputFocus::List;
+                        app.wizard.list_cursor = 0;
+                    }
                 }
-                app.pending_rx = Some(rx);
-                app.status_message = "Searching TMDb...".into();
+                KeyCode::Tab => {
+                    if app.tmdb.api_key.is_some() {
+                        app.tmdb.movie_mode = !app.tmdb.movie_mode;
+                    }
+                }
+                KeyCode::Esc => {
+                    app.wizard.input_focus = InputFocus::List;
+                    app.wizard.list_cursor = 0;
+                    app.screen = Screen::PlaylistManager;
+                }
+                _ => {}
             }
         }
-        KeyCode::Tab => {
-            if app.tmdb.api_key.is_some() {
-                app.tmdb.movie_mode = !app.tmdb.movie_mode;
+        InputFocus::List => {
+            let result_count = if app.tmdb.movie_mode {
+                app.tmdb.movie_results.len()
+            } else {
+                app.tmdb.search_results.len()
+            };
+
+            match key.code {
+                KeyCode::Up => {
+                    if app.wizard.list_cursor == 0 {
+                        app.wizard.input_focus = InputFocus::TextInput;
+                    } else {
+                        app.wizard.list_cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if app.wizard.list_cursor + 1 < result_count {
+                        app.wizard.list_cursor += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    if result_count == 0 {
+                        return;
+                    }
+
+                    if app.tmdb.movie_mode {
+                        app.tmdb.selected_movie = Some(app.wizard.list_cursor);
+                        app.tmdb.show_name =
+                            app.tmdb.movie_results[app.wizard.list_cursor].title.clone();
+                        app.wizard.input_focus = InputFocus::List;
+                        app.wizard.list_cursor = 0;
+                        app.screen = Screen::PlaylistManager;
+                    } else {
+                        app.tmdb.selected_show = Some(app.wizard.list_cursor);
+                        let show = &app.tmdb.search_results[app.wizard.list_cursor];
+                        app.tmdb.show_name = show.name.clone();
+
+                        // If we already have a season number, fetch episodes in background
+                        if let Some(season) = app.wizard.season_num {
+                            if let Some(ref api_key) = app.tmdb.api_key.clone() {
+                                let api_key = api_key.clone();
+                                let show_id = show.id;
+                                let (tx, rx) = mpsc::channel();
+                                std::thread::spawn(move || {
+                                    let _ = tx.send(BackgroundResult::SeasonFetch(
+                                        tmdb::get_season(show_id, season, &api_key),
+                                    ));
+                                });
+                                app.pending_rx = Some(rx);
+                                app.status_message = "Fetching season...".into();
+                            }
+                        }
+
+                        app.wizard.season_field = 0;
+                        app.wizard.input_buffer = app
+                            .wizard
+                            .season_num
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
+                        app.wizard.input_focus = InputFocus::TextInput;
+                        app.wizard.list_cursor = 0;
+                        app.screen = Screen::Season;
+                    }
+                }
+                KeyCode::Esc => {
+                    app.tmdb.search_results.clear();
+                    app.tmdb.movie_results.clear();
+                    app.wizard.input_focus = InputFocus::TextInput;
+                }
+                _ => {}
             }
         }
-        KeyCode::Esc => {
-            app.wizard.input_focus = InputFocus::List;
-            app.wizard.list_cursor = 0;
-            app.screen = Screen::PlaylistSelect;
-        }
-        _ => {}
+        InputFocus::InlineEdit(_) => {}
     }
 }
 
+#[allow(dead_code)]
 pub fn render_show_select(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
@@ -308,6 +471,7 @@ pub fn render_show_select(f: &mut Frame, app: &App) {
     f.render_widget(hints, chunks[2]);
 }
 
+#[allow(dead_code)]
 pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
     let result_count = if app.tmdb.movie_mode {
         app.tmdb.movie_results.len()
@@ -336,7 +500,7 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
                 app.tmdb.show_name = app.tmdb.movie_results[app.wizard.list_cursor].title.clone();
                 app.wizard.input_focus = InputFocus::List;
                 app.wizard.list_cursor = 0;
-                app.screen = Screen::PlaylistSelect;
+                app.screen = Screen::PlaylistManager;
             } else {
                 app.tmdb.selected_show = Some(app.wizard.list_cursor);
                 let show = &app.tmdb.search_results[app.wizard.list_cursor];
@@ -362,7 +526,7 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
                 app.wizard.input_buffer = app.wizard.season_num.map(|s| s.to_string()).unwrap_or_default();
                 app.wizard.input_focus = InputFocus::TextInput;
                 app.wizard.list_cursor = 0;
-                app.screen = Screen::SeasonEpisode;
+                app.screen = Screen::Season;
             }
         }
         KeyCode::Esc => {
@@ -565,7 +729,7 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
                 app.wizard.input_buffer.clear();
                 app.wizard.season_field = 0;
                 app.wizard.list_cursor = 0;
-                app.screen = Screen::EpisodeMapping;
+                app.screen = Screen::PlaylistManager;
             }
         }
         KeyCode::Esc => {
@@ -574,12 +738,13 @@ pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
             app.wizard.season_field = 0;
             app.wizard.list_cursor = 0;
             app.wizard.input_focus = InputFocus::List;
-            app.screen = Screen::ShowSelect;
+            app.screen = Screen::TmdbSearch;
         }
         _ => {}
     }
 }
 
+#[allow(dead_code)]
 pub fn render_episode_mapping(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
@@ -670,6 +835,7 @@ pub fn render_episode_mapping(f: &mut Frame, app: &App) {
     f.render_widget(hints, chunks[2]);
 }
 
+#[allow(dead_code)]
 pub fn handle_episode_mapping_input(app: &mut App, key: KeyEvent) {
     if let InputFocus::InlineEdit(edit_row) = app.wizard.input_focus {
         // Inline edit mode
@@ -753,7 +919,7 @@ pub fn handle_episode_mapping_input(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             app.wizard.list_cursor = 0;
-            app.screen = Screen::PlaylistSelect;
+            app.screen = Screen::PlaylistManager;
         }
         KeyCode::Esc => {
             app.wizard.list_cursor = 0;
@@ -765,7 +931,7 @@ pub fn handle_episode_mapping_input(app: &mut App, key: KeyEvent) {
                 .unwrap_or_else(|| guess_start_episode(disc_num, app.disc.episodes_pl.len()));
             app.wizard.input_buffer = guessed.to_string();
             app.wizard.season_field = 1;
-            app.screen = Screen::SeasonEpisode;
+            app.screen = Screen::Season;
         }
         _ => {}
     }
@@ -943,9 +1109,10 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.wizard.list_cursor = 0;
             if app.tmdb.movie_mode && app.tmdb.selected_movie.is_some() {
-                app.screen = Screen::ShowSelect;
+                app.wizard.input_focus = InputFocus::List;
+                app.screen = Screen::TmdbSearch;
             } else if !app.wizard.episode_assignments.is_empty() {
-                app.screen = Screen::EpisodeMapping;
+                app.screen = Screen::PlaylistManager;
             } else {
                 app.wizard.input_focus = InputFocus::TextInput;
                 app.wizard.input_buffer = app.tmdb.search_query.clone();
@@ -954,6 +1121,26 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+}
+
+// Stub: delegates to old render_season_episode (will be replaced in Task 5)
+pub fn render_season(f: &mut Frame, app: &App) {
+    render_season_episode(f, app);
+}
+
+// Stub: delegates to old handle_season_episode_input (will be replaced in Task 5)
+pub fn handle_season_input(app: &mut App, key: KeyEvent) {
+    handle_season_episode_input(app, key);
+}
+
+// Stub: delegates to old render_playlist_select (will be replaced in Task 6)
+pub fn render_playlist_manager(f: &mut Frame, app: &App) {
+    render_playlist_select(f, app);
+}
+
+// Stub: delegates to old handle_playlist_select_input (will be replaced in Task 6)
+pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
+    handle_playlist_select_input(app, key);
 }
 
 pub fn render_confirm(f: &mut Frame, app: &App) {
@@ -1101,7 +1288,7 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Esc => {
             app.wizard.list_cursor = 0;
-            app.screen = Screen::PlaylistSelect;
+            app.screen = Screen::PlaylistManager;
         }
         _ => {}
     }
