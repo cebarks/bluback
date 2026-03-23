@@ -67,13 +67,32 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
+      - name: Generate changelog
+        id: changelog
+        run: |
+          prev_tag=$(git tag --sort=-version:refname | sed -n '2p')
+          if [ -n "$prev_tag" ]; then
+            log=$(git log --pretty=format:'- %s' "$prev_tag".."$GITHUB_REF_NAME")
+          else
+            log=$(git log --pretty=format:'- %s')
+          fi
+          {
+            echo 'body<<EOF'
+            echo "$log"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body: ${{ steps.changelog.outputs.body }}
           files: artifacts/*.tar.gz
