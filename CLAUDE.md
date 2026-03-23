@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A Rust CLI/TUI tool for backing up Blu-ray discs to MKV files using ffmpeg + libaacs, with optional TMDb integration for automatic episode naming. Supports both TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies.
+A Rust CLI/TUI tool for backing up Blu-ray discs to MKV files using FFmpeg library bindings (`ffmpeg-the-third`) + libaacs, with optional TMDb integration for automatic episode naming. Supports both TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies.
 
 ## Background & Context
 
@@ -14,9 +14,24 @@ MakeMKV doesn't work with USB Blu-ray drives using ASMedia USB-SATA bridge chips
 
 ### How it works
 
-- **ffprobe** (with libbluray) scans disc playlists
+- **FFmpeg API** (via `ffmpeg-the-third` Rust bindings) with libbluray scans disc playlists and remuxes streams into MKV (lossless copy, no re-encoding). No CLI subprocess calls.
 - **libaacs** + `~/.config/aacs/KEYDB.cfg` handles AACS decryption
-- **ffmpeg** remuxes decrypted streams into MKV (lossless, `-c copy` always, no re-encoding)
+- **Chapters** are embedded during remux via the AVChapter API (no external tools needed)
+
+### Build Requirements
+
+FFmpeg development libraries and clang are required at build time (bindgen generates FFI bindings):
+
+**Fedora/RHEL:** `sudo dnf install ffmpeg-free-devel clang clang-libs pkg-config` (or `ffmpeg-devel` from [RPMFusion](https://rpmfusion.org/) for broader codec support)
+**Ubuntu/Debian:** `sudo apt install libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev`
+**Arch:** `sudo pacman -S ffmpeg clang pkgconf`
+
+### Runtime Requirements
+
+- FFmpeg shared libraries (libavformat, libavcodec, libavutil, etc.) — typically installed with the dev packages above or the `ffmpeg` package
+- **libaacs** + **libbluray** — for Blu-ray AACS decryption and playlist enumeration
+- `~/.config/aacs/KEYDB.cfg` — containing device keys, processing keys, and/or per-disc VUKs
+- A Blu-ray drive accessible as a block device (e.g., `/dev/sr0`)
 
 ### AACS Decryption Details
 
@@ -45,13 +60,15 @@ cargo clippy                   # Lint
 
 ### Data Flow
 
-1. `main.rs` parses CLI args, loads config, detects TTY, dispatches to TUI or CLI mode
-2. Both modes follow the same workflow: scan disc → filter playlists → TMDb lookup (optional) → assign episodes → review/manual mapping (optional) → build filenames → rip → apply chapters (if mkvpropedit available)
-3. `disc.rs` handles all ffprobe interactions, volume label parsing, and disc mount/unmount operations (via `udisksctl`)
-4. `chapters.rs` extracts chapter marks from MPLS playlist files on the mounted disc and applies them to ripped MKVs via `mkvpropedit`
-5. `rip.rs` spawns ffmpeg processes and parses progress output via reader thread + mpsc channel
-6. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
-7. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority
+1. `main.rs` parses CLI args, loads config, sets `BD_DEBUG_MASK` based on `verbose_libbluray`, detects TTY, dispatches to TUI or CLI mode
+2. Both modes follow the same workflow: scan disc → filter playlists → TMDb lookup (optional) → assign episodes → review/manual mapping (optional) → build filenames → rip (with chapters embedded during remux)
+3. `disc.rs` handles volume label parsing, disc mount/unmount operations (via `udisksctl`), and delegates to `media` module for probing
+4. `media/probe.rs` — FFmpeg API-based playlist scanning (custom log callback captures libbluray output), stream probing, and media info extraction
+5. `media/remux.rs` — FFmpeg API-based lossless remux with progress callbacks, stream selection, and AVChapter injection from MPLS data
+6. `media/error.rs` — MediaError enum with AACS error classification
+7. `rip.rs` — orchestrates remux jobs with progress tracking via mpsc channel
+8. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
+9. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority
 
 ### Two UI Modes
 
@@ -74,9 +91,10 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 ### Key Design Decisions
 
 - **Disc auto-detect** — When no `-d` flag is given, scans `lsblk` for all devices of type `rom` and polls each for a volume label every 2 seconds. The scanning screen shows each tried device as a dimmed log line. The device that has a disc is used for the session. Works on startup and after rescan (Ctrl+R / Enter on Done screen).
-- **Blocking I/O** — no async runtime. ffmpeg progress read via reader thread + mpsc channel.
-- **Chapter preservation** — After ripping, if `mkvpropedit` (mkvtoolnix) is available, bluback mounts the disc via `udisksctl`, reads MPLS playlist files from `BDMV/PLAYLIST/` to extract chapter marks, converts them to OGM format, and embeds them into the ripped MKVs. The disc is unmounted afterward if bluback mounted it. Chapter counts are displayed on the playlist selection screen in TUI mode.
-- **Audio selection**: Prefers 5.1/7.1 surround, includes stereo as secondary track. All subtitle streams included.
+- **Blocking I/O** — no async runtime. Remux progress via callback + mpsc channel.
+- **Chapter preservation** — During remux, bluback mounts the disc via `udisksctl`, reads MPLS playlist files from `BDMV/PLAYLIST/` to extract chapter marks, and injects them as AVChapter entries in the output MKV. The disc is unmounted afterward if bluback mounted it. Chapter counts are displayed on the playlist selection screen in TUI mode.
+- **Stream selection** — Configurable via `stream_selection` in config: `all` (default, maps every stream) or `prefer_surround` (prefers 5.1/7.1, includes stereo as secondary). All subtitle streams always included.
+- **libbluray stderr suppression** — `BD_DEBUG_MASK=0` set by default to prevent libbluray debug output from corrupting TUI. Controlled by `verbose_libbluray` config option.
 - **Episode assignment** — Default: sequential with multi-episode detection (uses median playlist duration with 1.5x threshold to detect double-episode playlists). Volume label parsing guesses the starting episode from disc number. The Playlist Manager screen allows overriding individual playlist assignments inline (`e` hotkey), including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
 - **Specials support** — Playlists can be marked as specials (`s` hotkey in Playlist Manager), which assigns them season 0 episode numbers and uses a separate `special_format` naming template. `r` resets a single row's assignment, `R` resets all.
 - **All playlists visible** — The Playlist Manager shows all disc playlists, not just episode-length ones. Filtered playlists (below `min_duration`) are hidden by default but can be toggled with `f`. Controlled by `show_filtered` config option.
@@ -91,9 +109,9 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 Unit tests live in `#[cfg(test)] mod tests` blocks within each module. All tests are for pure functions — no tests require hardware or network access.
 
 - `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering
-- `disc.rs` — volume label parsing, playlist filtering, media info JSON parsing
-- `rip.rs` — ffmpeg map arg building, progress line parsing, size/ETA estimation
-- `chapters.rs` — MPLS chapter extraction, OGM formatting
+- `disc.rs` — volume label parsing, playlist filtering
+- `media/probe.rs` — HDR classification, channel layout formatting, framerate/aspect ratio formatting, playlist log line parsing, GCD, DTS profile formatting
+- `media/remux.rs` — stream selection logic (all, prefer_surround, manual), map arg building, progress line parsing, size/ETA estimation, chapter OGM formatting
 - `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output
 - `types.rs` — MediaInfo field mapping, ChapterMark struct, SettingsState construction/roundtrip, cursor navigation, env var overrides
 - `tui/settings.rs` — truncate/mask helpers, input handling (toggle, choice, text edit, number validation, cursor movement, confirm close prompt)
@@ -170,12 +188,12 @@ bluback [OPTIONS]
 
 | Crate | Purpose |
 |---|---|
+| `ffmpeg-the-third` | FFmpeg library bindings (probe, remux, log capture) |
 | `clap` (derive) | Argument parsing |
 | `ratatui` + `crossterm` | TUI framework + terminal backend |
 | `ureq` | Blocking HTTP for TMDb API |
 | `serde` + `serde_json` | TMDb JSON deserialization |
 | `toml` | Config file parsing |
-| `regex` | Volume label parsing, ffprobe output parsing |
+| `regex` | Volume label parsing, log line parsing |
 | `anyhow` | Application error handling |
 | `mpls` | MPLS playlist parsing for chapter extraction |
-| `which` | Check for ffmpeg/ffprobe/mkvpropedit on PATH |

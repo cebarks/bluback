@@ -1,32 +1,44 @@
 # bluback
 
-A CLI/TUI tool for backing up Blu-ray discs to MKV files using ffmpeg + libaacs, with optional TMDb integration for automatic episode naming.
+A CLI/TUI tool for backing up Blu-ray discs to MKV files using FFmpeg library bindings + libaacs, with optional TMDb integration for automatic episode naming.
 
-Supports TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies. All rips are lossless remuxes (`-c copy`) — no re-encoding. Automatically preserves Blu-ray chapter markers when mkvpropedit is available.
+Supports TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies. All rips are lossless remuxes — no re-encoding. Blu-ray chapter markers are automatically embedded during remux.
 
 ## Why not MakeMKV?
 
-MakeMKV doesn't work reliably with USB Blu-ray drives using ASMedia USB-SATA bridge chips (e.g., ASUS BW-16D1X-U). The bridge mangles SCSI passthrough commands needed for disc access. Standard block-level reads via `/dev/sr0` work fine, so bluback uses ffprobe/ffmpeg with libbluray instead.
+MakeMKV doesn't work reliably with USB Blu-ray drives using ASMedia USB-SATA bridge chips (e.g., ASUS BW-16D1X-U). The bridge mangles SCSI passthrough commands needed for disc access. Standard block-level reads via `/dev/sr0` work fine, so bluback uses FFmpeg with libbluray instead.
 
 ## Requirements
 
-- **ffmpeg** and **ffprobe** (with libbluray support)
+### Runtime
+
+- **FFmpeg shared libraries** (libavformat, libavcodec, libavutil, libswscale, libswresample) — bluback links against these at runtime via `ffmpeg-the-third` bindings. No `ffmpeg` or `ffprobe` CLI tools needed.
+- **libbluray** — for Blu-ray playlist enumeration
 - **libaacs** with a populated `~/.config/aacs/KEYDB.cfg` (containing device keys, processing keys, and/or per-disc VUKs)
 - A Blu-ray drive accessible as a block device (e.g., `/dev/sr0`)
 
 Optional:
-- **mkvpropedit** (from [mkvtoolnix](https://mkvtoolnix.download/)) — for preserving Blu-ray chapter markers in ripped MKVs
 - A [TMDb API key](https://www.themoviedb.org/settings/api) for automatic show/episode metadata lookup
+
+### Build
+
+FFmpeg development libraries and clang are required at build time for FFI binding generation:
+
+| Distro | Packages |
+|---|---|
+| **Fedora/RHEL** | `sudo dnf install ffmpeg-free-devel clang clang-libs pkg-config` (or `ffmpeg-devel` from [RPMFusion](https://rpmfusion.org/) for broader codec support) |
+| **Ubuntu/Debian** | `sudo apt install libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev` |
+| **Arch** | `sudo pacman -S ffmpeg clang pkgconf` |
 
 ## Installation
 
-### From crates.io
+### From GitHub releases
 
-```bash
-cargo install bluback
-```
+Pre-built binaries for Linux x86_64 and aarch64 are available on the [releases page](https://github.com/cebarks/bluback/releases). These are statically linked against FFmpeg and can be run directly.
 
 ### From source
+
+Requires FFmpeg development libraries and clang (see [Build requirements](#build) above).
 
 ```bash
 git clone https://github.com/cebarks/bluback.git
@@ -130,6 +142,12 @@ min_duration = 900
 # Show playlists below min_duration by default in Playlist Manager
 # show_filtered = false
 
+# Stream selection strategy: "all" (default) or "prefer_surround"
+# stream_selection = "all"
+
+# Show libbluray debug output on stderr (default: false, suppressed to avoid TUI corruption)
+# verbose_libbluray = false
+
 # TMDb API key (also checked in ~/.config/bluback/tmdb_api_key and TMDB_API_KEY env var)
 # tmdb_api_key = "your-key-here"
 ```
@@ -150,6 +168,7 @@ Settings can also be set via environment variables. When the settings panel open
 | `BLUBACK_MOVIE_FORMAT` | `movie_format` |
 | `BLUBACK_SPECIAL_FORMAT` | `special_format` |
 | `BLUBACK_SHOW_FILTERED` | `show_filtered` |
+| `BLUBACK_VERBOSE_LIBBLURAY` | `verbose_libbluray` |
 | `TMDB_API_KEY` | `tmdb_api_key` |
 
 Environment variables take precedence over config file values at runtime. When saving, a warning notes which env vars will override the saved config.
@@ -183,15 +202,15 @@ Bracket groups `[...]` auto-collapse when their contents are empty (useful for o
 
 ## Chapter Preservation
 
-When `mkvpropedit` (from mkvtoolnix) is installed, bluback automatically extracts chapter markers from the Blu-ray's MPLS playlist files and embeds them into the ripped MKV files. The disc is temporarily mounted via `udisksctl` to read the playlist data, then unmounted after extraction.
+bluback automatically extracts chapter markers from the Blu-ray's MPLS playlist files and embeds them directly into the output MKV files during remux (via the FFmpeg AVChapter API). No external tools like `mkvpropedit` are needed.
 
-Chapter counts are displayed alongside each playlist during selection in TUI mode. If `mkvpropedit` is not found, ripping proceeds normally without chapters.
+The disc is temporarily mounted via `udisksctl` to read the playlist data, then unmounted after extraction. Chapter counts are displayed alongside each playlist during selection in TUI mode.
 
 ## AACS Decryption Notes
 
 bluback relies on libaacs for AACS decryption. You need a `KEYDB.cfg` file at `~/.config/aacs/KEYDB.cfg` containing device keys, processing keys, host certificates, and/or per-disc Volume Unique Keys (VUKs).
 
-**USB drive caveat:** The only publicly available AACS host certificate is revoked in MKBv72+. Discs with newer MKBs require a per-disc VUK entry in the KEYDB. If ffprobe hangs during disc scanning, check for an orphaned `libmmbd.so.0` on your system — if present without a working MakeMKV backend, libaacs can hang indefinitely.
+**USB drive caveat:** The only publicly available AACS host certificate is revoked in MKBv72+. Discs with newer MKBs require a per-disc VUK entry in the KEYDB. If bluback hangs during disc scanning, check for an orphaned `libmmbd.so.0` on your system — if present without a working MakeMKV backend, libaacs can hang indefinitely.
 
 ## AI Disclosure
 
