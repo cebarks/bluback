@@ -436,6 +436,7 @@ fn poll_background(app: &mut App) {
             return; // Keep pending_rx alive
         }
         BackgroundResult::DiscFound(ref device) => {
+            app.scan_log.clear();
             app.status_message = format!("Scanning {}...", device);
             return; // Keep pending_rx alive
         }

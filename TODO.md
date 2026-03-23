@@ -1,9 +1,5 @@
 
 # Bugs
-- disc scan after no disc found still shows no disc was found on the drive even after scanning on a newly discovered disc has been found
-- "unmounted /dev/sr0" text stuck on screen after state moves on
-- ripping screen
-    - should show current rip at the top of the list (currently just bolded)
 - step 3 starting episode selection should be interactive not a field
 - why is there a lag between step 5 and 6?
 - can't skip detected select playlists in playlist select

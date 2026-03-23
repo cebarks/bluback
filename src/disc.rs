@@ -107,11 +107,11 @@ pub fn mount_disc(device: &str) -> Result<String> {
 
 /// Unmount a disc using udisksctl.
 pub fn unmount_disc(device: &str) -> Result<()> {
-    let status = Command::new("udisksctl")
+    let output = Command::new("udisksctl")
         .args(["unmount", "-b", device])
-        .status()?;
+        .output()?;
 
-    if !status.success() {
+    if !output.status.success() {
         bail!("Failed to unmount {}", device);
     }
     Ok(())
