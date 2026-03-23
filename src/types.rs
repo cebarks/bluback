@@ -166,6 +166,8 @@ pub struct SettingsState {
     pub confirm_close: Option<bool>,
     pub scroll_offset: usize,
     pub standalone: bool,
+    /// Env var overrides detected at open: (env_var_name, key, value)
+    pub env_overrides: Vec<(String, String, String)>,
 }
 
 pub enum SettingItem {
@@ -316,7 +318,123 @@ impl SettingsState {
             confirm_close: None,
             scroll_offset: 0,
             standalone: false,
+            env_overrides: Vec::new(),
         }
+    }
+
+    /// Check for BLUBACK_* env vars and apply their values to settings items.
+    /// Returns the list of overrides that were applied.
+    pub fn apply_env_overrides(&mut self) {
+        const ENV_MAPPINGS: &[(&str, &str)] = &[
+            ("BLUBACK_OUTPUT_DIR", "output_dir"),
+            ("BLUBACK_DEVICE", "device"),
+            ("BLUBACK_EJECT", "eject"),
+            ("BLUBACK_MAX_SPEED", "max_speed"),
+            ("BLUBACK_MIN_DURATION", "min_duration"),
+            ("BLUBACK_PRESET", "preset"),
+            ("BLUBACK_TV_FORMAT", "tv_format"),
+            ("BLUBACK_MOVIE_FORMAT", "movie_format"),
+            ("BLUBACK_SPECIAL_FORMAT", "special_format"),
+            ("BLUBACK_SHOW_FILTERED", "show_filtered"),
+            ("TMDB_API_KEY", "tmdb_api_key"),
+        ];
+
+        let mut overrides = Vec::new();
+
+        for &(env_var, config_key) in ENV_MAPPINGS {
+            if let Ok(val) = std::env::var(env_var) {
+                if val.is_empty() {
+                    continue;
+                }
+                let applied = self.apply_env_value(config_key, &val);
+                if applied {
+                    overrides.push((env_var.to_string(), config_key.to_string(), val));
+                }
+            }
+        }
+
+        if !overrides.is_empty() {
+            self.dirty = true;
+            let names: Vec<&str> = overrides.iter().map(|(env, _, _)| env.as_str()).collect();
+            self.save_message = Some(format!("Imported from env: {}", names.join(", ")));
+            self.save_message_at = Some(std::time::Instant::now());
+        }
+        self.env_overrides = overrides;
+    }
+
+    fn apply_env_value(&mut self, key: &str, val: &str) -> bool {
+        for item in &mut self.items {
+            match item {
+                SettingItem::Text { key: k, value, .. } if k == key => {
+                    *value = val.to_string();
+                    return true;
+                }
+                SettingItem::Toggle { key: k, value, .. } if k == key => {
+                    match val.to_lowercase().as_str() {
+                        "true" | "1" | "yes" => { *value = true; return true; }
+                        "false" | "0" | "no" => { *value = false; return true; }
+                        _ => return false,
+                    }
+                }
+                SettingItem::Number { key: k, value, .. } if k == key => {
+                    if let Ok(n) = val.parse::<u32>() {
+                        if n > 0 {
+                            *value = n;
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                SettingItem::Choice { key: k, options, selected, custom_value, .. } if k == key => {
+                    if key == "device" {
+                        // Check if the value matches a known option
+                        if let Some(pos) = options.iter().position(|o| o == val) {
+                            *selected = pos;
+                        } else {
+                            // Set as custom
+                            *selected = options.len() - 1; // "Custom..."
+                            *custom_value = Some(val.to_string());
+                        }
+                        return true;
+                    } else if key == "preset" {
+                        if let Some(pos) = options.iter().position(|o| o == val) {
+                            *selected = pos;
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Check which env vars are currently set that would override saved config.
+    pub fn active_env_var_warnings(&self) -> Vec<String> {
+        const ENV_MAPPINGS: &[(&str, &str)] = &[
+            ("BLUBACK_OUTPUT_DIR", "output_dir"),
+            ("BLUBACK_DEVICE", "device"),
+            ("BLUBACK_EJECT", "eject"),
+            ("BLUBACK_MAX_SPEED", "max_speed"),
+            ("BLUBACK_MIN_DURATION", "min_duration"),
+            ("BLUBACK_PRESET", "preset"),
+            ("BLUBACK_TV_FORMAT", "tv_format"),
+            ("BLUBACK_MOVIE_FORMAT", "movie_format"),
+            ("BLUBACK_SPECIAL_FORMAT", "special_format"),
+            ("BLUBACK_SHOW_FILTERED", "show_filtered"),
+            ("TMDB_API_KEY", "tmdb_api_key"),
+        ];
+
+        let mut warnings = Vec::new();
+        for &(env_var, _) in ENV_MAPPINGS {
+            if let Ok(val) = std::env::var(env_var) {
+                if !val.is_empty() {
+                    warnings.push(env_var.to_string());
+                }
+            }
+        }
+        warnings
     }
 
     pub fn to_config(&self) -> crate::config::Config {
@@ -535,6 +653,67 @@ mod tests {
         let state = SettingsState::from_config_with_drives(&config, &drives);
         let restored = state.to_config();
         assert_eq!(restored.device.as_deref(), Some("/dev/custom0"));
+    }
+
+    #[test]
+    fn test_env_override_toggle() {
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::from_config(&config);
+        // Simulate BLUBACK_EJECT=true
+        assert!(state.apply_env_value("eject", "true"));
+        let eject = state.items.iter().find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "eject")).unwrap();
+        assert!(matches!(eject, SettingItem::Toggle { value: true, .. }));
+    }
+
+    #[test]
+    fn test_env_override_toggle_false() {
+        let config = crate::config::Config { max_speed: Some(true), ..Default::default() };
+        let mut state = SettingsState::from_config(&config);
+        assert!(state.apply_env_value("max_speed", "false"));
+        let ms = state.items.iter().find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "max_speed")).unwrap();
+        assert!(matches!(ms, SettingItem::Toggle { value: false, .. }));
+    }
+
+    #[test]
+    fn test_env_override_number() {
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::from_config(&config);
+        assert!(state.apply_env_value("min_duration", "600"));
+        let md = state.items.iter().find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration")).unwrap();
+        assert!(matches!(md, SettingItem::Number { value: 600, .. }));
+    }
+
+    #[test]
+    fn test_env_override_number_invalid() {
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::from_config(&config);
+        assert!(!state.apply_env_value("min_duration", "abc"));
+        assert!(!state.apply_env_value("min_duration", "0"));
+    }
+
+    #[test]
+    fn test_env_override_text() {
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::from_config(&config);
+        assert!(state.apply_env_value("output_dir", "/tmp/rips"));
+        let od = state.items.iter().find(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir")).unwrap();
+        assert!(matches!(od, SettingItem::Text { value, .. } if value == "/tmp/rips"));
+    }
+
+    #[test]
+    fn test_env_override_preset() {
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::from_config(&config);
+        assert!(state.apply_env_value("preset", "plex"));
+        let preset = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset")).unwrap();
+        assert!(matches!(preset, SettingItem::Choice { selected: 2, .. })); // plex is index 2
+    }
+
+    #[test]
+    fn test_env_override_preset_invalid() {
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::from_config(&config);
+        assert!(!state.apply_env_value("preset", "nonexistent"));
     }
 
     #[test]

@@ -187,7 +187,8 @@ impl App {
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        let state = crate::types::SettingsState::from_config_with_drives(&self.config, &drives);
+        let mut state = crate::types::SettingsState::from_config_with_drives(&self.config, &drives);
+        state.apply_env_overrides();
         self.overlay = Some(crate::types::Overlay::Settings(state));
     }
 
@@ -292,6 +293,7 @@ pub fn run_settings(config: &crate::config::Config, config_path: std::path::Path
     app.config_path = config_path;
     let mut state = crate::types::SettingsState::from_config(config);
     state.standalone = true;
+    state.apply_env_overrides();
     app.overlay = Some(crate::types::Overlay::Settings(state));
 
     loop {
@@ -324,7 +326,13 @@ pub fn run_settings(config: &crate::config::Config, config_path: std::path::Path
                             let new_config = state.to_config();
                             match new_config.save(&app.config_path) {
                                 Ok(()) => {
-                                    state.save_message = Some("Saved!".into());
+                                    let warnings = state.active_env_var_warnings();
+                                    let msg = if warnings.is_empty() {
+                                        "Saved!".to_string()
+                                    } else {
+                                        format!("Saved! (env vars override: {})", warnings.join(", "))
+                                    };
+                                    state.save_message = Some(msg);
                                     state.save_message_at = Some(std::time::Instant::now());
                                     state.dirty = false;
                                 }
@@ -800,7 +808,13 @@ fn handle_settings_save(app: &mut App, config: &crate::config::Config) {
                 }
             }
             if let Some(crate::types::Overlay::Settings(ref mut state)) = app.overlay {
-                state.save_message = Some("Saved!".into());
+                let warnings = state.active_env_var_warnings();
+                let msg = if warnings.is_empty() {
+                    "Saved!".to_string()
+                } else {
+                    format!("Saved! (env vars override: {})", warnings.join(", "))
+                };
+                state.save_message = Some(msg);
                 state.save_message_at = Some(std::time::Instant::now());
                 state.dirty = false;
             }
