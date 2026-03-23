@@ -30,6 +30,8 @@ pub struct Config {
     pub show_filtered: Option<bool>,
     pub output_dir: Option<String>,
     pub device: Option<String>,
+    pub stream_selection: Option<String>,
+    pub verbose_libbluray: Option<bool>,
 }
 
 fn config_dir() -> PathBuf {
@@ -100,6 +102,8 @@ impl Config {
         emit_str(&mut out, "movie_format", &self.movie_format, DEFAULT_MOVIE_FORMAT);
         emit_str(&mut out, "special_format", &self.special_format, DEFAULT_SPECIAL_FORMAT);
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
+        emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
+        emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
 
@@ -188,6 +192,17 @@ impl Config {
 
     pub fn show_filtered(&self) -> bool {
         self.show_filtered.unwrap_or(false)
+    }
+
+    pub fn verbose_libbluray(&self) -> bool {
+        self.verbose_libbluray.unwrap_or(false)
+    }
+
+    pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
+        match self.stream_selection.as_deref() {
+            Some("prefer_surround") => crate::media::StreamSelection::PreferSurround,
+            _ => crate::media::StreamSelection::All,
+        }
     }
 }
 
@@ -590,5 +605,21 @@ mod tests {
     fn test_resolve_config_path_explicit() {
         let path = resolve_config_path(Some(std::path::PathBuf::from("/tmp/custom.toml")));
         assert_eq!(path, std::path::PathBuf::from("/tmp/custom.toml"));
+    }
+
+    #[test]
+    fn test_stream_selection_from_config() {
+        let toml_str = r#"
+            stream_selection = "prefer_surround"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.stream_selection.as_deref(), Some("prefer_surround"));
+    }
+
+    #[test]
+    fn test_stream_selection_default_is_none() {
+        let toml_str = "";
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.stream_selection.is_none());
     }
 }

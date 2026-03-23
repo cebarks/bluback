@@ -1234,16 +1234,14 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
             app.rip.current_rip = 0;
             app.screen = Screen::Ripping;
 
-            if app.has_mkvpropedit {
-                match crate::disc::ensure_mounted(&app.args.device().to_string_lossy()) {
-                    Ok((mount, did_mount)) => {
-                        app.disc.mount_point = Some(mount);
-                        app.disc.did_mount = did_mount;
-                    }
-                    Err(_) => {
-                        app.disc.mount_point = None;
-                        app.disc.did_mount = false;
-                    }
+            match crate::disc::ensure_mounted(&app.args.device().to_string_lossy()) {
+                Ok((mount, did_mount)) => {
+                    app.disc.mount_point = Some(mount);
+                    app.disc.did_mount = did_mount;
+                }
+                Err(_) => {
+                    app.disc.mount_point = None;
+                    app.disc.did_mount = false;
                 }
             }
         }

@@ -1,14 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
-use std::io::BufRead;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 
 use super::{App, Screen};
 use crate::types::PlaylistStatus;
 use crate::util::format_size;
-use crate::{disc, rip};
+use crate::rip;
 
 pub fn render(f: &mut Frame, app: &App) {
     let done_count = app
@@ -249,11 +248,7 @@ pub fn handle_input(app: &mut App, key: KeyEvent) {
     if app.rip.confirm_abort {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                if let Some(ref mut child) = app.rip.child {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
-                app.rip.child = None;
+                app.rip.cancel.store(true, Ordering::Relaxed);
                 app.rip.progress_rx = None;
                 app.quit = true;
             }
@@ -275,7 +270,7 @@ pub fn tick(app: &mut App) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if app.rip.child.is_none() {
+    if app.rip.progress_rx.is_none() {
         start_next_job(app);
         return Ok(());
     }
@@ -293,10 +288,6 @@ fn check_all_done(app: &mut App) -> bool {
     });
 
     if all_done && !app.rip.jobs.is_empty() {
-        if let Some(ref mut child) = app.rip.child {
-            let _ = child.wait();
-        }
-        app.rip.child = None;
         app.rip.progress_rx = None;
         app.screen = Screen::Done;
         if app.disc.did_mount {
@@ -338,114 +329,85 @@ fn start_next_job(app: &mut App) {
         return;
     }
 
-    let streams = disc::probe_streams(&device, &playlist_num);
-    let map_args = match streams {
-        Some(ref s) => rip::build_map_args(s),
-        None => vec!["-map".into(), "0".into()],
+    // Extract chapters from MPLS if disc is mounted
+    let chapters = app
+        .disc
+        .mount_point
+        .as_ref()
+        .and_then(|mount| {
+            crate::chapters::extract_chapters(std::path::Path::new(mount), &playlist_num)
+        })
+        .unwrap_or_default();
+
+    let stream_selection = app.config.resolve_stream_selection();
+    let cancel = app.rip.cancel.clone();
+
+    // Reset cancel flag for this new job
+    cancel.store(false, Ordering::Relaxed);
+
+    let options = crate::media::RemuxOptions {
+        device,
+        playlist: playlist_num,
+        output: outfile,
+        chapters,
+        stream_selection,
+        cancel,
     };
 
-    match rip::start_rip(&device, &playlist_num, &map_args, &outfile) {
-        Ok(mut child) => {
-            let stdout = child.stdout.take().expect("stdout piped");
-            let (tx, rx) = mpsc::channel();
-            thread::spawn(move || {
-                let reader = std::io::BufReader::new(stdout);
-                for line in reader.lines().map_while(Result::ok) {
-                    if tx.send(line).is_err() {
-                        break;
-                    }
-                }
-            });
-
-            let stderr = child.stderr.take().expect("stderr piped");
-            let stderr_buf = Arc::new(Mutex::new(String::new()));
-            let stderr_clone = stderr_buf.clone();
-            thread::spawn(move || {
-                let reader = std::io::BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
-                    let mut buf = stderr_clone.lock().unwrap();
-                    if !buf.is_empty() {
-                        buf.push('\n');
-                    }
-                    buf.push_str(&line);
-                }
-            });
-
-            app.rip.child = Some(child);
-            app.rip.progress_rx = Some(rx);
-            app.rip.stderr_buffer = Some(stderr_buf);
-            app.rip.progress_state.clear();
-            app.rip.jobs[idx].status =
-                PlaylistStatus::Ripping(crate::types::RipProgress::default());
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let tx_progress = tx.clone();
+        let result = crate::media::remux::remux(options, |progress| {
+            let _ = tx_progress.send(Ok(progress.clone()));
+        });
+        match result {
+            Ok(_chapters_added) => {} // success — sender drops, receiver sees Disconnected
+            Err(e) => { let _ = tx.send(Err(e)); }
         }
-        Err(e) => {
-            app.rip.jobs[idx].status = PlaylistStatus::Failed(format!("Failed to start: {}", e));
-        }
-    }
+    });
+
+    app.rip.progress_rx = Some(rx);
+    app.rip.jobs[idx].status = PlaylistStatus::Ripping(crate::types::RipProgress::default());
 }
 
 fn poll_active_job(app: &mut App) {
-    // Read progress from the channel
-    if let Some(ref rx) = app.rip.progress_rx {
-        while let Ok(line) = rx.try_recv() {
-            if let Some(progress) = rip::parse_progress_line(&line, &mut app.rip.progress_state) {
+    let rx = match app.rip.progress_rx {
+        Some(ref rx) => rx,
+        None => return,
+    };
+
+    loop {
+        match rx.try_recv() {
+            Ok(Ok(progress)) => {
                 let idx = app.rip.current_rip;
                 app.rip.jobs[idx].status = PlaylistStatus::Ripping(progress);
             }
-        }
-    }
-
-    // Check if the child has exited
-    if let Some(ref mut child) = app.rip.child {
-        match child.try_wait() {
-            Ok(Some(status)) => {
+            Ok(Err(crate::media::MediaError::Cancelled)) => {
                 let idx = app.rip.current_rip;
-                if status.success() {
+                app.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
+                app.rip.progress_rx = None;
+                return;
+            }
+            Ok(Err(e)) => {
+                let idx = app.rip.current_rip;
+                app.rip.jobs[idx].status = PlaylistStatus::Failed(e.to_string());
+                app.rip.progress_rx = None;
+                return;
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                // No more messages right now
+                return;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                // Sender dropped = remux thread finished successfully
+                let idx = app.rip.current_rip;
+                if matches!(app.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
                     let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
                     let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
                     app.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
-
-                    // Apply chapter markers
-                    if app.has_mkvpropedit {
-                        if let Some(ref mount) = app.disc.mount_point {
-                            let playlist_num = &app.rip.jobs[idx].playlist.num;
-                            if let Some(chapters) = crate::chapters::extract_chapters(
-                                std::path::Path::new(mount.as_str()),
-                                playlist_num,
-                            ) {
-                                let _ = crate::chapters::apply_chapters(&outfile, &chapters);
-                            }
-                        }
-                    }
-                } else {
-                    let stderr_msg = app
-                        .rip
-                        .stderr_buffer
-                        .as_ref()
-                        .and_then(|b| b.lock().ok())
-                        .map(|b| b.clone())
-                        .unwrap_or_default();
-                    let msg = if let Some(aacs_msg) = disc::check_aacs_error(&stderr_msg) {
-                        aacs_msg
-                    } else if stderr_msg.is_empty() {
-                        format!("ffmpeg exited with code {}", status)
-                    } else {
-                        let last_line = stderr_msg.lines().last().unwrap_or("");
-                        format!("ffmpeg: {}", last_line)
-                    };
-                    app.rip.jobs[idx].status = PlaylistStatus::Failed(msg);
                 }
-                app.rip.child = None;
                 app.rip.progress_rx = None;
-                app.rip.stderr_buffer = None;
-            }
-            Ok(None) => {} // still running
-            Err(e) => {
-                let idx = app.rip.current_rip;
-                app.rip.jobs[idx].status = PlaylistStatus::Failed(format!("wait error: {}", e));
-                app.rip.child = None;
-                app.rip.progress_rx = None;
-                app.rip.stderr_buffer = None;
+                return;
             }
         }
     }

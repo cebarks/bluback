@@ -36,13 +36,39 @@ pub struct LabelInfo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Public API — fields read when media module is consumed directly
+pub struct AudioStream {
+    pub index: usize,
+    pub codec: String,
+    pub channels: u16,
+    pub channel_layout: String,
+    pub language: Option<String>,
+    pub profile: Option<String>,
+}
+
+impl AudioStream {
+    pub fn is_surround(&self) -> bool {
+        self.channels >= 6
+    }
+
+    #[allow(dead_code)] // Public API
+    pub fn display_line(&self) -> String {
+        let lang = self.language.as_deref().unwrap_or("und");
+        let codec_name = self.profile.as_deref().unwrap_or(&self.codec);
+        format!("{} {} ({})", codec_name, self.channel_layout, lang)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+#[allow(dead_code)] // Public API — fields read when media module is consumed directly
 pub struct StreamInfo {
-    pub audio_streams: Vec<String>,
-    pub sub_count: u32,
+    pub audio_streams: Vec<AudioStream>,
+    pub subtitle_count: u32,
 }
 
 #[derive(Debug, Clone)]
 pub struct ChapterMark {
+    #[allow(dead_code)] // Used by media module's chapter injection logic
     pub index: u32,
     pub start_secs: f64,
 }
@@ -260,6 +286,11 @@ impl SettingsState {
                 key: "min_duration".into(),
                 value: config.min_duration.unwrap_or(DEFAULT_MIN_DURATION),
             },
+            SettingItem::Toggle {
+                label: "Verbose libbluray".into(),
+                key: "verbose_libbluray".into(),
+                value: config.verbose_libbluray.unwrap_or(false),
+            },
             SettingItem::Separator { label: Some("Naming".into()) },
             SettingItem::Choice {
                 label: "Preset".into(),
@@ -337,6 +368,7 @@ impl SettingsState {
             ("BLUBACK_MOVIE_FORMAT", "movie_format"),
             ("BLUBACK_SPECIAL_FORMAT", "special_format"),
             ("BLUBACK_SHOW_FILTERED", "show_filtered"),
+            ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -425,6 +457,7 @@ impl SettingsState {
             ("BLUBACK_MOVIE_FORMAT", "movie_format"),
             ("BLUBACK_SPECIAL_FORMAT", "special_format"),
             ("BLUBACK_SHOW_FILTERED", "show_filtered"),
+            ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -457,6 +490,7 @@ impl SettingsState {
                     "eject" if *value => config.eject = Some(true),
                     "max_speed" if !*value => config.max_speed = Some(false),
                     "show_filtered" if *value => config.show_filtered = Some(true),
+                    "verbose_libbluray" if *value => config.verbose_libbluray = Some(true),
                     _ => {}
                 },
                 SettingItem::Number { key, value, .. } => match key.as_str() {
@@ -524,6 +558,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_audio_stream_is_surround() {
+        let stream = AudioStream {
+            index: 0,
+            codec: "truehd".into(),
+            channels: 8,
+            channel_layout: "7.1".into(),
+            language: Some("eng".into()),
+            profile: None,
+        };
+        assert!(stream.is_surround());
+
+        let stereo = AudioStream {
+            index: 1,
+            codec: "aac".into(),
+            channels: 2,
+            channel_layout: "stereo".into(),
+            language: Some("eng".into()),
+            profile: None,
+        };
+        assert!(!stereo.is_surround());
+    }
+
+    #[test]
     fn test_media_info_to_vars_all_fields() {
         let info = MediaInfo {
             resolution: "1080p".into(),
@@ -568,9 +625,9 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 4 separators + 11 settings + 1 action = 16 items
+        // 4 separators + 12 settings + 1 action = 17 items
         let non_separator_count = state.items.iter().filter(|i| !matches!(i, SettingItem::Separator { .. })).count();
-        assert_eq!(non_separator_count, 12); // 11 settings + 1 action
+        assert_eq!(non_separator_count, 13); // 12 settings + 1 action
     }
 
     #[test]
@@ -729,13 +786,13 @@ mod tests {
     fn test_settings_cursor_move_down_skips_separator() {
         let mut state = SettingsState::from_config(&crate::config::Config::default());
         // Move to the last item before a separator, then down should skip it
-        // Find "Min Duration" (last in General group), next is Separator(Naming)
-        let min_dur_idx = state.items.iter().position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration")).unwrap();
-        state.cursor = min_dur_idx;
+        // Find "Verbose libbluray" (last in General group), next is Separator(Naming)
+        let verbose_idx = state.items.iter().position(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "verbose_libbluray")).unwrap();
+        state.cursor = verbose_idx;
         state.move_cursor_down();
         // Should have skipped the Naming separator
         assert!(!state.is_separator(state.cursor));
-        assert!(state.cursor > min_dur_idx + 1);
+        assert!(state.cursor > verbose_idx + 1);
     }
 
     #[test]

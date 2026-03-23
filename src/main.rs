@@ -2,6 +2,7 @@ mod chapters;
 mod cli;
 mod config;
 mod disc;
+mod media;
 mod rip;
 mod tmdb;
 mod tui;
@@ -103,6 +104,12 @@ fn main() -> anyhow::Result<()> {
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);
 
+    // Suppress libbluray's BD_DEBUG stderr output unless verbose mode is on.
+    // Must be set before any ffmpeg/libbluray calls.
+    if !config.verbose_libbluray() {
+        std::env::set_var("BD_DEBUG_MASK", "0");
+    }
+
     // --settings mode: open settings panel without disc/dependency checks
     if args.settings {
         if !atty_stdout() {
@@ -129,8 +136,6 @@ fn main() -> anyhow::Result<()> {
         let drives = disc::detect_optical_drives();
         args.device = Some(drives[0].clone());
     }
-
-    disc::check_dependencies()?;
 
     let use_tui = !args.no_tui && atty_stdout();
 
