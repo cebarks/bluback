@@ -39,6 +39,27 @@ fn config_dir() -> PathBuf {
     home.join(".config").join("bluback")
 }
 
+pub fn resolve_config_path(cli_path: Option<PathBuf>) -> PathBuf {
+    if let Some(path) = cli_path {
+        return path;
+    }
+    if let Ok(env_path) = std::env::var("BLUBACK_CONFIG") {
+        return PathBuf::from(env_path);
+    }
+    config_dir().join("config.toml")
+}
+
+pub fn load_from(path: &std::path::Path) -> Config {
+    if path.exists() {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|s| toml::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        Config::default()
+    }
+}
+
 pub fn load_config() -> Config {
     let path = config_dir().join("config.toml");
     if path.exists() {
@@ -569,5 +590,17 @@ mod tests {
         let output = config.to_toml_string();
         assert!(output.contains(r#"tv_format = "custom/{show}.mkv""#));
         assert!(output.contains(r#"tmdb_api_key = "abc123""#));
+    }
+
+    #[test]
+    fn test_resolve_config_path_default() {
+        let path = resolve_config_path(None);
+        assert!(path.to_string_lossy().ends_with(".config/bluback/config.toml"));
+    }
+
+    #[test]
+    fn test_resolve_config_path_explicit() {
+        let path = resolve_config_path(Some(std::path::PathBuf::from("/tmp/custom.toml")));
+        assert_eq!(path, std::path::PathBuf::from("/tmp/custom.toml"));
     }
 }
