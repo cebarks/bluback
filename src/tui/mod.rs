@@ -11,7 +11,7 @@ use crossterm::ExecutableCommand;
 use ratatui::prelude::*;
 use std::collections::HashMap;
 use std::io;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::types::*;
@@ -80,10 +80,8 @@ pub struct WizardState {
 pub struct RipState {
     pub jobs: Vec<RipJob>,
     pub current_rip: usize,
-    pub child: Option<std::process::Child>,
-    pub progress_rx: Option<mpsc::Receiver<String>>,
-    pub progress_state: HashMap<String, String>,
-    pub stderr_buffer: Option<Arc<Mutex<String>>>,
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub progress_rx: Option<mpsc::Receiver<Result<crate::types::RipProgress, crate::media::MediaError>>>,
     pub confirm_abort: bool,
     pub confirm_rescan: bool,
 }
@@ -94,7 +92,6 @@ pub struct App {
     pub config: crate::config::Config,
     pub quit: bool,
     pub eject: bool,
-    pub has_mkvpropedit: bool,
     pub status_message: String,
     pub spinner_frame: usize,
 
@@ -117,7 +114,6 @@ impl App {
             quit: false,
             config: crate::config::Config::default(),
             eject: false,
-            has_mkvpropedit: false,
             status_message: String::new(),
             spinner_frame: 0,
             disc: DiscState::default(),
@@ -193,11 +189,9 @@ impl App {
     }
 
     pub fn reset_for_rescan(&mut self) {
-        // Kill any active rip
-        if let Some(ref mut child) = self.rip.child {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
+        // Cancel any active rip
+        self.rip.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.rip.progress_rx = None;
 
         if self.disc.did_mount {
             let _ = crate::disc::unmount_disc(&self.args.device().to_string_lossy());
@@ -387,7 +381,6 @@ fn run_app(
     app.config = config.clone();
     app.config_path = config_path;
     app.eject = config.should_eject(args.cli_eject());
-    app.has_mkvpropedit = which::which("mkvpropedit").is_ok();
 
     // Spawn disc scan in background thread
     app.tmdb.api_key = crate::tmdb::get_api_key(config);
@@ -414,10 +407,7 @@ fn run_app(
         let _ = io::stdout().execute(SetTitle(terminal_title(&app)));
 
         if app.quit {
-            if let Some(ref mut child) = app.rip.child {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+            app.rip.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
             break;
         }
 

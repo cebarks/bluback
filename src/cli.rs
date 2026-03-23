@@ -641,20 +641,6 @@ fn rip_selected(
         let final_size = std::fs::metadata(outfile)?.len();
         println!("Done: {} ({})", filename, format_size(final_size));
 
-        // Apply chapter markers if mkvpropedit is available
-        if has_mkvpropedit {
-            if let Some(ref mount) = mount_point {
-                if let Some(chapters) =
-                    crate::chapters::extract_chapters(std::path::Path::new(mount), &pl.num)
-                {
-                    match crate::chapters::apply_chapters(outfile, &chapters) {
-                        Ok(true) => println!("  Added {} chapter markers", chapters.len()),
-                        Ok(false) => {}
-                        Err(e) => println!("  Warning: failed to add chapters: {}", e),
-                    }
-                }
-            }
-        }
     }
 
     if did_mount {
