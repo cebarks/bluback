@@ -1,5 +1,6 @@
 pub mod dashboard;
 pub mod wizard;
+pub mod settings;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
