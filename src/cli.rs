@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use crate::disc;
@@ -517,24 +517,16 @@ fn rip_selected(
         return Ok(());
     }
 
-    let has_mkvpropedit = which::which("mkvpropedit").is_ok();
-    if !has_mkvpropedit {
-        println!("Note: mkvpropedit not found, chapters will not be added. Install mkvtoolnix for chapter support.");
-    }
-
-    let (mount_point, did_mount) = if has_mkvpropedit {
-        match disc::ensure_mounted(device) {
-            Ok((mount, did_mount)) => (Some(mount), did_mount),
-            Err(e) => {
-                println!(
-                    "Warning: could not mount disc for chapter extraction: {}",
-                    e
-                );
-                (None, false)
-            }
+    // Always mount for chapter extraction
+    let (mount_point, did_mount) = match disc::ensure_mounted(device) {
+        Ok((mount, did_mount)) => (Some(mount), did_mount),
+        Err(e) => {
+            println!(
+                "Warning: could not mount disc for chapter extraction: {}",
+                e
+            );
+            (None, false)
         }
-    } else {
-        (None, false)
     };
 
     // Create output directory and any template subdirectories
@@ -544,6 +536,7 @@ fn rip_selected(
         }
     }
 
+    let stream_selection = config.resolve_stream_selection();
     let mut had_failure = false;
 
     for (i, &idx) in selected.iter().enumerate() {
@@ -568,79 +561,61 @@ fn rip_selected(
             pl.num, pl.duration, filename
         );
 
-        let streams = match disc::probe_streams(device, &pl.num) {
-            Some(s) => s,
-            None => {
-                println!(
-                    "Warning: Failed to probe streams for playlist {}, skipping.",
-                    pl.num
-                );
+        let chapters = mount_point
+            .as_ref()
+            .and_then(|mount| {
+                crate::chapters::extract_chapters(std::path::Path::new(mount), &pl.num)
+            })
+            .unwrap_or_default();
+
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let options = crate::media::RemuxOptions {
+            device: device.to_string(),
+            playlist: pl.num.clone(),
+            output: outfile.clone(),
+            chapters: chapters.clone(),
+            stream_selection: stream_selection.clone(),
+            cancel,
+        };
+
+        let pl_seconds = pl.seconds;
+        let result = crate::media::remux::remux(options, |progress| {
+            let size = format_size(progress.total_size);
+            let time = format_time(progress.out_time_secs);
+            let mut parts = vec![
+                format!("frame={}", progress.frame),
+                format!("fps={:.1}", progress.fps),
+                format!("size={}", size),
+                format!("time={}", time),
+                format!("bitrate={}", progress.bitrate),
+                format!("speed={:.1}x", progress.speed),
+            ];
+            if let Some(est) = rip::estimate_final_size(progress, pl_seconds) {
+                parts.push(format!("est=~{}", format_size(est)));
+            }
+            if let Some(eta_secs) = rip::estimate_eta(progress, pl_seconds) {
+                parts.push(format!("eta={}", rip::format_eta(eta_secs)));
+            }
+            print!("\r  {:<100}", parts.join(" "));
+            io::stdout().flush().ok();
+        });
+
+        println!();
+        match result {
+            Ok(()) => {
+                let final_size = std::fs::metadata(outfile)?.len();
+                println!("Done: {} ({})", filename, format_size(final_size));
+                if !chapters.is_empty() {
+                    println!("  Added {} chapter markers", chapters.len());
+                }
+            }
+            Err(e) => {
+                println!("Error: {}", e);
                 had_failure = true;
                 continue;
             }
-        };
-
-        let map_args = rip::build_map_args(&streams);
-        let mut child = rip::start_rip(device, &pl.num, &map_args, outfile)?;
-
-        let stdout = child.stdout.take().expect("stdout piped");
-        let stderr = child.stderr.take();
-        let reader = io::BufReader::new(stdout);
-        let mut state = HashMap::new();
-
-        for line in reader.lines() {
-            let line = line?;
-            if let Some(progress) = rip::parse_progress_line(&line, &mut state) {
-                let size = format_size(progress.total_size);
-                let time = format_time(progress.out_time_secs);
-                let mut parts = vec![
-                    format!("frame={}", progress.frame),
-                    format!("fps={:.1}", progress.fps),
-                    format!("size={}", size),
-                    format!("time={}", time),
-                    format!("bitrate={}", progress.bitrate),
-                    format!("speed={:.1}x", progress.speed),
-                ];
-
-                if let Some(est) = rip::estimate_final_size(&progress, pl.seconds) {
-                    parts.push(format!("est=~{}", format_size(est)));
-                }
-                if let Some(eta_secs) = rip::estimate_eta(&progress, pl.seconds) {
-                    parts.push(format!("eta={}", rip::format_eta(eta_secs)));
-                }
-
-                print!("\r  {:<100}", parts.join(" "));
-                io::stdout().flush()?;
-            }
         }
-
-        let status = child.wait()?;
-        println!();
-
-        if !status.success() {
-            let stderr_msg = stderr
-                .and_then(|mut s| {
-                    let mut buf = String::new();
-                    io::Read::read_to_string(&mut s, &mut buf).ok()?;
-                    Some(buf)
-                })
-                .unwrap_or_default();
-            if stderr_msg.is_empty() {
-                println!(
-                    "Error: ffmpeg exited with code {}",
-                    status.code().unwrap_or(-1)
-                );
-            } else {
-                let last_line = stderr_msg.lines().last().unwrap_or("");
-                println!("Error: ffmpeg: {}", last_line);
-            }
-            had_failure = true;
-            continue;
-        }
-
-        let final_size = std::fs::metadata(outfile)?.len();
-        println!("Done: {} ({})", filename, format_size(final_size));
-
     }
 
     if did_mount {
