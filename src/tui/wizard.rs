@@ -384,7 +384,6 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
                             }
                         }
 
-                        app.wizard.season_field = 0;
                         app.wizard.input_buffer = app
                             .wizard
                             .season_num
@@ -522,7 +521,6 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
                     }
                 }
 
-                app.wizard.season_field = 0;
                 app.wizard.input_buffer = app.wizard.season_num.map(|s| s.to_string()).unwrap_or_default();
                 app.wizard.input_focus = InputFocus::TextInput;
                 app.wizard.list_cursor = 0;
@@ -533,211 +531,6 @@ pub fn handle_show_select_input(app: &mut App, key: KeyEvent) {
             app.wizard.input_buffer = app.tmdb.search_query.clone();
             app.wizard.input_focus = InputFocus::TextInput;
             app.wizard.list_cursor = 0;
-            app.screen = Screen::TmdbSearch;
-        }
-        _ => {}
-    }
-}
-
-pub fn render_season_episode(f: &mut Frame, app: &App) {
-    let chunks = standard_layout(f.area());
-
-    let show_name = app
-        .tmdb
-        .selected_show
-        .and_then(|i| app.tmdb.search_results.get(i))
-        .map(|s| s.name.as_str())
-        .unwrap_or("Unknown");
-
-    let title = Paragraph::new(format!("Show: {}", show_name)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Step 3: Season & Starting Episode"),
-    );
-    f.render_widget(title, chunks[0]);
-
-    let content_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(1),
-        ])
-        .split(chunks[1]);
-
-    let input_active = matches!(
-        app.wizard.input_focus,
-        InputFocus::TextInput | InputFocus::InlineEdit(_)
-    );
-
-    // Season input
-    let season_active = app.wizard.season_field == 0;
-    let season_display = if season_active && input_active {
-        format!("{}|", app.wizard.input_buffer)
-    } else {
-        app.wizard.season_num.map(|s| s.to_string()).unwrap_or_default()
-    };
-    let season_style = if season_active {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-    let season_input = Paragraph::new(season_display).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Season number")
-            .border_style(season_style),
-    );
-    f.render_widget(season_input, content_chunks[0]);
-
-    // Start episode input
-    let start_active = app.wizard.season_field == 1;
-    let disc_num = app.disc.label_info.as_ref().map(|l| l.disc);
-    let guessed = guess_start_episode(disc_num, app.disc.episodes_pl.len());
-
-    let start_display = if start_active && input_active {
-        format!("{}|", app.wizard.input_buffer)
-    } else {
-        app.wizard.start_episode.unwrap_or(guessed).to_string()
-    };
-    let start_style = if start_active {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default()
-    };
-    let start_input = Paragraph::new(start_display).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!("Starting episode (guess: {})", guessed))
-            .border_style(start_style),
-    );
-    f.render_widget(start_input, content_chunks[1]);
-
-    // Episode list preview
-    if !app.tmdb.episodes.is_empty() {
-        let items: Vec<ListItem> = app
-            .tmdb
-            .episodes
-            .iter()
-            .map(|ep| {
-                let runtime = ep.runtime.unwrap_or(0);
-                ListItem::new(format!(
-                    "  E{:02} - {} ({} min)",
-                    ep.episode_number, ep.name, runtime
-                ))
-            })
-            .collect();
-
-        let list = List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
-            "Season {}: {} episodes",
-            app.wizard.season_num.unwrap_or(0),
-            app.tmdb.episodes.len()
-        )));
-        f.render_widget(list, content_chunks[2]);
-    } else if !app.status_message.is_empty() {
-        let msg = Paragraph::new(app.status_message.as_str())
-            .style(Style::default().fg(Color::Yellow))
-            .block(Block::default().borders(Borders::ALL).title("Episodes"));
-        f.render_widget(msg, content_chunks[2]);
-    } else {
-        let empty = Paragraph::new("Enter season number and press Enter to fetch episodes")
-            .block(Block::default().borders(Borders::ALL).title("Episodes"));
-        f.render_widget(empty, content_chunks[2]);
-    }
-
-    let hints = Paragraph::new(
-        "Tab: Switch field | Enter: Confirm/Fetch | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan",
-    )
-    .style(Style::default().fg(Color::DarkGray));
-    f.render_widget(hints, chunks[2]);
-}
-
-pub fn handle_season_episode_input(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char(c) => {
-            if c.is_ascii_digit() {
-                app.wizard.input_buffer.push(c);
-            }
-        }
-        KeyCode::Backspace => {
-            app.wizard.input_buffer.pop();
-        }
-        KeyCode::Tab | KeyCode::BackTab => {
-            // Save current field value before switching
-            if app.wizard.season_field == 0 {
-                if let Ok(s) = app.wizard.input_buffer.parse::<u32>() {
-                    app.wizard.season_num = Some(s);
-                }
-                // Switch to start episode field
-                app.wizard.season_field = 1;
-                let disc_num = app.disc.label_info.as_ref().map(|l| l.disc);
-                let guessed = guess_start_episode(disc_num, app.disc.episodes_pl.len());
-                app.wizard.input_buffer = app.wizard.start_episode.unwrap_or(guessed).to_string();
-            } else {
-                if let Ok(s) = app.wizard.input_buffer.parse::<u32>() {
-                    app.wizard.start_episode = Some(s);
-                }
-                // Switch to season field
-                app.wizard.season_field = 0;
-                app.wizard.input_buffer = app.wizard.season_num.map(|s| s.to_string()).unwrap_or_default();
-            }
-        }
-        KeyCode::Enter => {
-            if app.wizard.season_field == 0 {
-                // Entering season number — fetch episodes
-                let season: u32 = match app.wizard.input_buffer.parse() {
-                    Ok(s) => s,
-                    _ => return,
-                };
-                app.wizard.season_num = Some(season);
-
-                let show_id = app
-                    .tmdb
-                    .selected_show
-                    .and_then(|i| app.tmdb.search_results.get(i))
-                    .map(|s| s.id);
-
-                if let (Some(show_id), Some(ref api_key)) = (show_id, app.tmdb.api_key.clone()) {
-                    let api_key = api_key.clone();
-                    let (tx, rx) = mpsc::channel();
-                    std::thread::spawn(move || {
-                        let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
-                            show_id, season, &api_key,
-                        )));
-                    });
-                    app.pending_rx = Some(rx);
-                    app.status_message = "Fetching season...".into();
-                }
-
-                // Switch to start episode field
-                app.wizard.season_field = 1;
-                let disc_num = app.disc.label_info.as_ref().map(|l| l.disc);
-                let guessed = guess_start_episode(disc_num, app.disc.episodes_pl.len());
-                app.wizard.input_buffer = app.wizard.start_episode.unwrap_or(guessed).to_string();
-            } else {
-                // Entering start episode — confirm and proceed
-                let start_ep: u32 = match app.wizard.input_buffer.parse() {
-                    Ok(s) if s > 0 => s,
-                    _ => return,
-                };
-                app.wizard.start_episode = Some(start_ep);
-
-                app.wizard.episode_assignments =
-                    assign_episodes(&app.disc.episodes_pl, &app.tmdb.episodes, start_ep);
-
-                app.wizard.input_focus = InputFocus::List;
-                app.wizard.input_buffer.clear();
-                app.wizard.season_field = 0;
-                app.wizard.list_cursor = 0;
-                app.screen = Screen::PlaylistManager;
-            }
-        }
-        KeyCode::Esc => {
-            app.tmdb.episodes.clear();
-            app.wizard.input_buffer.clear();
-            app.wizard.season_field = 0;
-            app.wizard.list_cursor = 0;
-            app.wizard.input_focus = InputFocus::List;
             app.screen = Screen::TmdbSearch;
         }
         _ => {}
@@ -924,13 +717,11 @@ pub fn handle_episode_mapping_input(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.wizard.list_cursor = 0;
             app.wizard.input_focus = InputFocus::TextInput;
-            let disc_num = app.disc.label_info.as_ref().map(|l| l.disc);
-            let guessed = app
+            app.wizard.input_buffer = app
                 .wizard
-                .start_episode
-                .unwrap_or_else(|| guess_start_episode(disc_num, app.disc.episodes_pl.len()));
-            app.wizard.input_buffer = guessed.to_string();
-            app.wizard.season_field = 1;
+                .season_num
+                .map(|s| s.to_string())
+                .unwrap_or_default();
             app.screen = Screen::Season;
         }
         _ => {}
@@ -1123,14 +914,178 @@ pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
     }
 }
 
-// Stub: delegates to old render_season_episode (will be replaced in Task 5)
 pub fn render_season(f: &mut Frame, app: &App) {
-    render_season_episode(f, app);
+    let chunks = standard_layout(f.area());
+
+    let show_name = app
+        .tmdb
+        .selected_show
+        .and_then(|i| app.tmdb.search_results.get(i))
+        .map(|s| s.name.as_str())
+        .unwrap_or("Unknown");
+
+    let disc_label = if app.disc.label.is_empty() {
+        "(no label)"
+    } else {
+        &app.disc.label
+    };
+
+    let title = Paragraph::new(format!("Disc: {}  |  Show: {}", disc_label, show_name)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Step 2: Season"),
+    );
+    f.render_widget(title, chunks[0]);
+
+    let content_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(1),
+        ])
+        .split(chunks[1]);
+
+    // Season number input
+    let input_active = matches!(app.wizard.input_focus, InputFocus::TextInput);
+    let season_display = if input_active {
+        format!("{}|", app.wizard.input_buffer)
+    } else {
+        app.wizard.season_num.map(|s| s.to_string()).unwrap_or_default()
+    };
+    let season_style = Style::default().fg(Color::Yellow);
+    let season_input = Paragraph::new(season_display).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Season number")
+            .border_style(season_style),
+    );
+    f.render_widget(season_input, content_chunks[0]);
+
+    // Episode list preview (when fetched from TMDb)
+    if !app.tmdb.episodes.is_empty() {
+        let items: Vec<ListItem> = app
+            .tmdb
+            .episodes
+            .iter()
+            .map(|ep| {
+                let runtime = ep.runtime.unwrap_or(0);
+                ListItem::new(format!(
+                    "  E{:02} - {} ({} min)",
+                    ep.episode_number, ep.name, runtime
+                ))
+            })
+            .collect();
+
+        let list = List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
+            "Season {}: {} episodes",
+            app.wizard.season_num.unwrap_or(0),
+            app.tmdb.episodes.len()
+        )));
+        f.render_widget(list, content_chunks[1]);
+    } else if !app.status_message.is_empty() {
+        let msg = Paragraph::new(app.status_message.as_str())
+            .style(Style::default().fg(Color::Yellow))
+            .block(Block::default().borders(Borders::ALL).title("Episodes"));
+        f.render_widget(msg, content_chunks[1]);
+    } else {
+        let empty = Paragraph::new("Enter season number and press Enter to fetch episodes")
+            .block(Block::default().borders(Borders::ALL).title("Episodes"));
+        f.render_widget(empty, content_chunks[1]);
+    }
+
+    let hints = Paragraph::new("Enter: Confirm/Fetch | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan")
+        .style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
 }
 
-// Stub: delegates to old handle_season_episode_input (will be replaced in Task 5)
 pub fn handle_season_input(app: &mut App, key: KeyEvent) {
-    handle_season_episode_input(app, key);
+    match key.code {
+        KeyCode::Char(c) => {
+            if c.is_ascii_digit() {
+                app.wizard.input_buffer.push(c);
+            }
+        }
+        KeyCode::Backspace => {
+            app.wizard.input_buffer.pop();
+        }
+        KeyCode::Enter => {
+            if !app.tmdb.episodes.is_empty() {
+                // Episodes already fetched — check if season changed
+                let current_input: Option<u32> = app.wizard.input_buffer.parse().ok();
+                if current_input != app.wizard.season_num {
+                    // Season changed, re-fetch
+                    let season: u32 = match app.wizard.input_buffer.parse() {
+                        Ok(s) => s,
+                        _ => return,
+                    };
+                    app.wizard.season_num = Some(season);
+                    app.tmdb.episodes.clear();
+
+                    let show_id = app
+                        .tmdb
+                        .selected_show
+                        .and_then(|i| app.tmdb.search_results.get(i))
+                        .map(|s| s.id);
+
+                    if let (Some(show_id), Some(ref api_key)) = (show_id, app.tmdb.api_key.clone()) {
+                        let api_key = api_key.clone();
+                        let (tx, rx) = mpsc::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
+                                show_id, season, &api_key,
+                            )));
+                        });
+                        app.pending_rx = Some(rx);
+                        app.status_message = "Fetching season...".into();
+                    }
+                } else {
+                    // Episodes loaded and season unchanged — auto-assign and proceed
+                    let disc_num = app.disc.label_info.as_ref().map(|l| l.disc);
+                    let guessed = guess_start_episode(disc_num, app.disc.episodes_pl.len());
+                    let start_ep = app.wizard.start_episode.unwrap_or(guessed);
+                    app.wizard.episode_assignments =
+                        assign_episodes(&app.disc.episodes_pl, &app.tmdb.episodes, start_ep);
+                    app.wizard.input_focus = InputFocus::List;
+                    app.wizard.input_buffer.clear();
+                    app.wizard.list_cursor = 0;
+                    app.screen = Screen::PlaylistManager;
+                }
+            } else {
+                // No episodes yet — fetch them
+                let season: u32 = match app.wizard.input_buffer.parse() {
+                    Ok(s) => s,
+                    _ => return,
+                };
+                app.wizard.season_num = Some(season);
+
+                let show_id = app
+                    .tmdb
+                    .selected_show
+                    .and_then(|i| app.tmdb.search_results.get(i))
+                    .map(|s| s.id);
+
+                if let (Some(show_id), Some(ref api_key)) = (show_id, app.tmdb.api_key.clone()) {
+                    let api_key = api_key.clone();
+                    let (tx, rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
+                            show_id, season, &api_key,
+                        )));
+                    });
+                    app.pending_rx = Some(rx);
+                    app.status_message = "Fetching season...".into();
+                }
+            }
+        }
+        KeyCode::Esc => {
+            app.tmdb.episodes.clear();
+            app.wizard.input_buffer = app.tmdb.search_query.clone();
+            app.wizard.input_focus = InputFocus::TextInput;
+            app.wizard.list_cursor = 0;
+            app.screen = Screen::TmdbSearch;
+        }
+        _ => {}
+    }
 }
 
 // Stub: delegates to old render_playlist_select (will be replaced in Task 6)

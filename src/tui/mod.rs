@@ -72,8 +72,6 @@ pub struct WizardState {
     pub playlist_selected: Vec<bool>,
     pub filenames: Vec<String>,
     pub media_infos: Vec<Option<MediaInfo>>,
-    /// 0 = editing season, 1 = editing start episode
-    pub season_field: u8,
 }
 
 #[derive(Default)]
@@ -501,13 +499,6 @@ fn poll_background(app: &mut App) {
         BackgroundResult::SeasonFetch(Ok(eps)) => {
             app.tmdb.episodes = eps;
             app.status_message.clear();
-
-            if !app.tmdb.episodes.is_empty() {
-                app.wizard.season_field = 1;
-                let disc_num = app.disc.label_info.as_ref().map(|l| l.disc);
-                let guessed = crate::util::guess_start_episode(disc_num, app.disc.episodes_pl.len());
-                app.wizard.input_buffer = app.wizard.start_episode.unwrap_or(guessed).to_string();
-            }
         }
         BackgroundResult::SeasonFetch(Err(e)) => {
             app.status_message = format!("Failed to fetch season: {}", e);
