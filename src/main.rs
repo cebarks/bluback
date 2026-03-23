@@ -69,6 +69,14 @@ pub struct Args {
     /// Don't set drive to maximum read speed
     #[arg(long)]
     no_max_speed: bool,
+
+    /// Open settings panel without starting a rip
+    #[arg(long, conflicts_with_all = ["dry_run", "no_tui"])]
+    settings: bool,
+
+    /// Path to config file
+    #[arg(long)]
+    config: Option<PathBuf>,
 }
 
 impl Args {
@@ -91,6 +99,32 @@ impl Args {
 
 fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
+
+    let config_path = config::resolve_config_path(args.config.clone());
+    let config = config::load_from(&config_path);
+
+    // --settings mode: open settings panel without disc/dependency checks
+    if args.settings {
+        if !atty_stdout() {
+            anyhow::bail!("--settings requires a terminal (stdout is not a TTY)");
+        }
+        return tui::run_settings(&config, config_path);
+    }
+
+    // Apply config defaults to args
+    if args.device.is_none() {
+        if let Some(ref dev) = config.device {
+            if dev != "auto-detect" {
+                args.device = Some(PathBuf::from(dev));
+            }
+        }
+    }
+    if args.output == PathBuf::from(".") {
+        if let Some(ref dir) = config.output_dir {
+            args.output = PathBuf::from(dir);
+        }
+    }
+
     if args.device.is_none() {
         let drives = disc::detect_optical_drives();
         args.device = Some(drives[0].clone());
@@ -98,11 +132,10 @@ fn main() -> anyhow::Result<()> {
 
     disc::check_dependencies()?;
 
-    let config = config::load_config();
     let use_tui = !args.no_tui && atty_stdout();
 
     if use_tui {
-        tui::run(&args, &config, config::resolve_config_path(None))
+        tui::run(&args, &config, config_path)
     } else {
         cli::run(&args, &config)
     }

@@ -273,6 +273,94 @@ pub fn run(args: &Args, config: &crate::config::Config, config_path: std::path::
     result
 }
 
+pub fn run_settings(config: &crate::config::Config, config_path: std::path::PathBuf) -> Result<()> {
+    use clap::Parser;
+
+    enable_raw_mode()?;
+    io::stdout().execute(SetTitle("bluback — Settings"))?;
+    io::stdout().execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    let default_args = Args::parse_from(["bluback"]);
+    let mut app = App::new(default_args);
+    app.config = config.clone();
+    app.config_path = config_path;
+    let mut state = crate::types::SettingsState::from_config(config);
+    state.standalone = true;
+    app.overlay = Some(crate::types::Overlay::Settings(state));
+
+    loop {
+        terminal.draw(|f| {
+            let block = ratatui::widgets::Block::default()
+                .title("bluback")
+                .borders(ratatui::widgets::Borders::ALL);
+            f.render_widget(block, f.area());
+            if let Some(crate::types::Overlay::Settings(ref state)) = app.overlay {
+                settings::render(f, state);
+            }
+        })?;
+
+        if app.quit || app.overlay.is_none() {
+            break;
+        }
+
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    break;
+                }
+                if let Some(crate::types::Overlay::Settings(ref mut state)) = app.overlay {
+                    if state.save_message.is_some() {
+                        state.save_message = None;
+                        state.save_message_at = None;
+                    }
+                    match settings::handle_input(state, key) {
+                        settings::SettingsAction::Save => {
+                            let new_config = state.to_config();
+                            match new_config.save(&app.config_path) {
+                                Ok(()) => {
+                                    state.save_message = Some("Saved!".into());
+                                    state.save_message_at = Some(std::time::Instant::now());
+                                    state.dirty = false;
+                                }
+                                Err(e) => {
+                                    state.save_message = Some(format!("Error: {}", e));
+                                    state.save_message_at = Some(std::time::Instant::now());
+                                }
+                            }
+                        }
+                        settings::SettingsAction::SaveAndClose => {
+                            let new_config = state.to_config();
+                            let _ = new_config.save(&app.config_path);
+                            app.overlay = None;
+                        }
+                        settings::SettingsAction::Close => {
+                            app.overlay = None;
+                        }
+                        settings::SettingsAction::None => {}
+                    }
+                }
+            }
+        }
+
+        // Clear save message after 2 seconds
+        if let Some(crate::types::Overlay::Settings(ref mut state)) = app.overlay {
+            if let Some(at) = state.save_message_at {
+                if at.elapsed() > Duration::from_secs(2) {
+                    state.save_message = None;
+                    state.save_message_at = None;
+                }
+            }
+        }
+    }
+
+    disable_raw_mode()?;
+    io::stdout().execute(LeaveAlternateScreen)?;
+    io::stdout().execute(SetTitle(""))?;
+    Ok(())
+}
+
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     args: &Args,

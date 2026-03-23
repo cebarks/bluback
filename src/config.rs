@@ -60,18 +60,6 @@ pub fn load_from(path: &std::path::Path) -> Config {
     }
 }
 
-pub fn load_config() -> Config {
-    let path = config_dir().join("config.toml");
-    if path.exists() {
-        fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default()
-    } else {
-        Config::default()
-    }
-}
-
 impl Config {
     pub fn to_toml_string(&self) -> String {
         let mut out = String::new();
