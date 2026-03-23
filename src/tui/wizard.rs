@@ -180,7 +180,7 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
     );
     f.render_widget(body, chunks[1]);
 
-    let hints = Paragraph::new("q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan")
+    let hints = Paragraph::new("q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
@@ -219,7 +219,7 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
         f.render_widget(input, content_chunks[1]);
 
         let hints =
-            Paragraph::new("Enter: Save key | Esc: Skip TMDb | Ctrl+E: Eject | Ctrl+R: Rescan")
+            Paragraph::new("Enter: Save key | Esc: Skip TMDb | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")
                 .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     } else {
@@ -309,10 +309,10 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
 
         let toggle = if app.tmdb.movie_mode { "TV Show" } else { "Movie" };
         let hints_text = if app.wizard.input_focus == InputFocus::List {
-            "Up/Down: Navigate | Enter: Select | Esc: Back to search | Ctrl+R: Rescan".to_string()
+            "Up/Down: Navigate | Enter: Select | Esc: Back to search | Ctrl+R: Rescan | Ctrl+S: Settings".to_string()
         } else {
             format!(
-                "Enter: Search | Down: Results | Tab: Switch to {} | Esc: Skip TMDb | Ctrl+R: Rescan",
+                "Enter: Search | Down: Results | Tab: Switch to {} | Esc: Skip TMDb | Ctrl+R: Rescan | Ctrl+S: Settings",
                 toggle
             )
         };
@@ -573,7 +573,7 @@ pub fn render_season(f: &mut Frame, app: &App) {
         f.render_widget(empty, content_chunks[1]);
     }
 
-    let hints = Paragraph::new("Enter: Confirm/Fetch | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan")
+    let hints = Paragraph::new("Enter: Confirm/Fetch | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
@@ -873,6 +873,7 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
         parts.push("f: Show filtered");
         parts.push("Enter: Confirm");
         parts.push("Esc: Back");
+        parts.push("Ctrl+S: Settings");
         parts.join(" | ")
     };
 
@@ -1187,9 +1188,9 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     f.render_widget(table, chunks[1]);
 
     let hint_text = if app.args.dry_run {
-        "Enter: Exit (dry run) | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan"
+        "Enter: Exit (dry run) | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings"
     } else {
-        "Enter: Start Ripping | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan"
+        "Enter: Start Ripping | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings"
     };
     let hints = Paragraph::new(hint_text).style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);

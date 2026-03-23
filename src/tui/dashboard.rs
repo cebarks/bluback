@@ -138,7 +138,7 @@ pub fn render(f: &mut Frame, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )
     } else {
-        Paragraph::new("[q] Abort  [Ctrl+R] Rescan").style(Style::default().fg(Color::DarkGray))
+        Paragraph::new("[q] Abort  [Ctrl+R] Rescan  [Ctrl+S] Settings").style(Style::default().fg(Color::DarkGray))
     };
     f.render_widget(hint, chunks[2]);
 }
@@ -228,7 +228,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false });
     f.render_widget(body, chunks[1]);
 
-    let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [any other key] Exit")
+    let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [Ctrl+S] Settings  [any other key] Exit")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 
