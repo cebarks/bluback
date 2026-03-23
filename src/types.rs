@@ -203,6 +203,7 @@ pub enum SettingItem {
 }
 
 impl SettingsState {
+    #[allow(dead_code)] // Used extensively in tests
     pub fn from_config(config: &crate::config::Config) -> Self {
         Self::from_config_with_drives(config, &[])
     }
@@ -357,7 +358,8 @@ impl SettingsState {
             self.dirty = true;
             let names: Vec<&str> = overrides.iter().map(|(env, _, _)| env.as_str()).collect();
             self.save_message = Some(format!("Imported from env: {}", names.join(", ")));
-            self.save_message_at = Some(std::time::Instant::now());
+            // Don't set save_message_at — message persists until next user input
+            // (the 2-second auto-clear only triggers when save_message_at is Some)
         }
         self.env_overrides = overrides;
     }

@@ -291,7 +291,11 @@ pub fn run_settings(config: &crate::config::Config, config_path: std::path::Path
     let mut app = App::new(default_args);
     app.config = config.clone();
     app.config_path = config_path;
-    let mut state = crate::types::SettingsState::from_config(config);
+    let drives: Vec<String> = crate::disc::detect_optical_drives()
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    let mut state = crate::types::SettingsState::from_config_with_drives(config, &drives);
     state.standalone = true;
     state.apply_env_overrides();
     app.overlay = Some(crate::types::Overlay::Settings(state));

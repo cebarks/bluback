@@ -51,11 +51,11 @@ cargo clippy                   # Lint
 4. `chapters.rs` extracts chapter marks from MPLS playlist files on the mounted disc and applies them to ripped MKVs via `mkvpropedit`
 5. `rip.rs` spawns ffmpeg processes and parses progress output via reader thread + mpsc channel
 6. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
-7. `config.rs` loads TOML config from `~/.config/bluback/config.toml` and resolves filename format priority
+7. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority
 
 ### Two UI Modes
 
-- **TUI mode** (default when stdout is TTY): ratatui wizard (5 screens in TV mode, 4 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`. App struct decomposed into `DiscState`, `TmdbState`, `WizardState`, `RipState` sub-structs.
+- **TUI mode** (default when stdout is TTY): ratatui wizard (5 screens in TV mode, 4 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`. App struct decomposed into `DiscState`, `TmdbState`, `WizardState`, `RipState` sub-structs. Settings overlay (`tui/settings.rs`) accessible via `Ctrl+S` from any screen, rendered on top of the current screen via `App.overlay: Option<Overlay>`.
 - **CLI mode** (`--no-tui` or non-TTY): plain-text interactive prompts in `cli.rs`.
 
 Both modes use the same underlying disc/rip/tmdb/util functions.
@@ -81,6 +81,10 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Specials support** — Playlists can be marked as specials (`s` hotkey in Playlist Manager), which assigns them season 0 episode numbers and uses a separate `special_format` naming template. `r` resets a single row's assignment, `R` resets all.
 - **All playlists visible** — The Playlist Manager shows all disc playlists, not just episode-length ones. Filtered playlists (below `min_duration`) are hidden by default but can be toggled with `f`. Controlled by `show_filtered` config option.
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
+- **Settings overlay** — `App.overlay: Option<Overlay>` renders on top of the current screen. When active, all global key handlers except `Ctrl+C` are blocked; input routes to the overlay handler. `SettingsState` holds typed `SettingItem` variants (Toggle, Choice, Text, Number, Separator, Action). Choice variant has optional `custom_value` for the "Custom..." option (used by device dropdown). `Ctrl+S` in the overlay saves to `config.toml` with commented-out defaults and triggers workflow reset (rescan) unless mid-rip. Toggle/Choice changes apply to the session immediately without saving.
+- **Config path resolution** — Priority: `--config` CLI flag → `BLUBACK_CONFIG` env var → `~/.config/bluback/config.toml`. The resolved path is stored as `config_path: PathBuf` on `App`.
+- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `TMDB_API_KEY`.
+- **`--settings` standalone mode** — Opens settings panel without disc detection or dependency checks. Dirty close prompts to save. Exits after panel close.
 
 ## Testing
 
@@ -90,8 +94,9 @@ Unit tests live in `#[cfg(test)] mod tests` blocks within each module. All tests
 - `disc.rs` — volume label parsing, playlist filtering, media info JSON parsing
 - `rip.rs` — ffmpeg map arg building, progress line parsing, size/ETA estimation
 - `chapters.rs` — MPLS chapter extraction, OGM formatting
-- `config.rs` — TOML parsing, format resolution priority chain
-- `types.rs` — MediaInfo field mapping, ChapterMark struct
+- `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output
+- `types.rs` — MediaInfo field mapping, ChapterMark struct, SettingsState construction/roundtrip, cursor navigation, env var overrides
+- `tui/settings.rs` — truncate/mask helpers, input handling (toggle, choice, text edit, number validation, cursor movement, confirm close prompt)
 
 ## CLI Flags
 
@@ -110,6 +115,8 @@ bluback [OPTIONS]
       --eject                  Eject disc after successful rip
       --no-eject               Don't eject disc after rip (overrides config)
       --no-max-speed           Don't set drive to maximum read speed
+      --settings               Open settings panel (no disc/ffmpeg required)
+      --config <PATH>          Path to config file (also: BLUBACK_CONFIG env var)
 ```
 
 `--format` and `--format-preset` are mutually exclusive (clap argument group).
@@ -117,6 +124,7 @@ bluback [OPTIONS]
 ## TUI Keybindings
 
 **Global (all screens):**
+- `Ctrl+S` — Open settings panel (overlay; all other globals blocked while open)
 - `Ctrl+R` — Rescan disc and restart wizard (confirms first during ripping)
 - `Ctrl+E` — Eject disc
 - `Ctrl+C` — Quit immediately
@@ -150,6 +158,13 @@ bluback [OPTIONS]
 - `Enter` — Rescan disc and restart wizard
 - Auto-detects new disc with popup prompt
 - Any other key — Exit
+
+**Settings panel (overlay):**
+- `Up/Down` — Navigate settings (skips separators)
+- `Enter/Space` — Toggle (bool), cycle (choice), enter edit (text/number), save (action)
+- `Left/Right` — Cycle choice backward/forward
+- `Esc` — Cancel edit (if editing), otherwise close panel
+- `Ctrl+S` — Save to config (confirms edit first if editing)
 
 ## Dependencies
 
