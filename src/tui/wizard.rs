@@ -134,10 +134,19 @@ fn standard_layout(area: Rect) -> std::rc::Rc<[Rect]> {
         .split(area)
 }
 
+fn disc_label_text(app: &App) -> String {
+    if app.disc.label.is_empty() {
+        String::new()
+    } else {
+        format!("Disc: {}", app.disc.label)
+    }
+}
+
 pub fn render_scanning(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
-    let title = Paragraph::new("bluback").block(
+    let header_text = disc_label_text(app);
+    let title = Paragraph::new(header_text).block(
         Block::default()
             .borders(Borders::ALL)
             .title("Blu-ray Backup"),
@@ -166,16 +175,14 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
 
     let mode_label = if app.tmdb.movie_mode { "Movie" } else { "TV Show" };
     let step_title = format!("Step 1: TMDb Search ({})", mode_label);
-    let title = Paragraph::new(format!(
-        "Disc: {}  |  {} playlists",
-        if app.disc.label.is_empty() {
-            "(no label)"
-        } else {
-            &app.disc.label
-        },
-        app.disc.episodes_pl.len(),
-    ))
-    .block(Block::default().borders(Borders::ALL).title(step_title));
+    let disc_text = disc_label_text(app);
+    let header_text = if disc_text.is_empty() {
+        format!("{} playlists", app.disc.episodes_pl.len())
+    } else {
+        format!("{}  |  {} playlists", disc_text, app.disc.episodes_pl.len())
+    };
+    let title = Paragraph::new(header_text)
+        .block(Block::default().borders(Borders::ALL).title(step_title));
     f.render_widget(title, chunks[0]);
 
     if app.tmdb.api_key.is_none() {
@@ -964,13 +971,14 @@ pub fn render_season(f: &mut Frame, app: &App) {
         .map(|s| s.name.as_str())
         .unwrap_or("Unknown");
 
-    let disc_label = if app.disc.label.is_empty() {
-        "(no label)"
+    let disc_text = disc_label_text(app);
+    let header_text = if disc_text.is_empty() {
+        format!("Show: {}", show_name)
     } else {
-        &app.disc.label
+        format!("{}  |  Show: {}", disc_text, show_name)
     };
 
-    let title = Paragraph::new(format!("Disc: {}  |  Show: {}", disc_label, show_name)).block(
+    let title = Paragraph::new(header_text).block(
         Block::default()
             .borders(Borders::ALL)
             .title("Step 2: Season"),
@@ -1142,11 +1150,7 @@ fn visible_playlists(app: &App) -> Vec<(usize, &crate::types::Playlist)> {
 pub fn render_playlist_manager(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
-    let disc_label = if app.disc.label.is_empty() {
-        "(no label)"
-    } else {
-        &app.disc.label
-    };
+    let disc_text = disc_label_text(app);
     let show_name = if app.tmdb.show_name.is_empty() {
         app.disc
             .label_info
@@ -1160,16 +1164,27 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
     let visible = visible_playlists(app);
     let hidden_count = app.disc.playlists.len() - visible.len();
 
-    let header_text = if hidden_count > 0 {
-        format!(
-            "Disc: {}  |  Show: {}  |  {} selected, {} hidden",
-            disc_label, show_name, selected_count, hidden_count
-        )
+    let header_text = if disc_text.is_empty() {
+        if hidden_count > 0 {
+            format!(
+                "Show: {}  |  {} selected, {} hidden",
+                show_name, selected_count, hidden_count
+            )
+        } else {
+            format!("Show: {}  |  {} selected", show_name, selected_count)
+        }
     } else {
-        format!(
-            "Disc: {}  |  Show: {}  |  {} selected",
-            disc_label, show_name, selected_count
-        )
+        if hidden_count > 0 {
+            format!(
+                "{}  |  Show: {}  |  {} selected, {} hidden",
+                disc_text, show_name, selected_count, hidden_count
+            )
+        } else {
+            format!(
+                "{}  |  Show: {}  |  {} selected",
+                disc_text, show_name, selected_count
+            )
+        }
     };
 
     let title = Paragraph::new(header_text)
@@ -1523,12 +1538,23 @@ pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
 pub fn render_confirm(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
-    let title = Paragraph::new(format!(
-        "Ready to rip {} playlist(s) to {}",
-        app.wizard.filenames.len(),
-        app.args.output.display(),
-    ))
-    .block(
+    let disc_text = disc_label_text(app);
+    let header_text = if disc_text.is_empty() {
+        format!(
+            "Ready to rip {} playlist(s) to {}",
+            app.wizard.filenames.len(),
+            app.args.output.display(),
+        )
+    } else {
+        format!(
+            "{}  |  Ready to rip {} playlist(s) to {}",
+            disc_text,
+            app.wizard.filenames.len(),
+            app.args.output.display(),
+        )
+    };
+
+    let title = Paragraph::new(header_text).block(
         Block::default()
             .borders(Borders::ALL)
             .title(if app.tmdb.movie_mode {
