@@ -183,7 +183,7 @@ pub enum SettingsAction {
 
 pub fn handle_input(state: &mut SettingsState, key: KeyEvent) -> SettingsAction {
     // Handle confirm_close prompt (--settings standalone mode)
-    if let Some(_) = state.confirm_close {
+    if state.confirm_close.is_some() {
         return match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => { state.confirm_close = None; SettingsAction::SaveAndClose }
             KeyCode::Char('n') | KeyCode::Char('N') => { state.confirm_close = None; SettingsAction::Close }

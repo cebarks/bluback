@@ -314,14 +314,11 @@ impl SettingsState {
                     "min_duration" if *value != DEFAULT_MIN_DURATION => config.min_duration = Some(*value),
                     _ => {}
                 },
-                SettingItem::Choice { key, options, selected, .. } => match key.as_str() {
-                    "preset" => {
-                        let val = &options[*selected];
-                        if val != "(none)" {
-                            config.preset = Some(val.clone());
-                        }
+                SettingItem::Choice { key, options, selected, .. } => if key.as_str() == "preset" {
+                    let val = &options[*selected];
+                    if val != "(none)" {
+                        config.preset = Some(val.clone());
                     }
-                    _ => {}
                 },
                 _ => {}
             }

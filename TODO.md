@@ -2,11 +2,7 @@
 -
 
 # Features
-- settings overhaul
-    - config panel
-    - more settings exposed
 - add pause/resume support during ripping (pause ffmpeg via SIGSTOP/SIGCONT)
-- update terminal title with basic status
 - resume existing partial rip (confirmation on resume or overwrite)
 
 # Investigate Further

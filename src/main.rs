@@ -119,7 +119,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
-    if args.output == PathBuf::from(".") {
+    if args.output.as_os_str() == "." {
         if let Some(ref dir) = config.output_dir {
             args.output = PathBuf::from(dir);
         }
