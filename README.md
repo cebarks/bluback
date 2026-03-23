@@ -103,12 +103,19 @@ preset = "plex"
 # Or custom format templates (overrides preset)
 tv_format = "S{season}E{episode}_{title}.mkv"
 movie_format = "{title}_({year}).mkv"
+special_format = "{show} S00E{episode} {title}.mkv"
 
 # Auto-eject disc after rip
 eject = true
 
 # Set drive to max read speed
 max_speed = true
+
+# Minimum playlist duration (seconds) for episode detection (default: 900)
+min_duration = 900
+
+# Show playlists below min_duration by default in Playlist Manager (default: false)
+show_filtered = false
 ```
 
 ### Filename Templates
@@ -123,12 +130,15 @@ Bracket groups `[...]` auto-collapse when their contents are empty (useful for o
 
 | Key | Action |
 |---|---|
-| `Enter` | Confirm / submit |
-| `Esc` | Go back / skip TMDb |
-| `Up/Down` | Navigate lists |
+| `Enter` | Confirm / submit / search / select |
+| `Esc` | Go back / skip TMDb / cancel edit |
+| `Up/Down` | Navigate lists / scroll episodes |
 | `Space` | Toggle playlist selection |
-| `Tab` | Switch fields / toggle movie-TV mode |
-| `e` | Edit episode assignment (mapping screen) |
+| `Tab` | Toggle movie/TV mode (TMDb search) |
+| `e` | Edit episode assignment inline |
+| `s` | Toggle special (season 0) marking |
+| `r` / `R` | Reset current / all episode assignments |
+| `f` | Show/hide filtered (short) playlists |
 | `Ctrl+R` | Rescan disc and restart wizard |
 | `Ctrl+E` | Eject disc |
 | `Ctrl+C` | Quit immediately |

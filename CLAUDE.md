@@ -55,10 +55,17 @@ cargo clippy                   # Lint
 
 ### Two UI Modes
 
-- **TUI mode** (default when stdout is TTY): ratatui wizard (6 screens in TV mode, 5 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`.
+- **TUI mode** (default when stdout is TTY): ratatui wizard (5 screens in TV mode, 4 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`. App struct decomposed into `DiscState`, `TmdbState`, `WizardState`, `RipState` sub-structs.
 - **CLI mode** (`--no-tui` or non-TTY): plain-text interactive prompts in `cli.rs`.
 
 Both modes use the same underlying disc/rip/tmdb/util functions.
+
+### TUI Screen Flow
+
+- **TV mode**: Scanning → TMDb Search (inline results) → Season → Playlist Manager → Confirm → Ripping → Done
+- **Movie mode**: Scanning → TMDb Search (inline results) → Playlist Manager → Confirm → Ripping → Done
+
+The `InputFocus` enum (`TextInput`, `List`, `InlineEdit(usize)`) tracks which UI element has focus, replacing the old `input_active: bool` and `mapping_edit_row: Option<usize>` pattern.
 
 ### Filename Format Resolution
 
@@ -70,7 +77,9 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Blocking I/O** — no async runtime. ffmpeg progress read via reader thread + mpsc channel.
 - **Chapter preservation** — After ripping, if `mkvpropedit` (mkvtoolnix) is available, bluback mounts the disc via `udisksctl`, reads MPLS playlist files from `BDMV/PLAYLIST/` to extract chapter marks, converts them to OGM format, and embeds them into the ripped MKVs. The disc is unmounted afterward if bluback mounted it. Chapter counts are displayed on the playlist selection screen in TUI mode.
 - **Audio selection**: Prefers 5.1/7.1 surround, includes stereo as secondary track. All subtitle streams included.
-- **Episode assignment** — Default: sequential (user specifies starting episode, playlists assigned in order, volume label parsing guesses the start from disc number). A manual mapping mode allows overriding individual playlist assignments, including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
+- **Episode assignment** — Default: sequential with multi-episode detection (uses median playlist duration with 1.5x threshold to detect double-episode playlists). Volume label parsing guesses the starting episode from disc number. The Playlist Manager screen allows overriding individual playlist assignments inline (`e` hotkey), including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
+- **Specials support** — Playlists can be marked as specials (`s` hotkey in Playlist Manager), which assigns them season 0 episode numbers and uses a separate `special_format` naming template. `r` resets a single row's assignment, `R` resets all.
+- **All playlists visible** — The Playlist Manager shows all disc playlists, not just episode-length ones. Filtered playlists (below `min_duration`) are hidden by default but can be toggled with `f`. Controlled by `show_filtered` config option.
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
 
 ## Testing
@@ -109,27 +118,37 @@ bluback [OPTIONS]
 
 **Global (all screens):**
 - `Ctrl+R` — Rescan disc and restart wizard (confirms first during ripping)
+- `Ctrl+E` — Eject disc
 - `Ctrl+C` — Quit immediately
 - `q` — Quit (except during text input or ripping)
 
-**Wizard screens:**
-- `Enter` — Confirm / submit
-- `Esc` — Go back one step (or skip TMDb on search screen)
-- `Up/Down` — Navigate lists
-- `Space` — Toggle playlist selection
-- `Tab` — Switch between fields or toggle movie/TV mode
+**TMDb Search screen:**
+- `Enter` — Search (in input) / Select (in results)
+- `Up/Down` — Navigate between input and results
+- `Tab` — Toggle Movie/TV mode
+- `Esc` — Skip TMDb
 
-**Episode Mapping screen (TV mode only):**
-- `e` — Edit highlighted playlist's episode assignment (inline input)
-- `Enter` — Accept mappings / confirm edit
-- `Esc` — Go back to season/episode / cancel edit
-- Input format: `3` (single), `3-4` (range), `3,5` (non-consecutive)
+**Season screen (TV mode):**
+- `Enter` — Fetch episodes / Confirm and proceed
+- `Up/Down` — Scroll episode list
+- `Esc` — Go back to TMDb Search
+
+**Playlist Manager:**
+- `Space` — Toggle playlist selection
+- `e` — Edit episode assignment inline (format: `3`, `3-4`, or `3,5`)
+- `s` — Toggle special (season 0) marking (TV mode only)
+- `r` — Reset current row's assignment
+- `R` — Reset all episode assignments
+- `f` — Show/hide filtered (short) playlists
+- `Enter` — Confirm and proceed
+- `Esc` — Go back
 
 **Ripping dashboard:**
 - `q` — Abort (with confirmation)
 
 **Done screen:**
 - `Enter` — Rescan disc and restart wizard
+- Auto-detects new disc with popup prompt
 - Any other key — Exit
 
 ## Dependencies
