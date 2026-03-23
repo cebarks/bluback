@@ -150,6 +150,214 @@ pub enum BackgroundResult {
     MediaProbe(Vec<Option<MediaInfo>>),
 }
 
+pub enum Overlay {
+    Settings(SettingsState),
+}
+
+pub struct SettingsState {
+    pub cursor: usize,
+    pub items: Vec<SettingItem>,
+    pub editing: Option<usize>,
+    pub input_buffer: String,
+    pub cursor_pos: usize,
+    pub dirty: bool,
+    pub save_message: Option<String>,
+    pub save_message_at: Option<std::time::Instant>,
+    pub confirm_close: Option<bool>,
+    pub scroll_offset: usize,
+    pub standalone: bool,
+}
+
+pub enum SettingItem {
+    Toggle {
+        label: String,
+        key: String,
+        value: bool,
+    },
+    Choice {
+        label: String,
+        key: String,
+        options: Vec<String>,
+        selected: usize,
+    },
+    Text {
+        label: String,
+        key: String,
+        value: String,
+    },
+    Number {
+        label: String,
+        key: String,
+        value: u32,
+    },
+    Separator {
+        label: Option<String>,
+    },
+    Action {
+        label: String,
+    },
+}
+
+impl SettingsState {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        use crate::config::*;
+        let items = vec![
+            SettingItem::Separator { label: Some("General".into()) },
+            SettingItem::Text {
+                label: "Output Directory".into(),
+                key: "output_dir".into(),
+                value: config.output_dir.clone().unwrap_or_else(|| DEFAULT_OUTPUT_DIR.into()),
+            },
+            SettingItem::Text {
+                label: "Device".into(),
+                key: "device".into(),
+                value: config.device.clone().unwrap_or_else(|| DEFAULT_DEVICE.into()),
+            },
+            SettingItem::Toggle {
+                label: "Eject After Rip".into(),
+                key: "eject".into(),
+                value: config.eject.unwrap_or(false),
+            },
+            SettingItem::Toggle {
+                label: "Max Read Speed".into(),
+                key: "max_speed".into(),
+                value: config.max_speed.unwrap_or(true),
+            },
+            SettingItem::Number {
+                label: "Min Duration (secs)".into(),
+                key: "min_duration".into(),
+                value: config.min_duration.unwrap_or(DEFAULT_MIN_DURATION),
+            },
+            SettingItem::Separator { label: Some("Naming".into()) },
+            SettingItem::Choice {
+                label: "Preset".into(),
+                key: "preset".into(),
+                options: vec!["(none)".into(), "default".into(), "plex".into(), "jellyfin".into()],
+                selected: match config.preset.as_deref() {
+                    Some("default") => 1,
+                    Some("plex") => 2,
+                    Some("jellyfin") => 3,
+                    _ => 0,
+                },
+            },
+            SettingItem::Text {
+                label: "TV Format".into(),
+                key: "tv_format".into(),
+                value: config.tv_format.clone().unwrap_or_else(|| DEFAULT_TV_FORMAT.into()),
+            },
+            SettingItem::Text {
+                label: "Movie Format".into(),
+                key: "movie_format".into(),
+                value: config.movie_format.clone().unwrap_or_else(|| DEFAULT_MOVIE_FORMAT.into()),
+            },
+            SettingItem::Text {
+                label: "Special Format".into(),
+                key: "special_format".into(),
+                value: config.special_format.clone().unwrap_or_else(|| DEFAULT_SPECIAL_FORMAT.into()),
+            },
+            SettingItem::Toggle {
+                label: "Show Filtered".into(),
+                key: "show_filtered".into(),
+                value: config.show_filtered.unwrap_or(false),
+            },
+            SettingItem::Separator { label: Some("TMDb".into()) },
+            SettingItem::Text {
+                label: "API Key".into(),
+                key: "tmdb_api_key".into(),
+                value: config.tmdb_api_key.clone().unwrap_or_default(),
+            },
+            SettingItem::Separator { label: None },
+            SettingItem::Action {
+                label: "Save to Config (Ctrl+S)".into(),
+            },
+        ];
+
+        let cursor = items.iter().position(|i| !matches!(i, SettingItem::Separator { .. })).unwrap_or(0);
+
+        SettingsState {
+            cursor,
+            items,
+            editing: None,
+            input_buffer: String::new(),
+            cursor_pos: 0,
+            dirty: false,
+            save_message: None,
+            save_message_at: None,
+            confirm_close: None,
+            scroll_offset: 0,
+            standalone: false,
+        }
+    }
+
+    pub fn to_config(&self) -> crate::config::Config {
+        use crate::config::*;
+        let mut config = crate::config::Config::default();
+
+        for item in &self.items {
+            match item {
+                SettingItem::Text { key, value, .. } => match key.as_str() {
+                    "output_dir" if value != DEFAULT_OUTPUT_DIR => config.output_dir = Some(value.clone()),
+                    "device" if value != DEFAULT_DEVICE => config.device = Some(value.clone()),
+                    "tv_format" if value != DEFAULT_TV_FORMAT => config.tv_format = Some(value.clone()),
+                    "movie_format" if value != DEFAULT_MOVIE_FORMAT => config.movie_format = Some(value.clone()),
+                    "special_format" if value != DEFAULT_SPECIAL_FORMAT => config.special_format = Some(value.clone()),
+                    "tmdb_api_key" if !value.is_empty() => config.tmdb_api_key = Some(value.clone()),
+                    _ => {}
+                },
+                SettingItem::Toggle { key, value, .. } => match key.as_str() {
+                    "eject" if *value => config.eject = Some(true),
+                    "max_speed" if !*value => config.max_speed = Some(false),
+                    "show_filtered" if *value => config.show_filtered = Some(true),
+                    _ => {}
+                },
+                SettingItem::Number { key, value, .. } => match key.as_str() {
+                    "min_duration" if *value != DEFAULT_MIN_DURATION => config.min_duration = Some(*value),
+                    _ => {}
+                },
+                SettingItem::Choice { key, options, selected, .. } => match key.as_str() {
+                    "preset" => {
+                        let val = &options[*selected];
+                        if val != "(none)" {
+                            config.preset = Some(val.clone());
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+
+        config
+    }
+
+    pub fn is_separator(&self, idx: usize) -> bool {
+        matches!(self.items.get(idx), Some(SettingItem::Separator { .. }))
+    }
+
+    pub fn move_cursor_down(&mut self) {
+        let mut next = self.cursor + 1;
+        while next < self.items.len() && self.is_separator(next) {
+            next += 1;
+        }
+        if next < self.items.len() {
+            self.cursor = next;
+        }
+    }
+
+    pub fn move_cursor_up(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let mut prev = self.cursor - 1;
+        while prev > 0 && self.is_separator(prev) {
+            prev -= 1;
+        }
+        if !self.is_separator(prev) {
+            self.cursor = prev;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +401,45 @@ mod tests {
         assert_eq!(vars["resolution"], "");
         assert_eq!(vars["codec"], "");
         assert_eq!(vars["hdr"], "");
+    }
+
+    #[test]
+    fn test_settings_state_from_config_item_count() {
+        let config = crate::config::Config::default();
+        let state = SettingsState::from_config(&config);
+        // 4 separators + 11 settings + 1 action = 16 items
+        let non_separator_count = state.items.iter().filter(|i| !matches!(i, SettingItem::Separator { .. })).count();
+        assert_eq!(non_separator_count, 12); // 11 settings + 1 action
+    }
+
+    #[test]
+    fn test_settings_state_from_config_values() {
+        let config = crate::config::Config {
+            eject: Some(true),
+            min_duration: Some(600),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+        let eject = state.items.iter().find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "eject"));
+        assert!(matches!(eject, Some(SettingItem::Toggle { value: true, .. })));
+        let min_dur = state.items.iter().find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"));
+        assert!(matches!(min_dur, Some(SettingItem::Number { value: 600, .. })));
+    }
+
+    #[test]
+    fn test_settings_state_to_config_roundtrip() {
+        let config = crate::config::Config {
+            eject: Some(true),
+            preset: Some("plex".into()),
+            min_duration: Some(600),
+            output_dir: Some("/tmp/rips".into()),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+        let restored = state.to_config();
+        assert_eq!(restored.eject, Some(true));
+        assert_eq!(restored.preset.as_deref(), Some("plex"));
+        assert_eq!(restored.min_duration, Some(600));
+        assert_eq!(restored.output_dir.as_deref(), Some("/tmp/rips"));
     }
 }
