@@ -3,7 +3,7 @@ use regex::Regex;
 use std::process::Command;
 use std::sync::LazyLock;
 
-use crate::types::{LabelInfo, MediaInfo, Playlist, StreamInfo};
+use crate::types::{AudioStream, LabelInfo, MediaInfo, Playlist, StreamInfo};
 use crate::util::duration_to_seconds;
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
@@ -248,6 +248,55 @@ pub fn filter_episodes(playlists: &[Playlist], min_duration: u32) -> Vec<&Playli
         .collect()
 }
 
+/// Parse an ffprobe audio stream line into an AudioStream struct.
+/// Example line: `Stream #0:1(eng): Audio: truehd, 48000 Hz, 7.1, s32 (24 bit)`
+fn parse_audio_stream_line(index: usize, line: &str) -> AudioStream {
+    // Extract language from parenthesized tag after stream index, e.g. "#0:1(eng)"
+    let language = line
+        .find("#0:")
+        .and_then(|pos| {
+            let after = &line[pos..];
+            let open = after.find('(')?;
+            let close = after[open..].find(')')?;
+            let lang = &after[open + 1..open + close];
+            if lang.len() == 3 && lang.chars().all(|c| c.is_ascii_lowercase()) {
+                Some(lang.to_string())
+            } else {
+                None
+            }
+        });
+
+    // Extract codec name — the word after "Audio: "
+    let codec = line
+        .split("Audio: ")
+        .nth(1)
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    // Detect channel layout from known patterns in the line
+    let (channels, channel_layout) = if line.contains("7.1") {
+        (8, "7.1".to_string())
+    } else if line.contains("5.1") {
+        (6, "5.1".to_string())
+    } else if line.contains("stereo") {
+        (2, "stereo".to_string())
+    } else if line.contains("mono") {
+        (1, "mono".to_string())
+    } else {
+        (0, String::new())
+    };
+
+    AudioStream {
+        index,
+        codec,
+        channels,
+        channel_layout,
+        language,
+        profile: None,
+    }
+}
+
 pub fn probe_streams(device: &str, playlist_num: &str) -> Option<StreamInfo> {
     let output = Command::new("ffprobe")
         .args([
@@ -267,18 +316,18 @@ pub fn probe_streams(device: &str, playlist_num: &str) -> Option<StreamInfo> {
         + &String::from_utf8_lossy(&output.stderr);
 
     let mut audio_streams = Vec::new();
-    let mut sub_count = 0u32;
+    let mut subtitle_count = 0u32;
     for line in text.lines() {
         if line.contains("Stream") && line.contains("Audio") {
-            audio_streams.push(line.to_string());
+            audio_streams.push(parse_audio_stream_line(audio_streams.len(), line));
         }
         if line.contains("Stream") && line.contains("Subtitle") {
-            sub_count += 1;
+            subtitle_count += 1;
         }
     }
     Some(StreamInfo {
         audio_streams,
-        sub_count,
+        subtitle_count,
     })
 }
 

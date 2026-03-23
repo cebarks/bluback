@@ -1,39 +1,28 @@
-use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::LazyLock;
 
 use crate::types::{RipProgress, StreamInfo};
 use crate::util::duration_to_seconds;
 
-static SURROUND_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"5\.1|7\.1|surround").unwrap());
-
 pub fn build_map_args(streams: &StreamInfo) -> Vec<String> {
     let mut args = vec!["-map".into(), "0:v:0".into()];
 
-    let mut surround_idx: Option<usize> = None;
-    let mut stereo_idx: Option<usize> = None;
+    let surround_idx = streams.audio_streams.iter().position(|s| s.is_surround());
+    let stereo_idx = streams.audio_streams.iter().position(|s| s.channels == 2);
 
-    for (i, line) in streams.audio_streams.iter().enumerate() {
-        if SURROUND_RE.is_match(line) && surround_idx.is_none() {
-            surround_idx = Some(i);
-        }
-        if line.contains("stereo") && stereo_idx.is_none() {
-            stereo_idx = Some(i);
-        }
-    }
-
-    if let Some(si) = surround_idx {
-        args.extend(["-map".into(), format!("0:a:{}", si)]);
-        if let Some(sti) = stereo_idx {
-            args.extend(["-map".into(), format!("0:a:{}", sti)]);
+    if let Some(idx) = surround_idx {
+        args.extend(["-map".into(), format!("0:a:{}", idx)]);
+        if let Some(si) = stereo_idx {
+            if si != idx {
+                args.extend(["-map".into(), format!("0:a:{}", si)]);
+            }
         }
     } else if !streams.audio_streams.is_empty() {
         args.extend(["-map".into(), "0:a:0".into()]);
     }
 
-    if streams.sub_count > 0 {
+    if streams.subtitle_count > 0 {
         args.extend(["-map".into(), "0:s?".into()]);
     }
 
@@ -151,25 +140,48 @@ mod tests {
 
     #[test]
     fn test_build_map_args_surround_and_stereo() {
+        use crate::types::AudioStream;
         let streams = StreamInfo {
             audio_streams: vec![
-                "Stream #0:1: Audio: pcm, 48000 Hz, 5.1, s16".into(),
-                "Stream #0:2: Audio: pcm, 48000 Hz, stereo, s16".into(),
+                AudioStream {
+                    index: 0,
+                    codec: "truehd".into(),
+                    channels: 8,
+                    channel_layout: "7.1".into(),
+                    language: Some("eng".into()),
+                    profile: None,
+                },
+                AudioStream {
+                    index: 1,
+                    codec: "aac".into(),
+                    channels: 2,
+                    channel_layout: "stereo".into(),
+                    language: Some("eng".into()),
+                    profile: None,
+                },
             ],
-            sub_count: 2,
+            subtitle_count: 1,
         };
         let args = build_map_args(&streams);
         assert_eq!(
             args,
-            vec!["-map", "0:v:0", "-map", "0:a:0", "-map", "0:a:1", "-map", "0:s?",]
+            vec!["-map", "0:v:0", "-map", "0:a:0", "-map", "0:a:1", "-map", "0:s?"]
         );
     }
 
     #[test]
     fn test_build_map_args_no_surround() {
+        use crate::types::AudioStream;
         let streams = StreamInfo {
-            audio_streams: vec!["Stream #0:1: Audio: pcm, 48000 Hz, stereo, s16".into()],
-            sub_count: 0,
+            audio_streams: vec![AudioStream {
+                index: 0,
+                codec: "aac".into(),
+                channels: 2,
+                channel_layout: "stereo".into(),
+                language: None,
+                profile: None,
+            }],
+            subtitle_count: 0,
         };
         let args = build_map_args(&streams);
         assert_eq!(args, vec!["-map", "0:v:0", "-map", "0:a:0"]);
@@ -179,7 +191,7 @@ mod tests {
     fn test_build_map_args_no_audio() {
         let streams = StreamInfo {
             audio_streams: vec![],
-            sub_count: 1,
+            subtitle_count: 2,
         };
         let args = build_map_args(&streams);
         assert_eq!(args, vec!["-map", "0:v:0", "-map", "0:s?"]);

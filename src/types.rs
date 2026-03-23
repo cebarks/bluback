@@ -36,9 +36,31 @@ pub struct LabelInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct AudioStream {
+    pub index: usize,
+    pub codec: String,
+    pub channels: u16,
+    pub channel_layout: String,
+    pub language: Option<String>,
+    pub profile: Option<String>,
+}
+
+impl AudioStream {
+    pub fn is_surround(&self) -> bool {
+        self.channels >= 6
+    }
+
+    pub fn display_line(&self) -> String {
+        let lang = self.language.as_deref().unwrap_or("und");
+        let codec_name = self.profile.as_deref().unwrap_or(&self.codec);
+        format!("{} {} ({})", codec_name, self.channel_layout, lang)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct StreamInfo {
-    pub audio_streams: Vec<String>,
-    pub sub_count: u32,
+    pub audio_streams: Vec<AudioStream>,
+    pub subtitle_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -522,6 +544,29 @@ impl SettingsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_audio_stream_is_surround() {
+        let stream = AudioStream {
+            index: 0,
+            codec: "truehd".into(),
+            channels: 8,
+            channel_layout: "7.1".into(),
+            language: Some("eng".into()),
+            profile: None,
+        };
+        assert!(stream.is_surround());
+
+        let stereo = AudioStream {
+            index: 1,
+            codec: "aac".into(),
+            channels: 2,
+            channel_layout: "stereo".into(),
+            language: Some("eng".into()),
+            profile: None,
+        };
+        assert!(!stereo.is_surround());
+    }
 
     #[test]
     fn test_media_info_to_vars_all_fields() {
