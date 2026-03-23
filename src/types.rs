@@ -424,6 +424,54 @@ mod tests {
     }
 
     #[test]
+    fn test_settings_cursor_skips_separators_down() {
+        let state = SettingsState::from_config(&crate::config::Config::default());
+        // First item is a separator (General), cursor should start at first non-separator
+        assert!(!state.is_separator(state.cursor));
+    }
+
+    #[test]
+    fn test_settings_cursor_move_down_skips_separator() {
+        let mut state = SettingsState::from_config(&crate::config::Config::default());
+        // Move to the last item before a separator, then down should skip it
+        // Find "Min Duration" (last in General group), next is Separator(Naming)
+        let min_dur_idx = state.items.iter().position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration")).unwrap();
+        state.cursor = min_dur_idx;
+        state.move_cursor_down();
+        // Should have skipped the Naming separator
+        assert!(!state.is_separator(state.cursor));
+        assert!(state.cursor > min_dur_idx + 1);
+    }
+
+    #[test]
+    fn test_settings_cursor_move_up_skips_separator() {
+        let mut state = SettingsState::from_config(&crate::config::Config::default());
+        // Find "Preset" (first in Naming group), going up should skip the Separator
+        let preset_idx = state.items.iter().position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset")).unwrap();
+        state.cursor = preset_idx;
+        state.move_cursor_up();
+        assert!(!state.is_separator(state.cursor));
+        assert!(state.cursor < preset_idx - 1);
+    }
+
+    #[test]
+    fn test_settings_cursor_stays_at_bounds() {
+        let mut state = SettingsState::from_config(&crate::config::Config::default());
+        // Move to first non-separator
+        let first = state.items.iter().position(|i| !matches!(i, SettingItem::Separator { .. })).unwrap();
+        state.cursor = first;
+        state.move_cursor_up();
+        // Should not go past the first non-separator
+        assert_eq!(state.cursor, first);
+
+        // Move to last item
+        let last = state.items.len() - 1;
+        state.cursor = last;
+        state.move_cursor_down();
+        assert_eq!(state.cursor, last);
+    }
+
+    #[test]
     fn test_settings_state_to_config_roundtrip() {
         let config = crate::config::Config {
             eject: Some(true),

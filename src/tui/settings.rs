@@ -311,3 +311,369 @@ fn confirm_edit(state: &mut SettingsState, idx: usize) {
     state.input_buffer.clear();
     state.cursor_pos = 0;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEvent;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn default_state() -> SettingsState {
+        SettingsState::from_config(&crate::config::Config::default())
+    }
+
+    // --- Pure helper tests ---
+
+    #[test]
+    fn test_truncate_short() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_long() {
+        assert_eq!(truncate("hello world", 8), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_zero() {
+        assert_eq!(truncate("hello", 0), "");
+    }
+
+    #[test]
+    fn test_truncate_tiny() {
+        assert_eq!(truncate("hello", 2), "he");
+    }
+
+    #[test]
+    fn test_mask_api_key_long() {
+        assert_eq!(mask_api_key("abcdefgh"), "****...efgh");
+    }
+
+    #[test]
+    fn test_mask_api_key_short() {
+        assert_eq!(mask_api_key("abc"), "***");
+    }
+
+    #[test]
+    fn test_mask_api_key_exact_four() {
+        assert_eq!(mask_api_key("abcd"), "****");
+    }
+
+    #[test]
+    fn test_render_edit_buffer_fits() {
+        assert_eq!(render_edit_buffer("hello", 3, 10), "hello");
+    }
+
+    #[test]
+    fn test_render_edit_buffer_overflow_cursor_at_start() {
+        // cursor_pos < max_len: shows first max_len chars
+        assert_eq!(render_edit_buffer("hello world", 3, 5), "hello");
+    }
+
+    #[test]
+    fn test_render_edit_buffer_overflow_cursor_past() {
+        // cursor_pos >= max_len: shows from scroll offset to end
+        assert_eq!(render_edit_buffer("hello world", 8, 5), "o world");
+    }
+
+    #[test]
+    fn test_render_edit_buffer_zero_width() {
+        assert_eq!(render_edit_buffer("hello", 0, 0), "");
+    }
+
+    // --- Input handling: toggle ---
+
+    #[test]
+    fn test_toggle_flips_value() {
+        let mut state = default_state();
+        // Move to the "Eject After Rip" toggle (index 3)
+        let eject_idx = state.items.iter().position(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "eject")).unwrap();
+        state.cursor = eject_idx;
+
+        // Should be false initially
+        assert!(matches!(&state.items[eject_idx], SettingItem::Toggle { value: false, .. }));
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        assert!(matches!(&state.items[eject_idx], SettingItem::Toggle { value: true, .. }));
+        assert!(state.dirty);
+
+        handle_input(&mut state, key(KeyCode::Char(' ')));
+        assert!(matches!(&state.items[eject_idx], SettingItem::Toggle { value: false, .. }));
+    }
+
+    // --- Input handling: choice cycling ---
+
+    #[test]
+    fn test_choice_cycles_forward() {
+        let mut state = default_state();
+        let preset_idx = state.items.iter().position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset")).unwrap();
+        state.cursor = preset_idx;
+
+        assert!(matches!(&state.items[preset_idx], SettingItem::Choice { selected: 0, .. }));
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        assert!(matches!(&state.items[preset_idx], SettingItem::Choice { selected: 1, .. }));
+
+        handle_input(&mut state, key(KeyCode::Right));
+        assert!(matches!(&state.items[preset_idx], SettingItem::Choice { selected: 2, .. }));
+    }
+
+    #[test]
+    fn test_choice_cycles_backward() {
+        let mut state = default_state();
+        let preset_idx = state.items.iter().position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset")).unwrap();
+        state.cursor = preset_idx;
+
+        // Cycle backward from 0 wraps to last
+        handle_input(&mut state, key(KeyCode::Left));
+        assert!(matches!(&state.items[preset_idx], SettingItem::Choice { selected: 3, .. }));
+    }
+
+    // --- Input handling: text edit ---
+
+    #[test]
+    fn test_text_edit_enter_and_confirm() {
+        let mut state = default_state();
+        let output_dir_idx = state.items.iter().position(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir")).unwrap();
+        state.cursor = output_dir_idx;
+
+        // Enter edit mode
+        handle_input(&mut state, key(KeyCode::Enter));
+        assert_eq!(state.editing, Some(output_dir_idx));
+        assert_eq!(state.input_buffer, ".");
+
+        // Clear and type new value
+        state.input_buffer.clear();
+        state.cursor_pos = 0;
+        handle_input(&mut state, key(KeyCode::Char('/')));
+        handle_input(&mut state, key(KeyCode::Char('t')));
+        handle_input(&mut state, key(KeyCode::Char('m')));
+        handle_input(&mut state, key(KeyCode::Char('p')));
+        assert_eq!(state.input_buffer, "/tmp");
+
+        // Confirm
+        handle_input(&mut state, key(KeyCode::Enter));
+        assert!(state.editing.is_none());
+        assert!(matches!(&state.items[output_dir_idx], SettingItem::Text { value, .. } if value == "/tmp"));
+    }
+
+    #[test]
+    fn test_text_edit_esc_cancels() {
+        let mut state = default_state();
+        let output_dir_idx = state.items.iter().position(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir")).unwrap();
+        state.cursor = output_dir_idx;
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        state.input_buffer = "/changed".into();
+        handle_input(&mut state, key(KeyCode::Esc));
+
+        assert!(state.editing.is_none());
+        // Value should NOT have changed
+        assert!(matches!(&state.items[output_dir_idx], SettingItem::Text { value, .. } if value == "."));
+    }
+
+    // --- Input handling: number edit ---
+
+    #[test]
+    fn test_number_rejects_non_digits() {
+        let mut state = default_state();
+        let min_dur_idx = state.items.iter().position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration")).unwrap();
+        state.cursor = min_dur_idx;
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        let len_before = state.input_buffer.len();
+        handle_input(&mut state, key(KeyCode::Char('a')));
+        assert_eq!(state.input_buffer.len(), len_before); // no change
+    }
+
+    #[test]
+    fn test_number_rejects_zero() {
+        let mut state = default_state();
+        let min_dur_idx = state.items.iter().position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration")).unwrap();
+        state.cursor = min_dur_idx;
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        state.input_buffer = "0".into();
+        state.cursor_pos = 1;
+        handle_input(&mut state, key(KeyCode::Enter));
+
+        // Should revert to original value (900)
+        assert!(matches!(&state.items[min_dur_idx], SettingItem::Number { value: 900, .. }));
+    }
+
+    #[test]
+    fn test_number_accepts_valid() {
+        let mut state = default_state();
+        let min_dur_idx = state.items.iter().position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration")).unwrap();
+        state.cursor = min_dur_idx;
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        state.input_buffer = "600".into();
+        state.cursor_pos = 3;
+        handle_input(&mut state, key(KeyCode::Enter));
+
+        assert!(matches!(&state.items[min_dur_idx], SettingItem::Number { value: 600, .. }));
+        assert!(state.dirty);
+    }
+
+    // --- Input handling: cursor movement in edit mode ---
+
+    #[test]
+    fn test_edit_cursor_movement() {
+        let mut state = default_state();
+        let output_dir_idx = state.items.iter().position(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir")).unwrap();
+        state.cursor = output_dir_idx;
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        // Cursor starts at end
+        assert_eq!(state.cursor_pos, state.input_buffer.len());
+
+        handle_input(&mut state, key(KeyCode::Home));
+        assert_eq!(state.cursor_pos, 0);
+
+        handle_input(&mut state, key(KeyCode::End));
+        assert_eq!(state.cursor_pos, state.input_buffer.len());
+
+        handle_input(&mut state, key(KeyCode::Left));
+        assert_eq!(state.cursor_pos, state.input_buffer.len() - 1);
+    }
+
+    #[test]
+    fn test_edit_backspace() {
+        let mut state = default_state();
+        let output_dir_idx = state.items.iter().position(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir")).unwrap();
+        state.cursor = output_dir_idx;
+
+        handle_input(&mut state, key(KeyCode::Enter));
+        assert_eq!(state.input_buffer, ".");
+
+        handle_input(&mut state, key(KeyCode::Backspace));
+        assert_eq!(state.input_buffer, "");
+        assert_eq!(state.cursor_pos, 0);
+
+        // Backspace at 0 does nothing
+        handle_input(&mut state, key(KeyCode::Backspace));
+        assert_eq!(state.input_buffer, "");
+    }
+
+    // --- Input handling: format fields dimmed when preset active ---
+
+    #[test]
+    fn test_format_locked_when_preset_active() {
+        let mut state = default_state();
+        let preset_idx = state.items.iter().position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset")).unwrap();
+        let tv_fmt_idx = state.items.iter().position(|i| matches!(i, SettingItem::Text { key, .. } if key == "tv_format")).unwrap();
+
+        // Set preset to "plex"
+        state.cursor = preset_idx;
+        handle_input(&mut state, key(KeyCode::Enter)); // (none) -> default
+        handle_input(&mut state, key(KeyCode::Enter)); // default -> plex
+
+        // Try to edit tv_format — should not enter edit mode
+        state.cursor = tv_fmt_idx;
+        handle_input(&mut state, key(KeyCode::Enter));
+        assert!(state.editing.is_none());
+    }
+
+    // --- Input handling: Ctrl+S saves ---
+
+    #[test]
+    fn test_ctrl_s_returns_save() {
+        let mut state = default_state();
+        let action = handle_input(&mut state, ctrl('s'));
+        assert!(matches!(action, SettingsAction::Save));
+    }
+
+    #[test]
+    fn test_ctrl_s_confirms_edit_first() {
+        let mut state = default_state();
+        let output_dir_idx = state.items.iter().position(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir")).unwrap();
+        state.cursor = output_dir_idx;
+
+        // Enter edit mode and type something
+        handle_input(&mut state, key(KeyCode::Enter));
+        state.input_buffer = "/new".into();
+        state.cursor_pos = 4;
+
+        // Ctrl+S should confirm the edit and save
+        let action = handle_input(&mut state, ctrl('s'));
+        assert!(matches!(action, SettingsAction::Save));
+        assert!(state.editing.is_none());
+        assert!(matches!(&state.items[output_dir_idx], SettingItem::Text { value, .. } if value == "/new"));
+    }
+
+    // --- Input handling: Esc closes ---
+
+    #[test]
+    fn test_esc_closes_overlay() {
+        let mut state = default_state();
+        let action = handle_input(&mut state, key(KeyCode::Esc));
+        assert!(matches!(action, SettingsAction::Close));
+    }
+
+    // --- Input handling: standalone dirty close prompt ---
+
+    #[test]
+    fn test_standalone_dirty_esc_prompts() {
+        let mut state = default_state();
+        state.standalone = true;
+        state.dirty = true;
+
+        let action = handle_input(&mut state, key(KeyCode::Esc));
+        assert!(matches!(action, SettingsAction::None));
+        assert!(state.confirm_close.is_some());
+    }
+
+    #[test]
+    fn test_confirm_close_y_saves_and_closes() {
+        let mut state = default_state();
+        state.confirm_close = Some(true);
+
+        let action = handle_input(&mut state, key(KeyCode::Char('y')));
+        assert!(matches!(action, SettingsAction::SaveAndClose));
+        assert!(state.confirm_close.is_none());
+    }
+
+    #[test]
+    fn test_confirm_close_n_discards() {
+        let mut state = default_state();
+        state.confirm_close = Some(true);
+
+        let action = handle_input(&mut state, key(KeyCode::Char('n')));
+        assert!(matches!(action, SettingsAction::Close));
+    }
+
+    #[test]
+    fn test_confirm_close_esc_cancels() {
+        let mut state = default_state();
+        state.confirm_close = Some(true);
+
+        let action = handle_input(&mut state, key(KeyCode::Esc));
+        assert!(matches!(action, SettingsAction::None));
+        assert!(state.confirm_close.is_none());
+    }
+
+    // --- Input handling: Action item ---
+
+    #[test]
+    fn test_action_item_returns_save() {
+        let mut state = default_state();
+        let action_idx = state.items.iter().position(|i| matches!(i, SettingItem::Action { .. })).unwrap();
+        state.cursor = action_idx;
+
+        let action = handle_input(&mut state, key(KeyCode::Enter));
+        assert!(matches!(action, SettingsAction::Save));
+    }
+}
