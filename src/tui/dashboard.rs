@@ -425,9 +425,7 @@ fn poll_active_job(app: &mut App) {
                         .and_then(|b| b.lock().ok())
                         .map(|b| b.clone())
                         .unwrap_or_default();
-                    let msg = if let Some(aacs_msg) = disc::check_aacs_error(&stderr_msg) {
-                        aacs_msg
-                    } else if stderr_msg.is_empty() {
+                    let msg = if stderr_msg.is_empty() {
                         format!("ffmpeg exited with code {}", status)
                     } else {
                         let last_line = stderr_msg.lines().last().unwrap_or("");

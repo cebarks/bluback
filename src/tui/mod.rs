@@ -387,7 +387,7 @@ fn run_app(
     app.config = config.clone();
     app.config_path = config_path;
     app.eject = config.should_eject(args.cli_eject());
-    app.has_mkvpropedit = crate::disc::has_mkvpropedit();
+    app.has_mkvpropedit = which::which("mkvpropedit").is_ok();
 
     // Spawn disc scan in background thread
     app.tmdb.api_key = crate::tmdb::get_api_key(config);

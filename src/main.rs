@@ -131,8 +131,6 @@ fn main() -> anyhow::Result<()> {
         args.device = Some(drives[0].clone());
     }
 
-    disc::check_dependencies()?;
-
     let use_tui = !args.no_tui && atty_stdout();
 
     if use_tui {

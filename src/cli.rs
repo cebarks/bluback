@@ -517,7 +517,7 @@ fn rip_selected(
         return Ok(());
     }
 
-    let has_mkvpropedit = disc::has_mkvpropedit();
+    let has_mkvpropedit = which::which("mkvpropedit").is_ok();
     if !has_mkvpropedit {
         println!("Note: mkvpropedit not found, chapters will not be added. Install mkvtoolnix for chapter support.");
     }
@@ -625,9 +625,7 @@ fn rip_selected(
                     Some(buf)
                 })
                 .unwrap_or_default();
-            if let Some(aacs_msg) = disc::check_aacs_error(&stderr_msg) {
-                println!("Error: {}", aacs_msg);
-            } else if stderr_msg.is_empty() {
+            if stderr_msg.is_empty() {
                 println!(
                     "Error: ffmpeg exited with code {}",
                     status.code().unwrap_or(-1)
