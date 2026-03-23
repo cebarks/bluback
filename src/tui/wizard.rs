@@ -173,7 +173,11 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
         };
         lines.push(Line::from(status));
     }
-    let body = Paragraph::new(lines);
+    let body = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Scanning"),
+    );
     f.render_widget(body, chunks[1]);
 
     let hints = Paragraph::new("q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan")
@@ -517,24 +521,41 @@ pub fn render_season(f: &mut Frame, app: &App) {
 
     // Episode list preview (when fetched from TMDb)
     if !app.tmdb.episodes.is_empty() {
-        let items: Vec<ListItem> = app
+        let ep_lines: Vec<Line> = app
             .tmdb
             .episodes
             .iter()
             .map(|ep| {
                 let runtime = ep.runtime.unwrap_or(0);
-                ListItem::new(format!(
+                Line::from(format!(
                     "  E{:02} - {} ({} min)",
                     ep.episode_number, ep.name, runtime
                 ))
             })
             .collect();
 
-        let list = List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
-            "Season {}: {} episodes",
-            app.wizard.season_num.unwrap_or(0),
-            app.tmdb.episodes.len()
-        )));
+        let available_height = content_chunks[1].height.saturating_sub(2) as usize; // minus borders
+        let total = ep_lines.len();
+        let max_scroll = total.saturating_sub(available_height);
+        let scroll_offset = app.wizard.list_cursor.min(max_scroll);
+
+        let title = if max_scroll > 0 {
+            format!(
+                "Season {}: {} episodes (↑/↓ to scroll)",
+                app.wizard.season_num.unwrap_or(0),
+                total
+            )
+        } else {
+            format!(
+                "Season {}: {} episodes",
+                app.wizard.season_num.unwrap_or(0),
+                total
+            )
+        };
+
+        let list = Paragraph::new(ep_lines)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .scroll((scroll_offset as u16, 0));
         f.render_widget(list, content_chunks[1]);
     } else if !app.status_message.is_empty() {
         let status = if app.pending_rx.is_some() {
@@ -559,6 +580,17 @@ pub fn render_season(f: &mut Frame, app: &App) {
 
 pub fn handle_season_input(app: &mut App, key: KeyEvent) {
     match key.code {
+        KeyCode::Up => {
+            if app.wizard.list_cursor > 0 {
+                app.wizard.list_cursor -= 1;
+            }
+        }
+        KeyCode::Down => {
+            let max_scroll = app.tmdb.episodes.len();
+            if app.wizard.list_cursor < max_scroll {
+                app.wizard.list_cursor += 1;
+            }
+        }
         KeyCode::Char(c) => {
             if c.is_ascii_digit() {
                 app.wizard.input_buffer.push(c);
@@ -837,6 +869,7 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
         if is_tv {
             parts.push("s: Special");
         }
+        parts.push("r/R: Reset");
         parts.push("f: Show filtered");
         parts.push("Enter: Confirm");
         parts.push("Esc: Back");
@@ -982,6 +1015,19 @@ pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
                     }
                 }
             }
+        }
+        KeyCode::Char('r') => {
+            // Reset current row's episode assignment
+            if let Some(&(real_idx, _)) = visible.get(app.wizard.list_cursor) {
+                let pl_num = &app.disc.playlists[real_idx].num;
+                app.wizard.episode_assignments.remove(pl_num);
+                app.wizard.specials.remove(pl_num);
+            }
+        }
+        KeyCode::Char('R') => {
+            // Reset all episode assignments and specials
+            app.wizard.episode_assignments.clear();
+            app.wizard.specials.clear();
         }
         KeyCode::Char('f') => {
             app.wizard.show_filtered = !app.wizard.show_filtered;

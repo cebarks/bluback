@@ -22,6 +22,8 @@ pub struct Config {
     pub special_format: Option<String>,
     pub eject: Option<bool>,
     pub max_speed: Option<bool>,
+    pub min_duration: Option<u32>,
+    pub show_filtered: Option<bool>,
 }
 
 fn config_dir() -> PathBuf {
@@ -107,6 +109,17 @@ impl Config {
             return false;
         }
         self.max_speed.unwrap_or(true)
+    }
+
+    pub fn min_duration(&self, cli_min_duration: u32) -> u32 {
+        if cli_min_duration != 900 {
+            return cli_min_duration; // CLI explicitly set, takes priority
+        }
+        self.min_duration.unwrap_or(900)
+    }
+
+    pub fn show_filtered(&self) -> bool {
+        self.show_filtered.unwrap_or(false)
     }
 }
 
@@ -350,5 +363,56 @@ mod tests {
             config.resolve_special_format(None),
             DEFAULT_SPECIAL_FORMAT
         );
+    }
+
+    #[test]
+    fn test_min_duration_default() {
+        let config = Config::default();
+        assert_eq!(config.min_duration(900), 900);
+    }
+
+    #[test]
+    fn test_min_duration_config_overrides_default() {
+        let config = Config {
+            min_duration: Some(600),
+            ..Default::default()
+        };
+        assert_eq!(config.min_duration(900), 600);
+    }
+
+    #[test]
+    fn test_min_duration_cli_overrides_config() {
+        let config = Config {
+            min_duration: Some(600),
+            ..Default::default()
+        };
+        assert_eq!(config.min_duration(1200), 1200);
+    }
+
+    #[test]
+    fn test_parse_min_duration() {
+        let config: Config = toml::from_str("min_duration = 600").unwrap();
+        assert_eq!(config.min_duration, Some(600));
+    }
+
+    #[test]
+    fn test_show_filtered_default_false() {
+        let config = Config::default();
+        assert!(!config.show_filtered());
+    }
+
+    #[test]
+    fn test_show_filtered_config_true() {
+        let config = Config {
+            show_filtered: Some(true),
+            ..Default::default()
+        };
+        assert!(config.show_filtered());
+    }
+
+    #[test]
+    fn test_parse_show_filtered() {
+        let config: Config = toml::from_str("show_filtered = true").unwrap();
+        assert_eq!(config.show_filtered, Some(true));
     }
 }

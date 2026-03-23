@@ -449,7 +449,8 @@ fn poll_background(app: &mut App) {
             app.args.device = Some(std::path::PathBuf::from(device));
             app.disc.label_info = crate::disc::parse_volume_label(&label);
             app.disc.label = label;
-            app.disc.episodes_pl = crate::disc::filter_episodes(&playlists, app.args.min_duration)
+            let min_dur = app.config.min_duration(app.args.min_duration);
+            app.disc.episodes_pl = crate::disc::filter_episodes(&playlists, min_dur)
                 .into_iter()
                 .cloned()
                 .collect();
@@ -468,6 +469,7 @@ fn poll_background(app: &mut App) {
                 app.wizard.season_num = Some(s);
             }
             app.wizard.start_episode = app.args.start_episode;
+            app.wizard.show_filtered = app.config.show_filtered();
             app.wizard.playlist_selected = app.disc.playlists.iter().map(|pl| {
                 app.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
             }).collect();
@@ -538,6 +540,7 @@ fn poll_background(app: &mut App) {
         }
         BackgroundResult::SeasonFetch(Ok(eps)) => {
             app.tmdb.episodes = eps;
+            app.wizard.list_cursor = 0;
             app.status_message.clear();
         }
         BackgroundResult::SeasonFetch(Err(e)) => {
