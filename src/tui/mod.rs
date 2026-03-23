@@ -357,6 +357,11 @@ fn run_app(
             }
         }
 
+        // Increment spinner frame when background task is active
+        if app.pending_rx.is_some() {
+            app.spinner_frame = app.spinner_frame.wrapping_add(1);
+        }
+
         // Poll background tasks
         poll_background(&mut app);
 

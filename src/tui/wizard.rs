@@ -8,6 +8,12 @@ use crate::tmdb;
 use crate::types::BackgroundResult;
 use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename, parse_episode_input};
 
+const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+fn spinner_char(frame: usize) -> char {
+    SPINNER_CHARS[frame % SPINNER_CHARS.len()]
+}
+
 pub fn playlist_filename(
     app: &App,
     playlist_index: usize,
@@ -160,7 +166,12 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
         .map(|s| Line::from(s.as_str()).style(Style::default().fg(Color::DarkGray)))
         .collect();
     if !app.status_message.is_empty() {
-        lines.push(Line::from(app.status_message.as_str()));
+        let status = if app.pending_rx.is_some() {
+            format!("{} {}", spinner_char(app.spinner_frame), app.status_message)
+        } else {
+            app.status_message.clone()
+        };
+        lines.push(Line::from(status));
     }
     let body = Paragraph::new(lines);
     f.render_widget(body, chunks[1]);
@@ -232,8 +243,13 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
         let cursor = if app.wizard.input_focus == InputFocus::TextInput { "|" } else { "" };
         let mut lines = vec![Line::from(format!("{}{}", app.wizard.input_buffer, cursor))];
         if !app.status_message.is_empty() {
+            let status = if app.pending_rx.is_some() {
+                format!("{} {}", spinner_char(app.spinner_frame), app.status_message)
+            } else {
+                app.status_message.clone()
+            };
             lines.push(
-                Line::from(app.status_message.as_str()).style(Style::default().fg(Color::Yellow)),
+                Line::from(status).style(Style::default().fg(Color::Yellow)),
             );
         }
         let input = Paragraph::new(lines)
@@ -1031,7 +1047,12 @@ pub fn render_season(f: &mut Frame, app: &App) {
         )));
         f.render_widget(list, content_chunks[1]);
     } else if !app.status_message.is_empty() {
-        let msg = Paragraph::new(app.status_message.as_str())
+        let status = if app.pending_rx.is_some() {
+            format!("{} {}", spinner_char(app.spinner_frame), app.status_message)
+        } else {
+            app.status_message.clone()
+        };
+        let msg = Paragraph::new(status)
             .style(Style::default().fg(Color::Yellow))
             .block(Block::default().borders(Borders::ALL).title("Episodes"));
         f.render_widget(msg, content_chunks[1]);
