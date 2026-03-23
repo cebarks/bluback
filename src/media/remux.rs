@@ -129,7 +129,7 @@ fn inject_chapters(
     chapters: &[ChapterMark],
     total_duration_secs: f64,
 ) -> Result<(), MediaError> {
-    if chapters.is_empty() {
+    if chapters.is_empty() || total_duration_secs <= 0.0 {
         return Ok(());
     }
 
@@ -140,16 +140,22 @@ fn inject_chapters(
     for (i, chapter) in chapters.iter().enumerate() {
         let (start_ms, _) = chapter_to_millis(chapter, Some(total_duration_secs));
         let end_ms = ends[i];
+
+        // Skip chapters that start beyond the stream duration
+        if start_ms >= end_ms {
+            continue;
+        }
+
         let title = format!("Chapter {}", i + 1);
 
-        octx.add_chapter(
-            i as i64,
-            time_base,
-            start_ms,
-            end_ms,
-            title,
-        )
-        .map_err(|e| MediaError::RemuxFailed(format!("Failed to add chapter {}: {}", i + 1, e)))?;
+        // add_chapter can fail if timestamps exceed the format context's
+        // duration. Log and continue rather than aborting the entire rip.
+        if let Err(e) = octx.add_chapter(i as i64, time_base, start_ms, end_ms, title) {
+            eprintln!(
+                "Warning: could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
+                i + 1, start_ms, end_ms, total_duration_secs, e
+            );
+        }
     }
 
     Ok(())
