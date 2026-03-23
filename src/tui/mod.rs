@@ -103,6 +103,7 @@ pub struct App {
     pub rip: RipState,
 
     pub pending_rx: Option<mpsc::Receiver<BackgroundResult>>,
+    pub disc_detected_label: Option<String>,
 }
 
 impl App {
@@ -121,11 +122,12 @@ impl App {
             wizard: WizardState::default(),
             rip: RipState::default(),
             pending_rx: None,
+            disc_detected_label: None,
         }
     }
 }
 
-fn start_disc_scan(app: &mut App) {
+pub(crate) fn start_disc_scan(app: &mut App) {
     let explicit_device = app.args.device.clone();
     let max_speed = app.config.should_max_speed(app.args.no_max_speed);
     let (tx, rx) = mpsc::channel();
@@ -204,6 +206,7 @@ impl App {
         self.status_message = String::new();
         self.spinner_frame = 0;
         self.pending_rx = None;
+        self.disc_detected_label = None;
     }
 }
 
@@ -334,12 +337,27 @@ fn run_app(
                     Screen::Confirm => wizard::handle_confirm_input(&mut app, key),
                     Screen::Ripping => dashboard::handle_input(&mut app, key),
                     Screen::Done => {
-                        if key.code == KeyCode::Enter {
+                        if app.disc_detected_label.is_some() {
+                            if key.code == KeyCode::Enter {
+                                app.disc_detected_label = None;
+                                app.reset_for_rescan();
+                                app.tmdb.api_key = crate::tmdb::get_api_key(config);
+                                start_disc_scan(&mut app);
+                            } else {
+                                let all_succeeded = app.rip.jobs.iter().all(|j| {
+                                    matches!(j.status, crate::types::PlaylistStatus::Done(_))
+                                });
+                                if app.eject && !app.rip.jobs.is_empty() && all_succeeded {
+                                    let device = app.args.device().to_string_lossy().to_string();
+                                    let _ = crate::disc::eject_disc(&device);
+                                }
+                                app.quit = true;
+                            }
+                        } else if key.code == KeyCode::Enter {
                             app.reset_for_rescan();
                             app.tmdb.api_key = crate::tmdb::get_api_key(config);
                             start_disc_scan(&mut app);
                         } else {
-                            // Eject on exit if enabled and all rips succeeded
                             let all_succeeded = app
                                 .rip
                                 .jobs
@@ -401,6 +419,15 @@ fn poll_background(app: &mut App) {
             return; // Keep pending_rx alive
         }
         BackgroundResult::DiscFound(ref device) => {
+            if app.screen == Screen::Done {
+                let label = crate::disc::get_volume_label(device);
+                app.disc_detected_label = Some(if label.is_empty() {
+                    device.clone()
+                } else {
+                    label
+                });
+                return; // Keep polling alive for potential full scan later
+            }
             app.disc.scan_log.clear();
             app.status_message = format!("Scanning {}...", device);
             return; // Keep pending_rx alive
@@ -412,6 +439,11 @@ fn poll_background(app: &mut App) {
 
     match result {
         BackgroundResult::WaitingForDisc(_) | BackgroundResult::DiscFound(_) => unreachable!(),
+        BackgroundResult::DiscScan(Ok(_)) | BackgroundResult::DiscScan(Err(_))
+            if app.screen == Screen::Done =>
+        {
+            // Ignore full scan results on Done screen — we only wanted disc detection
+        }
         BackgroundResult::DiscScan(Ok((device, label, playlists))) => {
             // Update device to the one that had the disc
             app.args.device = Some(std::path::PathBuf::from(device));

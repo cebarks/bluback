@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
 use std::io::BufRead;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -231,6 +231,18 @@ pub fn render_done(f: &mut Frame, app: &App) {
     let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [any other key] Exit")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
+
+    if let Some(ref label) = app.disc_detected_label {
+        let popup_area = centered_rect(60, 5, f.area());
+        f.render_widget(Clear, popup_area);
+        let popup = Paragraph::new(format!(
+            "New disc detected: {}\n\nPress Enter to start, any other key to exit",
+            label
+        ))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title("New Disc"));
+        f.render_widget(popup, popup_area);
+    }
 }
 
 pub fn handle_input(app: &mut App, key: KeyEvent) {
@@ -291,6 +303,8 @@ fn check_all_done(app: &mut App) -> bool {
             let _ = crate::disc::unmount_disc(&app.args.device().to_string_lossy());
             app.disc.did_mount = false;
         }
+        super::start_disc_scan(app);
+        app.screen = Screen::Done; // Override start_disc_scan's screen change
         true
     } else {
         false
@@ -450,6 +464,13 @@ fn render_progress_bar(pct: u32, width: usize) -> String {
     }
     bar.push(']');
     bar
+}
+
+fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
+    let popup_width = area.width * percent_x / 100;
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    Rect::new(area.x + x, area.y + y, popup_width, height)
 }
 
 fn active_rip_stats(app: &App) -> String {
