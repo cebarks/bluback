@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_TV_FORMAT: &str = "S{season}E{episode}_{title}.mkv";
 pub const DEFAULT_MOVIE_FORMAT: &str = "{title}_({year}).mkv";
+#[allow(dead_code)] // Used by future special episode support
 pub const DEFAULT_SPECIAL_FORMAT: &str = "{show} S00E{episode} {title}.mkv";
 
 pub const PLEX_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title} [Bluray-{resolution}][{audio} {channels}][{codec}].mkv";
@@ -19,6 +20,7 @@ pub struct Config {
     pub preset: Option<String>,
     pub tv_format: Option<String>,
     pub movie_format: Option<String>,
+    #[allow(dead_code)] // Used by future special episode support
     pub special_format: Option<String>,
     pub eject: Option<bool>,
     pub max_speed: Option<bool>,
@@ -88,6 +90,7 @@ impl Config {
         preset_format("default", is_movie)
     }
 
+    #[allow(dead_code)] // Used by future special episode support
     pub fn resolve_special_format(&self, cli_format: Option<&str>) -> String {
         if let Some(fmt) = cli_format {
             return fmt.to_string();

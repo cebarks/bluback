@@ -29,72 +29,81 @@ pub enum Screen {
     Done,
 }
 
-pub struct App {
-    pub screen: Screen,
-    pub args: Args,
-    pub quit: bool,
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum InputFocus {
+    #[default]
+    TextInput,
+    List,
+    InlineEdit(usize),
+}
 
-    // Disc data
+#[derive(Default)]
+pub struct DiscState {
     pub label: String,
     pub label_info: Option<LabelInfo>,
     pub playlists: Vec<Playlist>,
     pub episodes_pl: Vec<Playlist>,
+    pub scan_log: Vec<String>,
+    pub mount_point: Option<String>,
+    pub did_mount: bool,
+    pub chapter_counts: HashMap<String, usize>,
+}
 
-    // TMDb data
+#[derive(Default)]
+pub struct TmdbState {
     pub api_key: Option<String>,
     pub search_query: String,
     pub movie_mode: bool,
     pub search_results: Vec<TmdbShow>,
-    pub selected_show: Option<usize>,
     pub movie_results: Vec<TmdbMovie>,
+    pub selected_show: Option<usize>,
     pub selected_movie: Option<usize>,
-    pub season_num: Option<u32>,
+    pub show_name: String,
     pub episodes: Vec<Episode>,
+}
+
+#[derive(Default)]
+pub struct WizardState {
+    pub list_cursor: usize,
+    pub input_buffer: String,
+    pub input_focus: InputFocus,
+    pub season_num: Option<u32>,
     pub start_episode: Option<u32>,
     pub episode_assignments: EpisodeAssignments,
-
-    // Selection state
     pub playlist_selected: Vec<bool>,
     pub filenames: Vec<String>,
     pub media_infos: Vec<Option<MediaInfo>>,
-    pub list_cursor: usize,
-
-    // Text input
-    pub input_buffer: String,
-    pub input_active: bool,
     /// 0 = editing season, 1 = editing start episode
     pub season_field: u8,
-    /// Which row is being edited in EpisodeMapping screen (None = navigation mode)
-    pub mapping_edit_row: Option<usize>,
+}
 
-    // Rip state
-    pub rip_jobs: Vec<RipJob>,
+#[derive(Default)]
+pub struct RipState {
+    pub jobs: Vec<RipJob>,
     pub current_rip: usize,
-    pub rip_child: Option<std::process::Child>,
+    pub child: Option<std::process::Child>,
     pub progress_rx: Option<mpsc::Receiver<String>>,
     pub progress_state: HashMap<String, String>,
     pub stderr_buffer: Option<Arc<Mutex<String>>>,
     pub confirm_abort: bool,
     pub confirm_rescan: bool,
+}
 
-    // Config
+pub struct App {
+    pub screen: Screen,
+    pub args: Args,
     pub config: crate::config::Config,
-    pub show_name: String,
-
-    // Status/error messages
-    pub status_message: String,
-    pub scan_log: Vec<String>,
-
-    // Eject
+    pub quit: bool,
     pub eject: bool,
-
-    // Chapter extraction
     pub has_mkvpropedit: bool,
-    pub mount_point: Option<String>,
-    pub did_mount: bool,
-    pub chapter_counts: HashMap<String, usize>,
+    pub status_message: String,
+    pub spinner_frame: usize,
 
-    // Background task channel (disc scan, TMDb, media probes)
+    pub disc: DiscState,
+    pub tmdb: TmdbState,
+    pub wizard: WizardState,
+    pub rip: RipState,
+
     pub pending_rx: Option<mpsc::Receiver<BackgroundResult>>,
 }
 
@@ -104,46 +113,15 @@ impl App {
             screen: Screen::Scanning,
             args,
             quit: false,
-            label: String::new(),
-            label_info: None,
-            playlists: Vec::new(),
-            episodes_pl: Vec::new(),
-            api_key: None,
-            search_query: String::new(),
-            movie_mode: false,
-            search_results: Vec::new(),
-            selected_show: None,
-            movie_results: Vec::new(),
-            selected_movie: None,
-            season_num: None,
-            episodes: Vec::new(),
-            start_episode: None,
-            episode_assignments: HashMap::new(),
-            playlist_selected: Vec::new(),
-            filenames: Vec::new(),
-            media_infos: Vec::new(),
-            list_cursor: 0,
-            input_buffer: String::new(),
-            input_active: false,
-            season_field: 0,
-            mapping_edit_row: None,
-            rip_jobs: Vec::new(),
-            current_rip: 0,
-            rip_child: None,
-            progress_rx: None,
-            progress_state: HashMap::new(),
-            stderr_buffer: None,
-            confirm_abort: false,
-            confirm_rescan: false,
             config: crate::config::Config::default(),
-            show_name: String::new(),
-            status_message: String::new(),
-            scan_log: Vec::new(),
             eject: false,
             has_mkvpropedit: false,
-            mount_point: None,
-            did_mount: false,
-            chapter_counts: HashMap::new(),
+            status_message: String::new(),
+            spinner_frame: 0,
+            disc: DiscState::default(),
+            tmdb: TmdbState::default(),
+            wizard: WizardState::default(),
+            rip: RipState::default(),
             pending_rx: None,
         }
     }
@@ -201,51 +179,33 @@ fn start_disc_scan(app: &mut App) {
 impl App {
     pub fn reset_for_rescan(&mut self) {
         // Kill any active rip
-        if let Some(ref mut child) = self.rip_child {
+        if let Some(ref mut child) = self.rip.child {
             let _ = child.kill();
             let _ = child.wait();
         }
 
-        // Clear all disc/TMDb/rip state, preserving args, config, api_key, eject
-        self.label = String::new();
-        self.label_info = None;
-        self.playlists = Vec::new();
-        self.episodes_pl = Vec::new();
-        self.search_query = String::new();
-        self.movie_mode = false;
-        self.search_results = Vec::new();
-        self.selected_show = None;
-        self.movie_results = Vec::new();
-        self.selected_movie = None;
-        self.season_num = None;
-        self.episodes = Vec::new();
-        self.start_episode = None;
-        self.episode_assignments = HashMap::new();
-        self.playlist_selected = Vec::new();
-        self.filenames = Vec::new();
-        self.list_cursor = 0;
-        self.input_buffer = String::new();
-        self.input_active = false;
-        self.season_field = 0;
-        self.mapping_edit_row = None;
-        self.rip_jobs = Vec::new();
-        self.current_rip = 0;
-        self.rip_child = None;
-        self.progress_rx = None;
-        self.progress_state = HashMap::new();
-        self.stderr_buffer = None;
-        self.confirm_abort = false;
-        self.confirm_rescan = false;
-        self.show_name = String::new();
-        self.status_message = String::new();
-        self.scan_log = Vec::new();
-        self.pending_rx = None;
-        if self.did_mount {
+        if self.disc.did_mount {
             let _ = crate::disc::unmount_disc(&self.args.device().to_string_lossy());
         }
-        self.mount_point = None;
-        self.did_mount = false;
-        self.chapter_counts.clear();
+
+        self.disc = DiscState::default();
+
+        // Reset tmdb state but keep api_key
+        self.tmdb.search_query = String::new();
+        self.tmdb.movie_mode = false;
+        self.tmdb.search_results = Vec::new();
+        self.tmdb.movie_results = Vec::new();
+        self.tmdb.selected_show = None;
+        self.tmdb.selected_movie = None;
+        self.tmdb.show_name = String::new();
+        self.tmdb.episodes = Vec::new();
+        // Keep tmdb.api_key
+
+        self.wizard = WizardState::default();
+        self.rip = RipState::default();
+        self.status_message = String::new();
+        self.spinner_frame = 0;
+        self.pending_rx = None;
     }
 }
 
@@ -274,7 +234,7 @@ fn run_app(
     app.has_mkvpropedit = crate::disc::has_mkvpropedit();
 
     // Spawn disc scan in background thread
-    app.api_key = crate::tmdb::get_api_key(config);
+    app.tmdb.api_key = crate::tmdb::get_api_key(config);
     start_disc_scan(&mut app);
 
     // Event loop
@@ -292,7 +252,7 @@ fn run_app(
         })?;
 
         if app.quit {
-            if let Some(ref mut child) = app.rip_child {
+            if let Some(ref mut child) = app.rip.child {
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -302,9 +262,14 @@ fn run_app(
         // Poll for events
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
+                let input_active = matches!(
+                    app.wizard.input_focus,
+                    InputFocus::TextInput | InputFocus::InlineEdit(_)
+                );
+
                 // Global quit (not during ripping -- dashboard handles its own q)
                 if key.code == KeyCode::Char('q')
-                    && !app.input_active
+                    && !input_active
                     && app.screen != Screen::Ripping
                 {
                     app.quit = true;
@@ -318,7 +283,7 @@ fn run_app(
                 // Global Ctrl+E: eject disc (not during ripping or text input)
                 if key.code == KeyCode::Char('e')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !app.input_active
+                    && !input_active
                     && app.screen != Screen::Ripping
                 {
                     if let Some(ref device) = app.args.device {
@@ -338,28 +303,28 @@ fn run_app(
                 // Global Ctrl+R: rescan disc
                 if key.code == KeyCode::Char('r')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && !app.confirm_rescan
+                    && !app.rip.confirm_rescan
                 {
                     if app.screen == Screen::Ripping {
-                        app.confirm_rescan = true;
+                        app.rip.confirm_rescan = true;
                     } else {
                         app.reset_for_rescan();
-                        app.api_key = crate::tmdb::get_api_key(config);
+                        app.tmdb.api_key = crate::tmdb::get_api_key(config);
                         start_disc_scan(&mut app);
                     }
                     continue;
                 }
 
                 // Handle rescan confirmation (during ripping)
-                if app.confirm_rescan {
+                if app.rip.confirm_rescan {
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
                             app.reset_for_rescan();
-                            app.api_key = crate::tmdb::get_api_key(config);
+                            app.tmdb.api_key = crate::tmdb::get_api_key(config);
                             start_disc_scan(&mut app);
                         }
                         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                            app.confirm_rescan = false;
+                            app.rip.confirm_rescan = false;
                         }
                         _ => {}
                     }
@@ -377,15 +342,16 @@ fn run_app(
                     Screen::Done => {
                         if key.code == KeyCode::Enter {
                             app.reset_for_rescan();
-                            app.api_key = crate::tmdb::get_api_key(config);
+                            app.tmdb.api_key = crate::tmdb::get_api_key(config);
                             start_disc_scan(&mut app);
                         } else {
                             // Eject on exit if enabled and all rips succeeded
                             let all_succeeded = app
-                                .rip_jobs
+                                .rip
+                                .jobs
                                 .iter()
                                 .all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_)));
-                            if app.eject && !app.rip_jobs.is_empty() && all_succeeded {
+                            if app.eject && !app.rip.jobs.is_empty() && all_succeeded {
                                 let device = app.args.device().to_string_lossy().to_string();
                                 let _ = crate::disc::eject_disc(&device);
                             }
@@ -429,14 +395,14 @@ fn poll_background(app: &mut App) {
         BackgroundResult::WaitingForDisc(ref msg) => {
             // Append log entry for each new device tried
             let device_prefix = msg.split(" — ").next().unwrap_or("");
-            if !app.scan_log.iter().any(|l| l.starts_with(device_prefix)) {
-                app.scan_log.push(msg.clone());
+            if !app.disc.scan_log.iter().any(|l| l.starts_with(device_prefix)) {
+                app.disc.scan_log.push(msg.clone());
             }
             app.status_message = "Waiting for disc...".into();
             return; // Keep pending_rx alive
         }
         BackgroundResult::DiscFound(ref device) => {
-            app.scan_log.clear();
+            app.disc.scan_log.clear();
             app.status_message = format!("Scanning {}...", device);
             return; // Keep pending_rx alive
         }
@@ -450,36 +416,36 @@ fn poll_background(app: &mut App) {
         BackgroundResult::DiscScan(Ok((device, label, playlists))) => {
             // Update device to the one that had the disc
             app.args.device = Some(std::path::PathBuf::from(device));
-            app.label_info = crate::disc::parse_volume_label(&label);
-            app.label = label;
-            app.episodes_pl = crate::disc::filter_episodes(&playlists, app.args.min_duration)
+            app.disc.label_info = crate::disc::parse_volume_label(&label);
+            app.disc.label = label;
+            app.disc.episodes_pl = crate::disc::filter_episodes(&playlists, app.args.min_duration)
                 .into_iter()
                 .cloned()
                 .collect();
-            app.playlists = playlists;
+            app.disc.playlists = playlists;
 
-            app.movie_mode =
-                app.args.movie || (app.episodes_pl.len() == 1 && app.args.season.is_none());
+            app.tmdb.movie_mode =
+                app.args.movie || (app.disc.episodes_pl.len() == 1 && app.args.season.is_none());
 
-            if let Some(ref info) = app.label_info {
-                app.search_query = info.show.clone();
-                if !app.movie_mode {
-                    app.season_num = Some(info.season);
+            if let Some(ref info) = app.disc.label_info {
+                app.tmdb.search_query = info.show.clone();
+                if !app.tmdb.movie_mode {
+                    app.wizard.season_num = Some(info.season);
                 }
             }
             if let Some(s) = app.args.season {
-                app.season_num = Some(s);
+                app.wizard.season_num = Some(s);
             }
-            app.start_episode = app.args.start_episode;
-            app.playlist_selected = vec![true; app.episodes_pl.len()];
+            app.wizard.start_episode = app.args.start_episode;
+            app.wizard.playlist_selected = vec![true; app.disc.episodes_pl.len()];
 
             // Extract chapter counts from MPLS files
             let device_str = app.args.device().to_string_lossy().to_string();
             match crate::disc::ensure_mounted(&device_str) {
                 Ok((mount, did_mount)) => {
                     let nums: Vec<&str> =
-                        app.episodes_pl.iter().map(|pl| pl.num.as_str()).collect();
-                    app.chapter_counts = crate::chapters::count_chapters_for_playlists(
+                        app.disc.episodes_pl.iter().map(|pl| pl.num.as_str()).collect();
+                    app.disc.chapter_counts = crate::chapters::count_chapters_for_playlists(
                         std::path::Path::new(&mount),
                         &nums,
                     );
@@ -488,22 +454,22 @@ fn poll_background(app: &mut App) {
                     }
                 }
                 Err(_) => {
-                    app.chapter_counts.clear();
+                    app.disc.chapter_counts.clear();
                 }
             }
 
             app.status_message.clear();
 
-            if app.episodes_pl.is_empty() {
+            if app.disc.episodes_pl.is_empty() {
                 app.status_message = "No episode-length playlists found.".into();
                 app.screen = Screen::Done;
             } else {
                 app.screen = Screen::TmdbSearch;
-                app.input_active = true;
-                app.input_buffer = if app.api_key.is_none() {
+                app.wizard.input_focus = InputFocus::TextInput;
+                app.wizard.input_buffer = if app.tmdb.api_key.is_none() {
                     String::new()
                 } else {
-                    app.search_query.clone()
+                    app.tmdb.search_query.clone()
                 };
             }
         }
@@ -515,9 +481,9 @@ fn poll_background(app: &mut App) {
             if results.is_empty() {
                 app.status_message = "No results found.".into();
             } else {
-                app.search_results = results;
-                app.list_cursor = 0;
-                app.input_active = false;
+                app.tmdb.search_results = results;
+                app.wizard.list_cursor = 0;
+                app.wizard.input_focus = InputFocus::List;
                 app.status_message.clear();
                 app.screen = Screen::ShowSelect;
             }
@@ -529,9 +495,9 @@ fn poll_background(app: &mut App) {
             if results.is_empty() {
                 app.status_message = "No results found.".into();
             } else {
-                app.movie_results = results;
-                app.list_cursor = 0;
-                app.input_active = false;
+                app.tmdb.movie_results = results;
+                app.wizard.list_cursor = 0;
+                app.wizard.input_focus = InputFocus::List;
                 app.status_message.clear();
                 app.screen = Screen::ShowSelect;
             }
@@ -540,26 +506,27 @@ fn poll_background(app: &mut App) {
             app.status_message = format!("TMDb search failed: {}", e);
         }
         BackgroundResult::SeasonFetch(Ok(eps)) => {
-            app.episodes = eps;
+            app.tmdb.episodes = eps;
             app.status_message.clear();
 
-            if !app.episodes.is_empty() {
-                app.season_field = 1;
-                let disc_num = app.label_info.as_ref().map(|l| l.disc);
-                let guessed = crate::util::guess_start_episode(disc_num, app.episodes_pl.len());
-                app.input_buffer = app.start_episode.unwrap_or(guessed).to_string();
+            if !app.tmdb.episodes.is_empty() {
+                app.wizard.season_field = 1;
+                let disc_num = app.disc.label_info.as_ref().map(|l| l.disc);
+                let guessed = crate::util::guess_start_episode(disc_num, app.disc.episodes_pl.len());
+                app.wizard.input_buffer = app.wizard.start_episode.unwrap_or(guessed).to_string();
             }
         }
         BackgroundResult::SeasonFetch(Err(e)) => {
             app.status_message = format!("Failed to fetch season: {}", e);
-            app.episodes.clear();
+            app.tmdb.episodes.clear();
         }
         BackgroundResult::MediaProbe(infos) => {
             let selected_indices: Vec<usize> = app
+                .disc
                 .episodes_pl
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| app.playlist_selected.get(*i).copied().unwrap_or(false))
+                .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
                 .map(|(i, _)| i)
                 .collect();
 
@@ -569,13 +536,13 @@ fn poll_background(app: &mut App) {
                 .map(|(info, &idx)| wizard::playlist_filename(app, idx, info.as_ref()))
                 .collect();
 
-            app.filenames = filenames;
-            app.media_infos = infos;
+            app.wizard.filenames = filenames;
+            app.wizard.media_infos = infos;
 
-            if app.filenames.is_empty() {
+            if app.wizard.filenames.is_empty() {
                 app.status_message = "No playlists selected.".into();
             } else {
-                app.list_cursor = 0;
+                app.wizard.list_cursor = 0;
                 app.status_message.clear();
                 app.screen = Screen::Confirm;
             }
