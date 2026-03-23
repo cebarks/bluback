@@ -13,23 +13,8 @@ pub fn playlist_filename(
     playlist_index: usize,
     media_info: Option<&crate::types::MediaInfo>,
 ) -> String {
-    let pl = &app.disc.episodes_pl[playlist_index];
-
-    let format_template = app.config.resolve_format(
-        app.tmdb.movie_mode,
-        app.args.format.as_deref(),
-        app.args.format_preset.as_deref(),
-    );
-    let use_custom = app.args.format.is_some()
-        || app.args.format_preset.is_some()
-        || app.config.tv_format.is_some()
-        || app.config.movie_format.is_some()
-        || app.config.preset.is_some();
-    let fmt = if use_custom {
-        Some(format_template.as_str())
-    } else {
-        None
-    };
+    let pl = &app.disc.playlists[playlist_index];
+    let is_special = app.wizard.specials.contains(&pl.num);
 
     // Build extra vars
     let mut extra: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
@@ -55,19 +40,72 @@ pub fn playlist_filename(
     extra.insert("playlist", pl.num.clone());
 
     if app.tmdb.movie_mode {
+        let format_template = app.config.resolve_format(
+            true,
+            app.args.format.as_deref(),
+            app.args.format_preset.as_deref(),
+        );
+        let use_custom = app.args.format.is_some()
+            || app.args.format_preset.is_some()
+            || app.config.movie_format.is_some()
+            || app.config.preset.is_some();
+        let fmt = if use_custom {
+            Some(format_template.as_str())
+        } else {
+            None
+        };
+
         let movie = app.tmdb.selected_movie.and_then(|i| app.tmdb.movie_results.get(i));
         let title = movie.map(|m| m.title.as_str()).unwrap_or("movie");
         let year = movie
             .and_then(|m| m.release_date.as_deref())
             .and_then(|d| d.get(..4))
             .unwrap_or("");
-        let part = if app.disc.episodes_pl.len() > 1 {
-            Some(playlist_index as u32 + 1)
+        let selected_count = app.wizard.playlist_selected.iter().filter(|&&s| s).count();
+        let part = if selected_count > 1 {
+            // Determine part number from position among selected playlists
+            let part_num = app.disc.playlists.iter().enumerate()
+                .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
+                .position(|(i, _)| i == playlist_index)
+                .map(|p| p as u32 + 1);
+            part_num
         } else {
             None
         };
         make_movie_filename(title, year, part, fmt, media_info, Some(&extra))
+    } else if is_special {
+        let format_template = app.config.resolve_special_format(app.args.format.as_deref());
+        let episodes = app
+            .wizard
+            .episode_assignments
+            .get(&pl.num)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        make_filename(
+            &pl.num,
+            episodes,
+            0, // season 0 for specials
+            Some(format_template.as_str()),
+            media_info,
+            Some(&extra),
+        )
     } else {
+        let format_template = app.config.resolve_format(
+            false,
+            app.args.format.as_deref(),
+            app.args.format_preset.as_deref(),
+        );
+        let use_custom = app.args.format.is_some()
+            || app.args.format_preset.is_some()
+            || app.config.tv_format.is_some()
+            || app.config.movie_format.is_some()
+            || app.config.preset.is_some();
+        let fmt = if use_custom {
+            Some(format_template.as_str())
+        } else {
+            None
+        };
+
         let episodes = app
             .wizard
             .episode_assignments
@@ -728,6 +766,7 @@ pub fn handle_episode_mapping_input(app: &mut App, key: KeyEvent) {
     }
 }
 
+#[allow(dead_code)]
 pub fn render_playlist_select(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
@@ -848,6 +887,7 @@ pub fn render_playlist_select(f: &mut Frame, app: &App) {
     f.render_widget(hints, chunks[2]);
 }
 
+#[allow(dead_code)]
 pub fn handle_playlist_select_input(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Up => {
@@ -1088,14 +1128,396 @@ pub fn handle_season_input(app: &mut App, key: KeyEvent) {
     }
 }
 
-// Stub: delegates to old render_playlist_select (will be replaced in Task 6)
-pub fn render_playlist_manager(f: &mut Frame, app: &App) {
-    render_playlist_select(f, app);
+fn visible_playlists(app: &App) -> Vec<(usize, &crate::types::Playlist)> {
+    app.disc
+        .playlists
+        .iter()
+        .enumerate()
+        .filter(|(_, pl)| {
+            app.wizard.show_filtered || app.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
+        })
+        .collect()
 }
 
-// Stub: delegates to old handle_playlist_select_input (will be replaced in Task 6)
+pub fn render_playlist_manager(f: &mut Frame, app: &App) {
+    let chunks = standard_layout(f.area());
+
+    let disc_label = if app.disc.label.is_empty() {
+        "(no label)"
+    } else {
+        &app.disc.label
+    };
+    let show_name = if app.tmdb.show_name.is_empty() {
+        app.disc
+            .label_info
+            .as_ref()
+            .map(|l| l.show.as_str())
+            .unwrap_or("Unknown")
+    } else {
+        &app.tmdb.show_name
+    };
+    let selected_count = app.wizard.playlist_selected.iter().filter(|&&s| s).count();
+    let visible = visible_playlists(app);
+    let hidden_count = app.disc.playlists.len() - visible.len();
+
+    let header_text = if hidden_count > 0 {
+        format!(
+            "Disc: {}  |  Show: {}  |  {} selected, {} hidden",
+            disc_label, show_name, selected_count, hidden_count
+        )
+    } else {
+        format!(
+            "Disc: {}  |  Show: {}  |  {} selected",
+            disc_label, show_name, selected_count
+        )
+    };
+
+    let title = Paragraph::new(header_text)
+        .block(Block::default().borders(Borders::ALL).title("Playlist Manager"));
+    f.render_widget(title, chunks[0]);
+
+    let has_ch = !app.disc.chapter_counts.is_empty();
+    let is_tv = !app.tmdb.movie_mode;
+
+    let mut header_cells = vec!["", "#", "Playlist", "Duration"];
+    if has_ch {
+        header_cells.push("Ch");
+    }
+    if is_tv {
+        header_cells.push("Episode(s)");
+    }
+    header_cells.push("Filename");
+    let header = Row::new(header_cells).style(Style::default().fg(Color::White));
+
+    let rows: Vec<Row> = visible
+        .iter()
+        .enumerate()
+        .map(|(vis_idx, &(real_idx, pl))| {
+            let checked = if app.wizard.playlist_selected.get(real_idx).copied().unwrap_or(false) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let cursor_marker = if vis_idx == app.wizard.list_cursor {
+                ">"
+            } else {
+                " "
+            };
+            let marker = format!("{} {}", cursor_marker, checked);
+
+            let is_episode_pl = app.disc.episodes_pl.iter().any(|ep| ep.num == pl.num);
+            let is_special = app.wizard.specials.contains(&pl.num);
+            let is_editing = matches!(app.wizard.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
+
+            // Episode column
+            let ep_str = if is_editing {
+                format!("{}|", app.wizard.input_buffer)
+            } else if let Some(eps) = app.wizard.episode_assignments.get(&pl.num) {
+                if eps.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    let season = if is_special { 0 } else { app.wizard.season_num.unwrap_or(0) };
+                    if eps.len() == 1 {
+                        if eps[0].name.is_empty() {
+                            format!("S{:02}E{:02}", season, eps[0].episode_number)
+                        } else {
+                            format!(
+                                "S{:02}E{:02} - {}",
+                                season, eps[0].episode_number, eps[0].name
+                            )
+                        }
+                    } else {
+                        let first = &eps[0];
+                        let last = &eps[eps.len() - 1];
+                        if first.name.is_empty() {
+                            format!(
+                                "S{:02}E{:02}-E{:02}",
+                                season, first.episode_number, last.episode_number
+                            )
+                        } else {
+                            format!(
+                                "S{:02}E{:02}-E{:02} - {}",
+                                season, first.episode_number, last.episode_number, first.name
+                            )
+                        }
+                    }
+                }
+            } else {
+                "(none)".to_string()
+            };
+
+            let special_marker = if is_special { " [S]" } else { "" };
+            let ep_display = format!("{}{}", ep_str, special_marker);
+
+            let filename = playlist_filename(app, real_idx, None);
+            let ch_str = app
+                .disc
+                .chapter_counts
+                .get(&pl.num)
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+
+            let mut cells = vec![
+                marker,
+                format!("{}", vis_idx + 1),
+                pl.num.clone(),
+                pl.duration.clone(),
+            ];
+            if has_ch {
+                cells.push(ch_str);
+            }
+            if is_tv {
+                cells.push(ep_display);
+            }
+            cells.push(filename);
+
+            let row_style = if is_editing {
+                Style::default().fg(Color::Yellow)
+            } else if vis_idx == app.wizard.list_cursor {
+                Style::default().fg(Color::White)
+            } else if !is_episode_pl {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+            };
+
+            Row::new(cells).style(row_style)
+        })
+        .collect();
+
+    let mut widths = vec![
+        Constraint::Length(6),
+        Constraint::Length(4),
+        Constraint::Length(10),
+        Constraint::Length(10),
+    ];
+    if has_ch {
+        widths.push(Constraint::Length(4));
+    }
+    if is_tv {
+        widths.push(Constraint::Min(20));
+    }
+    widths.push(Constraint::Min(20));
+
+    let table = Table::new(rows, &widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(table, chunks[1]);
+
+    let hints_text = if matches!(app.wizard.input_focus, InputFocus::InlineEdit(_)) {
+        "Enter: Confirm | Esc: Cancel | Format: 3 or 3-4 or 3,5".to_string()
+    } else {
+        let mut parts = vec!["Space: Toggle", "e: Edit"];
+        if is_tv {
+            parts.push("s: Special");
+        }
+        parts.push("f: Show filtered");
+        parts.push("Enter: Confirm");
+        parts.push("Esc: Back");
+        parts.join(" | ")
+    };
+
+    let status_line = if !app.status_message.is_empty() {
+        format!("{}  {}", hints_text, app.status_message)
+    } else {
+        hints_text
+    };
+    let hints = Paragraph::new(status_line).style(Style::default().fg(Color::DarkGray));
+    f.render_widget(hints, chunks[2]);
+}
+
 pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
-    handle_playlist_select_input(app, key);
+    if let InputFocus::InlineEdit(edit_vis_row) = app.wizard.input_focus {
+        let visible = visible_playlists(app);
+        match key.code {
+            KeyCode::Char(c) => {
+                if c.is_ascii_digit() || c == ',' || c == '-' {
+                    app.wizard.input_buffer.push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                app.wizard.input_buffer.pop();
+            }
+            KeyCode::Enter => {
+                if let Some(&(real_idx, _)) = visible.get(edit_vis_row) {
+                    let pl_num = app.disc.playlists[real_idx].num.clone();
+                    match parse_episode_input(&app.wizard.input_buffer) {
+                        Some(ep_nums) if ep_nums.is_empty() => {
+                            app.wizard.episode_assignments.remove(&pl_num);
+                        }
+                        Some(ep_nums) => {
+                            let ep_by_num: std::collections::HashMap<u32, &crate::types::Episode> =
+                                app.tmdb.episodes.iter().map(|e| (e.episode_number, e)).collect();
+                            let eps: Vec<crate::types::Episode> = ep_nums
+                                .iter()
+                                .map(|&num| {
+                                    ep_by_num
+                                        .get(&num)
+                                        .map(|e| (*e).clone())
+                                        .unwrap_or(crate::types::Episode {
+                                            episode_number: num,
+                                            name: String::new(),
+                                            runtime: None,
+                                        })
+                                })
+                                .collect();
+                            app.wizard.episode_assignments.insert(pl_num, eps);
+                        }
+                        None => {
+                            return;
+                        }
+                    }
+                }
+                app.wizard.input_focus = InputFocus::List;
+                app.wizard.input_buffer.clear();
+            }
+            KeyCode::Esc => {
+                app.wizard.input_focus = InputFocus::List;
+                app.wizard.input_buffer.clear();
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    let visible = visible_playlists(app);
+    let vis_len = visible.len();
+
+    match key.code {
+        KeyCode::Up => {
+            if app.wizard.list_cursor > 0 {
+                app.wizard.list_cursor -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.wizard.list_cursor + 1 < vis_len {
+                app.wizard.list_cursor += 1;
+            }
+        }
+        KeyCode::Char(' ') => {
+            if let Some(&(real_idx, _)) = visible.get(app.wizard.list_cursor) {
+                if let Some(sel) = app.wizard.playlist_selected.get_mut(real_idx) {
+                    *sel = !*sel;
+                }
+            }
+        }
+        KeyCode::Char('e') => {
+            if let Some(&(real_idx, _)) = visible.get(app.wizard.list_cursor) {
+                let pl_num = &app.disc.playlists[real_idx].num;
+                let current = app
+                    .wizard
+                    .episode_assignments
+                    .get(pl_num)
+                    .map(|eps| {
+                        eps.iter()
+                            .map(|e| e.episode_number.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                app.wizard.input_buffer = current;
+                app.wizard.input_focus = InputFocus::InlineEdit(app.wizard.list_cursor);
+            }
+        }
+        KeyCode::Char('s') if !app.tmdb.movie_mode => {
+            if let Some(&(real_idx, _)) = visible.get(app.wizard.list_cursor) {
+                let pl_num = app.disc.playlists[real_idx].num.clone();
+                if app.wizard.specials.contains(&pl_num) {
+                    app.wizard.specials.remove(&pl_num);
+                    app.wizard.episode_assignments.remove(&pl_num);
+                } else {
+                    // Auto-assign next S00 episode number
+                    let max_s00_ep = app
+                        .wizard
+                        .specials
+                        .iter()
+                        .filter_map(|snum| {
+                            app.wizard
+                                .episode_assignments
+                                .get(snum)
+                                .and_then(|eps| eps.first())
+                                .map(|e| e.episode_number)
+                        })
+                        .max()
+                        .unwrap_or(0);
+                    let next_ep = max_s00_ep + 1;
+                    app.wizard.specials.insert(pl_num.clone());
+                    app.wizard.episode_assignments.insert(
+                        pl_num,
+                        vec![crate::types::Episode {
+                            episode_number: next_ep,
+                            name: String::new(),
+                            runtime: None,
+                        }],
+                    );
+                    // Also select it
+                    if let Some(sel) = app.wizard.playlist_selected.get_mut(real_idx) {
+                        *sel = true;
+                    }
+                }
+            }
+        }
+        KeyCode::Char('f') => {
+            app.wizard.show_filtered = !app.wizard.show_filtered;
+            // Clamp cursor if it would be out of bounds
+            let new_visible = visible_playlists(app);
+            if app.wizard.list_cursor >= new_visible.len() {
+                app.wizard.list_cursor = new_visible.len().saturating_sub(1);
+            }
+        }
+        KeyCode::Enter => {
+            // Collect ALL selected playlists (not just visible)
+            let selected_nums: Vec<String> = app
+                .disc
+                .playlists
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
+                .map(|(_, pl)| pl.num.clone())
+                .collect();
+
+            if selected_nums.is_empty() {
+                app.status_message = "No playlists selected.".into();
+                return;
+            }
+
+            if app.pending_rx.is_some() {
+                return;
+            }
+
+            let device = app.args.device().to_string_lossy().to_string();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let infos: Vec<Option<crate::types::MediaInfo>> = selected_nums
+                    .iter()
+                    .map(|num| crate::disc::probe_media_info(&device, num))
+                    .collect();
+                let _ = tx.send(BackgroundResult::MediaProbe(infos));
+            });
+            app.pending_rx = Some(rx);
+            app.status_message = "Probing media info...".into();
+        }
+        KeyCode::Esc => {
+            app.wizard.list_cursor = 0;
+            if app.tmdb.movie_mode {
+                app.wizard.input_focus = InputFocus::List;
+                app.screen = Screen::TmdbSearch;
+            } else if app.wizard.season_num.is_some() && app.tmdb.selected_show.is_some() {
+                app.wizard.input_focus = InputFocus::TextInput;
+                app.wizard.input_buffer = app
+                    .wizard
+                    .season_num
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                app.screen = Screen::Season;
+            } else {
+                app.wizard.input_focus = InputFocus::TextInput;
+                app.wizard.input_buffer = app.tmdb.search_query.clone();
+                app.screen = Screen::TmdbSearch;
+            }
+        }
+        _ => {}
+    }
 }
 
 pub fn render_confirm(f: &mut Frame, app: &App) {
@@ -1122,7 +1544,7 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
 
     let selected_playlists: Vec<&crate::types::Playlist> = app
         .disc
-        .episodes_pl
+        .playlists
         .iter()
         .enumerate()
         .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
@@ -1208,7 +1630,7 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
 
             let selected_playlists: Vec<crate::types::Playlist> = app
                 .disc
-                .episodes_pl
+                .playlists
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))

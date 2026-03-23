@@ -32,7 +32,6 @@ pub enum InputFocus {
     #[default]
     TextInput,
     List,
-    #[allow(dead_code)]
     InlineEdit(usize),
 }
 
@@ -70,6 +69,8 @@ pub struct WizardState {
     pub start_episode: Option<u32>,
     pub episode_assignments: EpisodeAssignments,
     pub playlist_selected: Vec<bool>,
+    pub specials: std::collections::HashSet<String>,
+    pub show_filtered: bool,
     pub filenames: Vec<String>,
     pub media_infos: Vec<Option<MediaInfo>>,
 }
@@ -430,14 +431,16 @@ fn poll_background(app: &mut App) {
                 app.wizard.season_num = Some(s);
             }
             app.wizard.start_episode = app.args.start_episode;
-            app.wizard.playlist_selected = vec![true; app.disc.episodes_pl.len()];
+            app.wizard.playlist_selected = app.disc.playlists.iter().map(|pl| {
+                app.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
+            }).collect();
 
             // Extract chapter counts from MPLS files
             let device_str = app.args.device().to_string_lossy().to_string();
             match crate::disc::ensure_mounted(&device_str) {
                 Ok((mount, did_mount)) => {
                     let nums: Vec<&str> =
-                        app.disc.episodes_pl.iter().map(|pl| pl.num.as_str()).collect();
+                        app.disc.playlists.iter().map(|pl| pl.num.as_str()).collect();
                     app.disc.chapter_counts = crate::chapters::count_chapters_for_playlists(
                         std::path::Path::new(&mount),
                         &nums,
@@ -507,7 +510,7 @@ fn poll_background(app: &mut App) {
         BackgroundResult::MediaProbe(infos) => {
             let selected_indices: Vec<usize> = app
                 .disc
-                .episodes_pl
+                .playlists
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
