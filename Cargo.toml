@@ -18,3 +18,4 @@ mpls = "0.2"
 toml = "1.0.7"
 ureq = { version = "3", features = ["json"] }
 which = "8"
+ffmpeg-the-third = "4"
