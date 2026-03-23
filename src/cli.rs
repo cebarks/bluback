@@ -603,11 +603,11 @@ fn rip_selected(
 
         println!();
         match result {
-            Ok(()) => {
+            Ok(chapters_added) => {
                 let final_size = std::fs::metadata(outfile)?.len();
                 println!("Done: {} ({})", filename, format_size(final_size));
-                if !chapters.is_empty() {
-                    println!("  Added {} chapter markers", chapters.len());
+                if chapters_added > 0 {
+                    println!("  Added {} chapter markers", chapters_added);
                 }
             }
             Err(e) => {

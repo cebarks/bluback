@@ -124,18 +124,20 @@ fn compute_chapter_ends(chapters: &[ChapterMark], total_duration_secs: f64) -> V
 ///
 /// Uses ffmpeg-the-third's `add_chapter` API which handles the underlying
 /// `av_mallocz` + `av_dynarray_add` for AVChapter allocation.
+/// Returns the number of chapters successfully injected.
 fn inject_chapters(
     octx: &mut format::context::Output,
     chapters: &[ChapterMark],
     total_duration_secs: f64,
-) -> Result<(), MediaError> {
+) -> Result<usize, MediaError> {
     if chapters.is_empty() || total_duration_secs <= 0.0 {
-        return Ok(());
+        return Ok(0);
     }
 
     let ends = compute_chapter_ends(chapters, total_duration_secs);
     // Time base of 1/1000 means timestamps are in milliseconds
     let time_base = Rational(1, 1000);
+    let mut added = 0usize;
 
     for (i, chapter) in chapters.iter().enumerate() {
         let (start_ms, _) = chapter_to_millis(chapter, Some(total_duration_secs));
@@ -150,15 +152,18 @@ fn inject_chapters(
 
         // add_chapter can fail if timestamps exceed the format context's
         // duration. Log and continue rather than aborting the entire rip.
-        if let Err(e) = octx.add_chapter(i as i64, time_base, start_ms, end_ms, title) {
-            eprintln!(
-                "Warning: could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
-                i + 1, start_ms, end_ms, total_duration_secs, e
-            );
+        match octx.add_chapter(i as i64, time_base, start_ms, end_ms, title) {
+            Ok(_) => added += 1,
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
+                    i + 1, start_ms, end_ms, total_duration_secs, e
+                );
+            }
         }
     }
 
-    Ok(())
+    Ok(added)
 }
 
 /// Lossless remux of a Blu-ray playlist to MKV via FFmpeg library API.
@@ -169,7 +174,7 @@ fn inject_chapters(
 /// Progress is reported via the `on_progress` callback approximately every 100ms.
 /// The `cancel` flag in `options` is checked each packet iteration; if set, the
 /// function writes a trailer for a clean close and returns `Err(MediaError::Cancelled)`.
-pub fn remux<F>(options: RemuxOptions, on_progress: F) -> Result<(), MediaError>
+pub fn remux<F>(options: RemuxOptions, on_progress: F) -> Result<usize, MediaError>
 where
     F: Fn(&RipProgress),
 {
@@ -246,7 +251,7 @@ where
     };
 
     // Inject chapters before writing header
-    inject_chapters(&mut octx, &options.chapters, total_duration_secs)?;
+    let chapters_added = inject_chapters(&mut octx, &options.chapters, total_duration_secs)?;
 
     // Write output header
     octx.write_header()
@@ -383,7 +388,7 @@ where
         speed,
     });
 
-    Ok(())
+    Ok(chapters_added)
 }
 
 /// Build a StreamInfo from an open input context by inspecting codec parameters.

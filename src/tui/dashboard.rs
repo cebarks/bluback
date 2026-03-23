@@ -360,8 +360,9 @@ fn start_next_job(app: &mut App) {
         let result = crate::media::remux::remux(options, |progress| {
             let _ = tx_progress.send(Ok(progress.clone()));
         });
-        if let Err(e) = result {
-            let _ = tx.send(Err(e));
+        match result {
+            Ok(_chapters_added) => {} // success — sender drops, receiver sees Disconnected
+            Err(e) => { let _ = tx.send(Err(e)); }
         }
     });
 
