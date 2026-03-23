@@ -102,7 +102,7 @@ fn main() -> anyhow::Result<()> {
     let use_tui = !args.no_tui && atty_stdout();
 
     if use_tui {
-        tui::run(&args, &config)
+        tui::run(&args, &config, config::resolve_config_path(None))
     } else {
         cli::run(&args, &config)
     }

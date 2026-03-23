@@ -105,6 +105,8 @@ pub struct App {
 
     pub pending_rx: Option<mpsc::Receiver<BackgroundResult>>,
     pub disc_detected_label: Option<String>,
+    pub overlay: Option<crate::types::Overlay>,
+    pub config_path: std::path::PathBuf,
 }
 
 impl App {
@@ -124,6 +126,8 @@ impl App {
             rip: RipState::default(),
             pending_rx: None,
             disc_detected_label: None,
+            overlay: None,
+            config_path: std::path::PathBuf::new(),
         }
     }
 }
@@ -178,6 +182,11 @@ pub(crate) fn start_disc_scan(app: &mut App) {
 }
 
 impl App {
+    pub fn open_settings(&mut self) {
+        let state = crate::types::SettingsState::from_config(&self.config);
+        self.overlay = Some(crate::types::Overlay::Settings(state));
+    }
+
     pub fn reset_for_rescan(&mut self) {
         // Kill any active rip
         if let Some(ref mut child) = self.rip.child {
@@ -246,7 +255,7 @@ fn terminal_title(app: &App) -> String {
     }
 }
 
-pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
+pub fn run(args: &Args, config: &crate::config::Config, config_path: std::path::PathBuf) -> Result<()> {
     enable_raw_mode()?;
     // Save terminal title, enter alternate screen
     io::stdout().execute(crossterm::terminal::SetTitle("bluback"))?;
@@ -254,7 +263,7 @@ pub fn run(args: &Args, config: &crate::config::Config) -> Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, args, config);
+    let result = run_app(&mut terminal, args, config, config_path);
 
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
@@ -268,9 +277,11 @@ fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     args: &Args,
     config: &crate::config::Config,
+    config_path: std::path::PathBuf,
 ) -> Result<()> {
     let mut app = App::new(args.clone());
     app.config = config.clone();
+    app.config_path = config_path;
     app.eject = config.should_eject(args.cli_eject());
     app.has_mkvpropedit = crate::disc::has_mkvpropedit();
 
@@ -280,14 +291,19 @@ fn run_app(
 
     // Event loop
     loop {
-        terminal.draw(|f| match app.screen {
-            Screen::Scanning => wizard::render_scanning(f, &app),
-            Screen::TmdbSearch => wizard::render_tmdb_search(f, &app),
-            Screen::Season => wizard::render_season(f, &app),
-            Screen::PlaylistManager => wizard::render_playlist_manager(f, &app),
-            Screen::Confirm => wizard::render_confirm(f, &app),
-            Screen::Ripping => dashboard::render(f, &app),
-            Screen::Done => dashboard::render_done(f, &app),
+        terminal.draw(|f| {
+            match app.screen {
+                Screen::Scanning => wizard::render_scanning(f, &app),
+                Screen::TmdbSearch => wizard::render_tmdb_search(f, &app),
+                Screen::Season => wizard::render_season(f, &app),
+                Screen::PlaylistManager => wizard::render_playlist_manager(f, &app),
+                Screen::Confirm => wizard::render_confirm(f, &app),
+                Screen::Ripping => dashboard::render(f, &app),
+                Screen::Done => dashboard::render_done(f, &app),
+            }
+            if let Some(crate::types::Overlay::Settings(ref state)) = app.overlay {
+                settings::render(f, state);
+            }
         })?;
 
         // Update terminal title with current status
@@ -309,15 +325,48 @@ fn run_app(
                     InputFocus::TextInput | InputFocus::InlineEdit(_)
                 );
 
+                // Ctrl+C: always quit immediately
+                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    app.quit = true;
+                    continue;
+                }
+
+                // Route ALL input to overlay when active (blocks q, Ctrl+E, Ctrl+R, Ctrl+S)
+                if app.overlay.is_some() {
+                    let action = {
+                        let state = match app.overlay {
+                            Some(crate::types::Overlay::Settings(ref mut s)) => s,
+                            _ => unreachable!(),
+                        };
+                        if state.save_message.is_some() {
+                            state.save_message = None;
+                            state.save_message_at = None;
+                        }
+                        settings::handle_input(state, key)
+                    };
+                    match action {
+                        settings::SettingsAction::Save => {
+                            handle_settings_save(&mut app, config);
+                        }
+                        settings::SettingsAction::SaveAndClose => {
+                            handle_settings_save(&mut app, config);
+                            app.overlay = None;
+                        }
+                        settings::SettingsAction::Close => {
+                            app.overlay = None;
+                        }
+                        settings::SettingsAction::None => {
+                            apply_settings_to_session(&mut app);
+                        }
+                    }
+                    continue;
+                }
+
                 // Global quit (not during ripping -- dashboard handles its own q)
                 if key.code == KeyCode::Char('q')
                     && !input_active
                     && app.screen != Screen::Ripping
                 {
-                    app.quit = true;
-                    continue;
-                }
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     app.quit = true;
                     continue;
                 }
@@ -354,6 +403,17 @@ fn run_app(
                         app.tmdb.api_key = crate::tmdb::get_api_key(config);
                         start_disc_scan(&mut app);
                     }
+                    continue;
+                }
+
+                // Global Ctrl+S: open settings (not during text input or rip confirmations)
+                if key.code == KeyCode::Char('s')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !input_active
+                    && !app.rip.confirm_abort
+                    && !app.rip.confirm_rescan
+                {
+                    app.open_settings();
                     continue;
                 }
 
@@ -421,6 +481,16 @@ fn run_app(
         // Increment spinner frame when background task is active
         if app.pending_rx.is_some() {
             app.spinner_frame = app.spinner_frame.wrapping_add(1);
+        }
+
+        // Clear save message after 2 seconds
+        if let Some(crate::types::Overlay::Settings(ref mut state)) = app.overlay {
+            if let Some(at) = state.save_message_at {
+                if at.elapsed() > Duration::from_secs(2) {
+                    state.save_message = None;
+                    state.save_message_at = None;
+                }
+            }
         }
 
         // Poll background tasks
@@ -618,4 +688,51 @@ fn poll_background(app: &mut App) {
             }
         }
     }
+}
+
+fn handle_settings_save(app: &mut App, config: &crate::config::Config) {
+    let new_config = match app.overlay {
+        Some(crate::types::Overlay::Settings(ref state)) => state.to_config(),
+        _ => return,
+    };
+    match new_config.save(&app.config_path) {
+        Ok(()) => {
+            app.config = new_config;
+            app.eject = app.config.should_eject(app.args.cli_eject());
+            if let Some(ref dir) = app.config.output_dir {
+                app.args.output = std::path::PathBuf::from(dir);
+            }
+            if let Some(ref dev) = app.config.device {
+                if dev != crate::config::DEFAULT_DEVICE {
+                    app.args.device = Some(std::path::PathBuf::from(dev));
+                }
+            }
+            if let Some(crate::types::Overlay::Settings(ref mut state)) = app.overlay {
+                state.save_message = Some("Saved!".into());
+                state.save_message_at = Some(std::time::Instant::now());
+                state.dirty = false;
+            }
+            // Reset workflow if not ripping
+            if app.screen != Screen::Ripping && app.screen != Screen::Done {
+                app.reset_for_rescan();
+                app.tmdb.api_key = crate::tmdb::get_api_key(config);
+                start_disc_scan(app);
+            }
+        }
+        Err(e) => {
+            if let Some(crate::types::Overlay::Settings(ref mut state)) = app.overlay {
+                state.save_message = Some(format!("Error: {}", e));
+                state.save_message_at = Some(std::time::Instant::now());
+            }
+        }
+    }
+}
+
+fn apply_settings_to_session(app: &mut App) {
+    let new_config = match app.overlay {
+        Some(crate::types::Overlay::Settings(ref state)) => state.to_config(),
+        _ => return,
+    };
+    app.config = new_config;
+    app.eject = app.config.should_eject(app.args.cli_eject());
 }
