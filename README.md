@@ -69,6 +69,12 @@ bluback --format "S{season}E{episode}_{title}.mkv"
 
 # Plain text mode (no TUI)
 bluback --no-tui
+
+# Open settings panel (no disc required)
+bluback --settings
+
+# Use a custom config file
+bluback --config ~/my-config.toml
 ```
 
 ### Options
@@ -88,35 +94,65 @@ bluback --no-tui
 | `--eject` | Eject disc after successful rip |
 | `--no-eject` | Don't eject disc after rip (overrides config) |
 | `--no-max-speed` | Don't set drive to maximum read speed |
+| `--settings` | Open settings panel (no disc/ffmpeg required) |
+| `--config <PATH>` | Path to config file (also: `BLUBACK_CONFIG` env var) |
 
 ## Configuration
 
-Config file: `~/.config/bluback/config.toml`
+Config file: `~/.config/bluback/config.toml` (override with `--config <PATH>` or `BLUBACK_CONFIG` env var)
+
+You can edit the config interactively with `bluback --settings` or by pressing `Ctrl+S` during any TUI screen. Saving from the settings panel writes all fields with defaults commented out for reference.
 
 ```toml
-# TMDb API key (also checked in ~/.config/bluback/tmdb_api_key and TMDB_API_KEY env var)
-tmdb_api_key = "your-key-here"
+# Default output directory
+# output_dir = "."
 
-# Filename preset: "default", "plex", or "jellyfin"
-preset = "plex"
-
-# Or custom format templates (overrides preset)
-tv_format = "S{season}E{episode}_{title}.mkv"
-movie_format = "{title}_({year}).mkv"
-special_format = "{show} S00E{episode} {title}.mkv"
+# Default device (or "auto-detect")
+# device = "auto-detect"
 
 # Auto-eject disc after rip
 eject = true
 
 # Set drive to max read speed
-max_speed = true
+# max_speed = true
 
 # Minimum playlist duration (seconds) for episode detection (default: 900)
 min_duration = 900
 
-# Show playlists below min_duration by default in Playlist Manager (default: false)
-show_filtered = false
+# Filename preset: "default", "plex", or "jellyfin"
+# preset = "plex"
+
+# Or custom format templates (overrides preset)
+# tv_format = "S{season}E{episode}_{title}.mkv"
+# movie_format = "{title}_({year}).mkv"
+# special_format = "{show} S00E{episode} {title}.mkv"
+
+# Show playlists below min_duration by default in Playlist Manager
+# show_filtered = false
+
+# TMDb API key (also checked in ~/.config/bluback/tmdb_api_key and TMDB_API_KEY env var)
+# tmdb_api_key = "your-key-here"
 ```
+
+### Environment Variables
+
+Settings can also be set via environment variables. When the settings panel opens, it detects and imports any set `BLUBACK_*` variables:
+
+| Variable | Config Key |
+|---|---|
+| `BLUBACK_OUTPUT_DIR` | `output_dir` |
+| `BLUBACK_DEVICE` | `device` |
+| `BLUBACK_EJECT` | `eject` |
+| `BLUBACK_MAX_SPEED` | `max_speed` |
+| `BLUBACK_MIN_DURATION` | `min_duration` |
+| `BLUBACK_PRESET` | `preset` |
+| `BLUBACK_TV_FORMAT` | `tv_format` |
+| `BLUBACK_MOVIE_FORMAT` | `movie_format` |
+| `BLUBACK_SPECIAL_FORMAT` | `special_format` |
+| `BLUBACK_SHOW_FILTERED` | `show_filtered` |
+| `TMDB_API_KEY` | `tmdb_api_key` |
+
+Environment variables take precedence over config file values at runtime. When saving, a warning notes which env vars will override the saved config.
 
 ### Filename Templates
 
@@ -139,6 +175,7 @@ Bracket groups `[...]` auto-collapse when their contents are empty (useful for o
 | `s` | Toggle special (season 0) marking |
 | `r` / `R` | Reset current / all episode assignments |
 | `f` | Show/hide filtered (short) playlists |
+| `Ctrl+S` | Open settings panel |
 | `Ctrl+R` | Rescan disc and restart wizard |
 | `Ctrl+E` | Eject disc |
 | `Ctrl+C` | Quit immediately |

@@ -13,6 +13,10 @@ pub const PLEX_MOVIE_FORMAT: &str =
 pub const JELLYFIN_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title}.mkv";
 pub const JELLYFIN_MOVIE_FORMAT: &str = "{title} ({year})/{title} ({year}).mkv";
 
+pub const DEFAULT_OUTPUT_DIR: &str = ".";
+pub const DEFAULT_DEVICE: &str = "auto-detect";
+pub const DEFAULT_MIN_DURATION: u32 = 900;
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
     pub tmdb_api_key: Option<String>,
@@ -24,6 +28,8 @@ pub struct Config {
     pub max_speed: Option<bool>,
     pub min_duration: Option<u32>,
     pub show_filtered: Option<bool>,
+    pub output_dir: Option<String>,
+    pub device: Option<String>,
 }
 
 fn config_dir() -> PathBuf {
@@ -33,10 +39,19 @@ fn config_dir() -> PathBuf {
     home.join(".config").join("bluback")
 }
 
-pub fn load_config() -> Config {
-    let path = config_dir().join("config.toml");
+pub fn resolve_config_path(cli_path: Option<PathBuf>) -> PathBuf {
+    if let Some(path) = cli_path {
+        return path;
+    }
+    if let Ok(env_path) = std::env::var("BLUBACK_CONFIG") {
+        return PathBuf::from(env_path);
+    }
+    config_dir().join("config.toml")
+}
+
+pub fn load_from(path: &std::path::Path) -> Config {
     if path.exists() {
-        fs::read_to_string(&path)
+        fs::read_to_string(path)
             .ok()
             .and_then(|s| toml::from_str(&s).ok())
             .unwrap_or_default()
@@ -46,6 +61,59 @@ pub fn load_config() -> Config {
 }
 
 impl Config {
+    pub fn to_toml_string(&self) -> String {
+        let mut out = String::new();
+
+        fn emit_bool(out: &mut String, key: &str, val: Option<bool>, default: bool) {
+            match val {
+                Some(v) if v != default => out.push_str(&format!("{} = {}\n", key, v)),
+                _ => out.push_str(&format!("# {} = {}\n", key, default)),
+            }
+        }
+
+        fn emit_u32(out: &mut String, key: &str, val: Option<u32>, default: u32) {
+            match val {
+                Some(v) if v != default => out.push_str(&format!("{} = {}\n", key, v)),
+                _ => out.push_str(&format!("# {} = {}\n", key, default)),
+            }
+        }
+
+        fn emit_str(out: &mut String, key: &str, val: &Option<String>, default: &str) {
+            match val {
+                Some(ref v) if v != default => {
+                    out.push_str(&format!("{} = {:?}\n", key, v));
+                }
+                _ => {
+                    out.push_str(&format!("# {} = {:?}\n", key, default));
+                }
+            }
+        }
+
+        emit_str(&mut out, "output_dir", &self.output_dir, DEFAULT_OUTPUT_DIR);
+        emit_str(&mut out, "device", &self.device, DEFAULT_DEVICE);
+        emit_bool(&mut out, "eject", self.eject, false);
+        emit_bool(&mut out, "max_speed", self.max_speed, true);
+        emit_u32(&mut out, "min_duration", self.min_duration, DEFAULT_MIN_DURATION);
+        out.push('\n');
+        emit_str(&mut out, "preset", &self.preset, "");
+        emit_str(&mut out, "tv_format", &self.tv_format, DEFAULT_TV_FORMAT);
+        emit_str(&mut out, "movie_format", &self.movie_format, DEFAULT_MOVIE_FORMAT);
+        emit_str(&mut out, "special_format", &self.special_format, DEFAULT_SPECIAL_FORMAT);
+        emit_bool(&mut out, "show_filtered", self.show_filtered, false);
+        out.push('\n');
+        emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
+
+        out
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, self.to_toml_string())?;
+        Ok(())
+    }
+
     pub fn tmdb_api_key(&self) -> Option<String> {
         if let Some(ref key) = self.tmdb_api_key {
             if !key.is_empty() {
@@ -414,5 +482,113 @@ mod tests {
     fn test_parse_show_filtered() {
         let config: Config = toml::from_str("show_filtered = true").unwrap();
         assert_eq!(config.show_filtered, Some(true));
+    }
+
+    #[test]
+    fn test_parse_output_dir() {
+        let config: Config = toml::from_str(r#"output_dir = "/tmp/rips""#).unwrap();
+        assert_eq!(config.output_dir.as_deref(), Some("/tmp/rips"));
+    }
+
+    #[test]
+    fn test_parse_device() {
+        let config: Config = toml::from_str(r#"device = "/dev/sr1""#).unwrap();
+        assert_eq!(config.device.as_deref(), Some("/dev/sr1"));
+    }
+
+    #[test]
+    fn test_output_dir_default_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.output_dir.is_none());
+    }
+
+    #[test]
+    fn test_device_default_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.device.is_none());
+    }
+
+    #[test]
+    fn test_save_default_config_all_commented() {
+        let config = Config::default();
+        let output = config.to_toml_string();
+        for line in output.lines() {
+            let trimmed = line.trim();
+            assert!(
+                trimmed.is_empty() || trimmed.starts_with('#'),
+                "Expected comment or blank, got: {}",
+                line
+            );
+        }
+        assert!(output.contains("# eject = false"));
+        assert!(output.contains("# max_speed = true"));
+        assert!(output.contains("# min_duration = 900"));
+        assert!(output.contains("# show_filtered = false"));
+    }
+
+    #[test]
+    fn test_save_modified_config_mixed() {
+        let config = Config {
+            eject: Some(true),
+            min_duration: Some(600),
+            ..Default::default()
+        };
+        let output = config.to_toml_string();
+        assert!(output.contains("eject = true"));
+        assert!(output.contains("min_duration = 600"));
+        // Make sure modified values don't have # prefix
+        for line in output.lines() {
+            if line.contains("eject = true") {
+                assert!(!line.starts_with('#'), "eject should not be commented");
+            }
+            if line.contains("min_duration = 600") {
+                assert!(!line.starts_with('#'), "min_duration should not be commented");
+            }
+        }
+        assert!(output.contains("# max_speed = true"));
+        assert!(output.contains("# show_filtered = false"));
+    }
+
+    #[test]
+    fn test_save_roundtrip() {
+        let config = Config {
+            eject: Some(true),
+            preset: Some("plex".into()),
+            min_duration: Some(600),
+            output_dir: Some("/tmp/rips".into()),
+            ..Default::default()
+        };
+        let toml_str = config.to_toml_string();
+        let reparsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(reparsed.eject, Some(true));
+        assert_eq!(reparsed.preset.as_deref(), Some("plex"));
+        assert_eq!(reparsed.min_duration, Some(600));
+        assert_eq!(reparsed.output_dir.as_deref(), Some("/tmp/rips"));
+        assert!(reparsed.max_speed.is_none());
+        assert!(reparsed.show_filtered.is_none());
+    }
+
+    #[test]
+    fn test_save_string_values_quoted() {
+        let config = Config {
+            tv_format: Some("custom/{show}.mkv".into()),
+            tmdb_api_key: Some("abc123".into()),
+            ..Default::default()
+        };
+        let output = config.to_toml_string();
+        assert!(output.contains(r#"tv_format = "custom/{show}.mkv""#));
+        assert!(output.contains(r#"tmdb_api_key = "abc123""#));
+    }
+
+    #[test]
+    fn test_resolve_config_path_default() {
+        let path = resolve_config_path(None);
+        assert!(path.to_string_lossy().ends_with(".config/bluback/config.toml"));
+    }
+
+    #[test]
+    fn test_resolve_config_path_explicit() {
+        let path = resolve_config_path(Some(std::path::PathBuf::from("/tmp/custom.toml")));
+        assert_eq!(path, std::path::PathBuf::from("/tmp/custom.toml"));
     }
 }
