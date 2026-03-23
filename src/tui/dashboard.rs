@@ -43,7 +43,7 @@ pub fn render(f: &mut Frame, app: &App) {
 
     // Job table
     let header = Row::new(["#", "Playlist", "Episode", "File", "Status", "Size", "ETA"])
-        .style(Style::default().add_modifier(Modifier::BOLD));
+        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD));
 
     let rows: Vec<Row> = app
         .rip_jobs
@@ -76,21 +76,37 @@ pub fn render(f: &mut Frame, app: &App) {
                         .unwrap_or_default();
                     (format!("{} {}%", bar, pct), size_str, eta_str)
                 }
-                PlaylistStatus::Done(sz) => ("Done".to_string(), format_size(*sz), String::new()),
+                PlaylistStatus::Done(sz) => ("Completed".to_string(), format_size(*sz), String::new()),
                 PlaylistStatus::Failed(msg) => {
                     (format!("Failed: {}", msg), String::new(), String::new())
                 }
             };
 
-            Row::new([
-                format!("{}", i + 1),
+            let row = Row::new([
+                if matches!(job.status, PlaylistStatus::Ripping(_)) {
+                    ">".to_string()
+                } else {
+                    format!("{}", i + 1)
+                },
                 job.playlist.num.clone(),
                 ep_name,
                 job.filename.clone(),
                 status,
                 size,
                 eta,
-            ])
+            ]);
+            match &job.status {
+                PlaylistStatus::Ripping(_) => {
+                    row.style(Style::default().fg(Color::Cyan))
+                }
+                PlaylistStatus::Done(_) => {
+                    row.style(Style::default().fg(Color::DarkGray))
+                }
+                PlaylistStatus::Failed(_) => {
+                    row.style(Style::default().fg(Color::Red))
+                }
+                _ => row,
+            }
         })
         .collect();
 
@@ -208,7 +224,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false });
     f.render_widget(body, chunks[1]);
 
-    let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [any other key] Exit")
+    let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [any other key] Exit")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 }
