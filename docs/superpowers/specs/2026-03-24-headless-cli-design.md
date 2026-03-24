@@ -71,8 +71,9 @@ When `--title` is NOT provided in headless mode:
 ## `--list-playlists` Behavior
 
 - Scans the disc (using `--device` or auto-detect)
-- Prints **all** playlists (not filtered by `--min-duration`), showing: MPLS number, duration, stream summary, chapter count
-- Short playlists are marked (e.g., with a `*` or grouped separately) so the user can distinguish episode-length from extras
+- Prints **all** playlists (not filtered by `--min-duration`), showing: MPLS number, duration, chapter count
+- Short playlists are marked with `*`; episode-length playlists show their filtered index (the number used with `--playlists`)
+- Stream summary (video/audio codec info) deferred to a future enhancement — requires per-playlist FFmpeg probe which is slow
 - Exits with code 0
 - No ripping, no TMDb, no prompts
 - Output is plain text with consistent column widths (grep/awk-friendly)
@@ -82,7 +83,7 @@ When `--title` is NOT provided in headless mode:
 ## `--playlists` Behavior
 
 - Accepts the same format as the interactive prompt: `1,2,3`, `1-3`, `all`
-- **Indexing**: Numbers are 1-indexed positions in the *filtered* (episode-length) playlist list, not raw MPLS numbers. Position 1 = first playlist that passed `--min-duration` filtering, matching the numbering shown in `--list-playlists` and the interactive selection prompt.
+- **Indexing**: Numbers are 1-indexed positions in the *filtered* (episode-length) playlist list, not raw MPLS numbers. Position 1 = first playlist that passed `--min-duration` filtering. `--list-playlists` shows these indices in its "Sel" column so users can cross-reference.
 - Invalid selections (out of range, unparseable) produce an error and exit
 - In interactive CLI mode (not headless), `--playlists` skips the selection prompt
 - In TUI mode, ignored
