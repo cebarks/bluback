@@ -73,7 +73,7 @@ cargo clippy                   # Lint
 ### Two UI Modes
 
 - **TUI mode** (default when stdout is TTY): ratatui wizard (5 screens in TV mode, 4 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`. App struct decomposed into `DiscState`, `TmdbState`, `WizardState`, `RipState` sub-structs. Settings overlay (`tui/settings.rs`) accessible via `Ctrl+S` from any screen, rendered on top of the current screen via `App.overlay: Option<Overlay>`.
-- **CLI mode** (`--no-tui` or non-TTY): plain-text interactive prompts in `cli.rs`.
+- **CLI mode** (`--no-tui` or non-TTY): plain-text interactive prompts in `cli.rs`. Supports headless operation via `--yes`/`-y` (auto-enabled when stdin is not a TTY). `--title`, `--year`, `--playlists`, `--list-playlists` flags enable fully scripted workflows.
 
 Both modes use the same underlying disc/rip/tmdb/util functions.
 
@@ -134,11 +134,17 @@ bluback [OPTIONS]
       --eject                  Eject disc after successful rip
       --no-eject               Don't eject disc after rip (overrides config)
       --no-max-speed           Don't set drive to maximum read speed
+  -y, --yes                    Accept all defaults without prompting (auto if stdin not a TTY)
+      --title <STRING>         Set show/movie title directly (skips TMDb)
+      --year <STRING>          Movie release year (with --title in --movie mode)
+      --playlists <SEL>        Select specific playlists (e.g. 1,2,3 or 1-3 or all)
+      --list-playlists         Print playlist info and exit
       --settings               Open settings panel (no disc/ffmpeg required)
       --config <PATH>          Path to config file (also: BLUBACK_CONFIG env var)
 ```
 
 `--format` and `--format-preset` are mutually exclusive (clap argument group).
+`--yes` auto-enables when stdin is not a TTY (headless/scripted contexts).
 
 ## TUI Keybindings
 

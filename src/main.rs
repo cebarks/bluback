@@ -78,6 +78,26 @@ pub struct Args {
     /// Path to config file
     #[arg(long)]
     config: Option<PathBuf>,
+
+    /// Accept all defaults without prompting (auto if stdin is not a TTY)
+    #[arg(short = 'y', long)]
+    yes: bool,
+
+    /// Set show (TV) or movie title directly, skipping TMDb lookup
+    #[arg(long)]
+    title: Option<String>,
+
+    /// Movie release year for filename templates (used with --title in --movie mode)
+    #[arg(long)]
+    year: Option<String>,
+
+    /// Select specific playlists (e.g. "1,2,3", "1-3", "all")
+    #[arg(long)]
+    playlists: Option<String>,
+
+    /// Scan disc and print playlist info, then exit
+    #[arg(long)]
+    list_playlists: bool,
 }
 
 impl Args {
@@ -137,16 +157,26 @@ fn main() -> anyhow::Result<()> {
         args.device = Some(drives[0].clone());
     }
 
+    if args.list_playlists {
+        return cli::list_playlists(&args, &config);
+    }
+
     let use_tui = !args.no_tui && atty_stdout();
+    let headless = args.yes || (!atty_stdin() && !use_tui);
 
     if use_tui {
         tui::run(&args, &config, config_path)
     } else {
-        cli::run(&args, &config)
+        cli::run(&args, &config, headless)
     }
 }
 
 fn atty_stdout() -> bool {
     use std::io::IsTerminal;
     std::io::stdout().is_terminal()
+}
+
+fn atty_stdin() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
 }

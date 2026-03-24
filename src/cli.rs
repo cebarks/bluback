@@ -16,7 +16,116 @@ struct TmdbContext {
     show_name: Option<String>,
 }
 
-pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
+pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
+    let device = args.device().to_string_lossy();
+
+    if !args.device().exists() {
+        anyhow::bail!("No Blu-ray device found at {}", device);
+    }
+
+    if config.should_max_speed(args.no_max_speed) {
+        disc::set_max_speed(&device);
+    }
+
+    let label = disc::get_volume_label(&device);
+    if !label.is_empty() {
+        println!("Volume label: {}", label);
+    }
+
+    println!("Scanning disc at {}...\n", device);
+    let playlists = disc::scan_playlists(&device)?;
+    if playlists.is_empty() {
+        anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
+    }
+
+    let min_duration = config.min_duration(args.min_duration);
+
+    // Extract chapter counts from MPLS files
+    let chapter_counts = {
+        let device_str = device.to_string();
+        match disc::ensure_mounted(&device_str) {
+            Ok((mount, did_mount)) => {
+                let nums: Vec<&str> = playlists.iter().map(|pl| pl.num.as_str()).collect();
+                let counts = crate::chapters::count_chapters_for_playlists(
+                    std::path::Path::new(&mount),
+                    &nums,
+                );
+                if did_mount {
+                    let _ = disc::unmount_disc(&device_str);
+                }
+                counts
+            }
+            Err(_) => std::collections::HashMap::new(),
+        }
+    };
+
+    let has_ch = !chapter_counts.is_empty();
+    let header_ch = if has_ch { "  Ch" } else { "" };
+
+    // Build filtered index mapping: episode-length playlists get sequential numbers
+    let mut filtered_index: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    let mut sel_idx = 1usize;
+    for pl in &playlists {
+        if pl.seconds >= min_duration {
+            filtered_index.insert(pl.num.clone(), sel_idx);
+            sel_idx += 1;
+        }
+    }
+
+    println!(
+        "  {:<4}  {:<10}  {:<10}{}  Sel",
+        "#", "Playlist", "Duration", header_ch
+    );
+    println!(
+        "  {:<4}  {:<10}  {:<10}{}  ---",
+        "---", "--------", "--------",
+        if has_ch { "  --" } else { "" },
+    );
+
+    for (i, pl) in playlists.iter().enumerate() {
+        let ch_str = if has_ch {
+            format!(
+                "  {:<2}",
+                chapter_counts
+                    .get(&pl.num)
+                    .map(|c| c.to_string())
+                    .unwrap_or_default()
+            )
+        } else {
+            String::new()
+        };
+
+        let sel_str = if let Some(idx) = filtered_index.get(&pl.num) {
+            format!("  {}", idx)
+        } else {
+            "  *".to_string()
+        };
+
+        println!(
+            "  {:<4}  {:<10}  {:<10}{}{}",
+            i + 1,
+            pl.num,
+            pl.duration,
+            ch_str,
+            sel_str,
+        );
+    }
+
+    let episode_count = filtered_index.len();
+    let short_count = playlists.len() - episode_count;
+    println!(
+        "\n  {} playlists ({} episode-length, {} short/extras)",
+        playlists.len(),
+        episode_count,
+        short_count,
+    );
+    println!("  * = below min_duration ({}s)", min_duration);
+
+    Ok(())
+}
+
+pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyhow::Result<()> {
     let device = args.device().to_string_lossy();
 
     let (label, label_info, episodes_pl, movie_mode) = scan_disc(args, config)?;
@@ -40,13 +149,15 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
         }
     };
 
-    let tmdb_ctx = lookup_tmdb(args, config, &label_info, &episodes_pl, movie_mode)?;
+    let tmdb_ctx = lookup_tmdb(args, config, &label_info, &episodes_pl, movie_mode, headless)?;
 
     let selected = display_and_select(
         &episodes_pl,
         &tmdb_ctx.episode_assignments,
         tmdb_ctx.season_num,
         &chapter_counts,
+        args.playlists.as_deref(),
+        headless,
     )?;
 
     let outfiles = build_filenames(
@@ -59,6 +170,7 @@ pub fn run(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
         &selected,
         &tmdb_ctx,
         movie_mode,
+        headless,
     )?;
 
     rip_selected(args, config, &device, &episodes_pl, &selected, &outfiles)
@@ -120,6 +232,7 @@ fn lookup_tmdb(
     label_info: &Option<LabelInfo>,
     episodes_pl: &[Playlist],
     movie_mode: bool,
+    headless: bool,
 ) -> anyhow::Result<TmdbContext> {
     let mut ctx = TmdbContext {
         episode_assignments: HashMap::new(),
@@ -128,9 +241,57 @@ fn lookup_tmdb(
         show_name: None,
     };
 
+    // --title: skip TMDb entirely, use the provided title directly
+    if let Some(ref title) = args.title {
+        if movie_mode {
+            ctx.movie_title = Some((title.clone(), args.year.clone().unwrap_or_default()));
+            return Ok(ctx);
+        } else {
+            ctx.show_name = Some(title.clone());
+            let season = match ctx.season_num {
+                Some(s) => s,
+                None if headless => {
+                    anyhow::bail!(
+                        "Cannot determine season number in headless mode. Use --season <NUM>."
+                    );
+                }
+                None => prompt_number("  Season number: ", None)?,
+            };
+            ctx.season_num = Some(season);
+
+            let disc_number = label_info.as_ref().map(|l| l.disc);
+            let default_start = args
+                .start_episode
+                .unwrap_or_else(|| guess_start_episode(disc_number, episodes_pl.len()));
+            let start_ep = if args.start_episode.is_none() && !headless {
+                prompt_number(
+                    &format!("  Starting episode number [{}]: ", default_start),
+                    Some(default_start),
+                )?
+            } else {
+                default_start
+            };
+
+            // Extra synthetic episodes for multi-episode detection in assign_episodes
+            let synthetic_count = episodes_pl.len() * 2;
+            let synthetic_episodes: Vec<Episode> = (start_ep
+                ..start_ep + synthetic_count as u32)
+                .map(|n| Episode {
+                    episode_number: n,
+                    name: String::new(),
+                    runtime: None,
+                })
+                .collect();
+
+            ctx.episode_assignments =
+                assign_episodes(episodes_pl, &synthetic_episodes, start_ep);
+            return Ok(ctx);
+        }
+    }
+
     let mut api_key = tmdb::get_api_key(config);
 
-    if api_key.is_none() {
+    if api_key.is_none() && !headless {
         let input = prompt("TMDb API key not found. Enter key (or Enter to skip): ")?;
         if !input.is_empty() {
             tmdb::save_api_key(&input)?;
@@ -143,7 +304,11 @@ fn lookup_tmdb(
         let default_query = label_info.as_ref().map(|l| l.show.as_str()).unwrap_or("");
 
         if movie_mode {
-            ctx.movie_title = prompt_tmdb_movie(key, default_query)?;
+            if headless {
+                ctx.movie_title = headless_tmdb_movie(key, default_query)?;
+            } else {
+                ctx.movie_title = prompt_tmdb_movie(key, default_query)?;
+            }
         } else {
             if api_key.is_none() && (args.season.is_some() || args.start_episode.is_some()) {
                 println!("Warning: --season/--start-episode require TMDb. Ignoring.");
@@ -151,7 +316,13 @@ fn lookup_tmdb(
 
             let cli_season = args.season.or(label_info.as_ref().map(|l| l.season));
 
-            if let Some(lookup) = prompt_tmdb(key, default_query, cli_season)? {
+            let lookup = if headless {
+                headless_tmdb_tv(key, default_query, cli_season)?
+            } else {
+                prompt_tmdb(key, default_query, cli_season)?
+            };
+
+            if let Some(lookup) = lookup {
                 ctx.season_num = Some(lookup.season);
                 ctx.show_name = Some(lookup.show_name);
 
@@ -160,7 +331,7 @@ fn lookup_tmdb(
                     .start_episode
                     .unwrap_or_else(|| guess_start_episode(disc_number, episodes_pl.len()));
 
-                let start_ep = if args.start_episode.is_none() {
+                let start_ep = if args.start_episode.is_none() && !headless {
                     prompt_number(
                         &format!("  Starting episode number [{}]: ", default_start),
                         Some(default_start),
@@ -171,105 +342,148 @@ fn lookup_tmdb(
 
                 ctx.episode_assignments = assign_episodes(episodes_pl, &lookup.episodes, start_ep);
 
-                // Show mappings and prompt for accept/manual
-                loop {
-                    println!("\n  Episode Mappings:");
-                    for pl in episodes_pl.iter() {
-                        let ep_str = if let Some(eps) = ctx.episode_assignments.get(&pl.num) {
-                            eps.iter()
-                                .map(|e| {
-                                    if e.name.is_empty() {
-                                        format!("E{:02}", e.episode_number)
-                                    } else {
-                                        format!(
-                                            "S{:02}E{:02} - {}",
-                                            ctx.season_num.unwrap_or(0),
-                                            e.episode_number,
-                                            e.name
-                                        )
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        } else {
-                            "(none)".to_string()
-                        };
-                        println!("    {} ({})  ->  {}", pl.num, pl.duration, ep_str);
-                    }
-
-                    let response = prompt("\n  Accept mappings? [Y/n/manual]: ")?;
-                    if response.is_empty()
-                        || response.eq_ignore_ascii_case("y")
-                        || response.eq_ignore_ascii_case("yes")
-                    {
-                        break;
-                    } else if response.eq_ignore_ascii_case("n") {
-                        let new_start = prompt_number(
-                            &format!("  Starting episode number [{}]: ", start_ep),
-                            Some(start_ep),
-                        )?;
-                        ctx.episode_assignments =
-                            assign_episodes(episodes_pl, &lookup.episodes, new_start);
-                        continue;
-                    } else if response.eq_ignore_ascii_case("manual") {
-                        let ep_by_num: std::collections::HashMap<u32, &crate::types::Episode> =
-                            lookup.episodes.iter().map(|e| (e.episode_number, e)).collect();
+                // Show mappings and prompt for accept/manual (interactive only)
+                if !headless {
+                    loop {
+                        println!("\n  Episode Mappings:");
                         for pl in episodes_pl.iter() {
-                            let current = ctx
-                                .episode_assignments
-                                .get(&pl.num)
-                                .map(|eps| {
+                            let ep_str =
+                                if let Some(eps) = ctx.episode_assignments.get(&pl.num) {
                                     eps.iter()
-                                        .map(|e| e.episode_number.to_string())
+                                        .map(|e| {
+                                            if e.name.is_empty() {
+                                                format!("E{:02}", e.episode_number)
+                                            } else {
+                                                format!(
+                                                    "S{:02}E{:02} - {}",
+                                                    ctx.season_num.unwrap_or(0),
+                                                    e.episode_number,
+                                                    e.name
+                                                )
+                                            }
+                                        })
                                         .collect::<Vec<_>>()
-                                        .join(",")
-                                })
-                                .unwrap_or_default();
-                            loop {
-                                let input = prompt(&format!(
-                                    "  Playlist {} ({}) [{}]: ",
-                                    pl.num, pl.duration, current
-                                ))?;
-                                let input = if input.is_empty() {
-                                    current.clone()
+                                        .join(", ")
                                 } else {
-                                    input
+                                    "(none)".to_string()
                                 };
-                                match util::parse_episode_input(&input) {
-                                    Some(ep_nums) if ep_nums.is_empty() => {
-                                        ctx.episode_assignments.remove(&pl.num);
-                                        break;
-                                    }
-                                    Some(ep_nums) => {
-                                        let eps: Vec<crate::types::Episode> = ep_nums
-                                            .iter()
-                                            .map(|&num| {
-                                                ep_by_num
-                                                    .get(&num)
-                                                    .map(|e| (*e).clone())
-                                                    .unwrap_or(crate::types::Episode {
-                                                        episode_number: num,
-                                                        name: String::new(),
-                                                        runtime: None,
-                                                    })
-                                            })
-                                            .collect();
-                                        ctx.episode_assignments.insert(pl.num.clone(), eps);
-                                        break;
-                                    }
-                                    None => {
-                                        println!("  Invalid input. Use: 3, 3-4, or 3,5");
+                            println!("    {} ({})  ->  {}", pl.num, pl.duration, ep_str);
+                        }
+
+                        let response = prompt("\n  Accept mappings? [Y/n/manual]: ")?;
+                        if response.is_empty()
+                            || response.eq_ignore_ascii_case("y")
+                            || response.eq_ignore_ascii_case("yes")
+                        {
+                            break;
+                        } else if response.eq_ignore_ascii_case("n") {
+                            let new_start = prompt_number(
+                                &format!("  Starting episode number [{}]: ", start_ep),
+                                Some(start_ep),
+                            )?;
+                            ctx.episode_assignments =
+                                assign_episodes(episodes_pl, &lookup.episodes, new_start);
+                            continue;
+                        } else if response.eq_ignore_ascii_case("manual") {
+                            let ep_by_num: std::collections::HashMap<
+                                u32,
+                                &crate::types::Episode,
+                            > = lookup
+                                .episodes
+                                .iter()
+                                .map(|e| (e.episode_number, e))
+                                .collect();
+                            for pl in episodes_pl.iter() {
+                                let current = ctx
+                                    .episode_assignments
+                                    .get(&pl.num)
+                                    .map(|eps| {
+                                        eps.iter()
+                                            .map(|e| e.episode_number.to_string())
+                                            .collect::<Vec<_>>()
+                                            .join(",")
+                                    })
+                                    .unwrap_or_default();
+                                loop {
+                                    let input = prompt(&format!(
+                                        "  Playlist {} ({}) [{}]: ",
+                                        pl.num, pl.duration, current
+                                    ))?;
+                                    let input = if input.is_empty() {
+                                        current.clone()
+                                    } else {
+                                        input
+                                    };
+                                    match util::parse_episode_input(&input) {
+                                        Some(ep_nums) if ep_nums.is_empty() => {
+                                            ctx.episode_assignments.remove(&pl.num);
+                                            break;
+                                        }
+                                        Some(ep_nums) => {
+                                            let eps: Vec<crate::types::Episode> = ep_nums
+                                                .iter()
+                                                .map(|&num| {
+                                                    ep_by_num
+                                                        .get(&num)
+                                                        .map(|e| (*e).clone())
+                                                        .unwrap_or(crate::types::Episode {
+                                                            episode_number: num,
+                                                            name: String::new(),
+                                                            runtime: None,
+                                                        })
+                                                })
+                                                .collect();
+                                            ctx.episode_assignments
+                                                .insert(pl.num.clone(), eps);
+                                            break;
+                                        }
+                                        None => {
+                                            println!(
+                                                "  Invalid input. Use: 3, 3-4, or 3,5"
+                                            );
+                                        }
                                     }
                                 }
                             }
+                            continue; // Loop back to show updated mappings
+                        } else {
+                            println!("  Invalid choice. Enter Y, n, or manual.");
                         }
-                        continue; // Loop back to show updated mappings
-                    } else {
-                        println!("  Invalid choice. Enter Y, n, or manual.");
                     }
                 }
             }
         }
+    }
+
+    // Headless fallback: no TMDb data and no --title provided — use label info
+    if headless && !movie_mode && ctx.episode_assignments.is_empty() && args.title.is_none() {
+        ctx.show_name = label_info.as_ref().map(|l| l.show.clone());
+
+        let season = match ctx.season_num {
+            Some(s) => s,
+            None => {
+                anyhow::bail!(
+                    "Cannot determine season number in headless mode. Use --season <NUM>."
+                );
+            }
+        };
+        ctx.season_num = Some(season);
+
+        let disc_number = label_info.as_ref().map(|l| l.disc);
+        let start_ep = args
+            .start_episode
+            .unwrap_or_else(|| guess_start_episode(disc_number, episodes_pl.len()));
+
+        let synthetic_count = episodes_pl.len() * 2;
+        let synthetic_episodes: Vec<Episode> = (start_ep..start_ep + synthetic_count as u32)
+            .map(|n| Episode {
+                episode_number: n,
+                name: String::new(),
+                runtime: None,
+            })
+            .collect();
+
+        ctx.episode_assignments = assign_episodes(episodes_pl, &synthetic_episodes, start_ep);
     }
 
     Ok(ctx)
@@ -280,6 +494,8 @@ fn display_and_select(
     episode_assignments: &EpisodeAssignments,
     season_num: Option<u32>,
     chapter_counts: &std::collections::HashMap<String, usize>,
+    playlists_flag: Option<&str>,
+    headless: bool,
 ) -> anyhow::Result<Vec<usize>> {
     let has_eps = !episode_assignments.is_empty();
     let has_ch = !chapter_counts.is_empty();
@@ -347,6 +563,23 @@ fn display_and_select(
     }
     println!();
 
+    // --playlists flag: resolve selection non-interactively
+    if let Some(selection_str) = playlists_flag {
+        match parse_selection(selection_str, episodes_pl.len()) {
+            Some(sel) => return Ok(sel),
+            None => anyhow::bail!(
+                "Invalid --playlists value '{}'. Use e.g. '1,2,3', '1-3', or 'all' (max {}).",
+                selection_str,
+                episodes_pl.len()
+            ),
+        }
+    }
+
+    // Headless without explicit selection: rip all playlists
+    if headless {
+        return Ok((0..episodes_pl.len()).collect());
+    }
+
     let selected = loop {
         let input = prompt("Select playlists to rip (e.g. 1,2,3 or 1-3 or 'all') [all]: ")?;
         let input = if input.is_empty() {
@@ -375,6 +608,7 @@ fn build_filenames(
     selected: &[usize],
     tmdb_ctx: &TmdbContext,
     movie_mode: bool,
+    headless: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let format_template = config.resolve_format(
         movie_mode,
@@ -470,25 +704,31 @@ fn build_filenames(
         println!("    {} ({}) -> {}", pl.num, pl.duration, default_names[i]);
     }
 
-    let customize = prompt("\n  Customize filenames? [y/N]: ")?;
     let mut outfiles: Vec<PathBuf> = Vec::new();
-    if customize.eq_ignore_ascii_case("y") || customize.eq_ignore_ascii_case("yes") {
-        for (i, &idx) in selected.iter().enumerate() {
-            let pl = &episodes_pl[idx];
-            let input = prompt(&format!(
-                "  Name for playlist {} [{}]: ",
-                pl.num, default_names[i]
-            ))?;
-            let name = if input.is_empty() {
-                default_names[i].clone()
-            } else {
-                format!("{}.mkv", sanitize_filename(&input))
-            };
-            outfiles.push(args.output.join(&name));
-        }
-    } else {
+    if headless {
         for name in &default_names {
             outfiles.push(args.output.join(name));
+        }
+    } else {
+        let customize = prompt("\n  Customize filenames? [y/N]: ")?;
+        if customize.eq_ignore_ascii_case("y") || customize.eq_ignore_ascii_case("yes") {
+            for (i, &idx) in selected.iter().enumerate() {
+                let pl = &episodes_pl[idx];
+                let input = prompt(&format!(
+                    "  Name for playlist {} [{}]: ",
+                    pl.num, default_names[i]
+                ))?;
+                let name = if input.is_empty() {
+                    default_names[i].clone()
+                } else {
+                    format!("{}.mkv", sanitize_filename(&input))
+                };
+                outfiles.push(args.output.join(&name));
+            }
+        } else {
+            for name in &default_names {
+                outfiles.push(args.output.join(name));
+            }
         }
     }
 
@@ -843,4 +1083,76 @@ fn prompt_tmdb_movie(
 
     println!("  Selected: {} ({})", movie.title, year);
     Ok(Some((movie.title.clone(), year)))
+}
+
+fn headless_tmdb_movie(
+    api_key: &str,
+    default_query: &str,
+) -> anyhow::Result<Option<(String, String)>> {
+    if default_query.is_empty() {
+        return Ok(None);
+    }
+
+    let results = match tmdb::search_movie(default_query, api_key) {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
+    if results.is_empty() {
+        return Ok(None);
+    }
+
+    let movie = &results[0];
+    let year = movie
+        .release_date
+        .as_deref()
+        .unwrap_or("")
+        .get(..4)
+        .unwrap_or("")
+        .to_string();
+
+    eprintln!("TMDb: auto-selected \"{}\" ({})", movie.title, year);
+    Ok(Some((movie.title.clone(), year)))
+}
+
+fn headless_tmdb_tv(
+    api_key: &str,
+    default_query: &str,
+    cli_season: Option<u32>,
+) -> anyhow::Result<Option<TmdbLookupResult>> {
+    if default_query.is_empty() {
+        return Ok(None);
+    }
+
+    let results = match tmdb::search_show(default_query, api_key) {
+        Ok(r) => r,
+        Err(_) => return Ok(None),
+    };
+
+    if results.is_empty() {
+        return Ok(None);
+    }
+
+    let show = &results[0];
+    eprintln!("TMDb: auto-selected \"{}\"", show.name);
+
+    let season_num = match cli_season {
+        Some(s) => s,
+        None => {
+            anyhow::bail!(
+                "Cannot determine season number in headless mode. Use --season <NUM>."
+            );
+        }
+    };
+
+    let episodes = match tmdb::get_season(show.id, season_num, api_key) {
+        Ok(eps) => eps,
+        Err(_) => return Ok(None),
+    };
+
+    Ok(Some(TmdbLookupResult {
+        episodes,
+        season: season_num,
+        show_name: show.name.clone(),
+    }))
 }
