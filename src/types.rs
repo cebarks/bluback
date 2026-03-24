@@ -291,6 +291,17 @@ impl SettingsState {
                 key: "verbose_libbluray".into(),
                 value: config.verbose_libbluray.unwrap_or(false),
             },
+            SettingItem::Choice {
+                key: "aacs_backend".into(),
+                label: "AACS Backend".into(),
+                options: vec!["auto".into(), "libaacs".into(), "libmmbd".into()],
+                selected: match config.aacs_backend.as_deref() {
+                    Some("libaacs") => 1,
+                    Some("libmmbd") => 2,
+                    _ => 0,
+                },
+                custom_value: None,
+            },
             SettingItem::Number {
                 label: "Index Reserve Space (KB)".into(),
                 key: "reserve_index_space".into(),
@@ -375,6 +386,7 @@ impl SettingsState {
             ("BLUBACK_SHOW_FILTERED", "show_filtered"),
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
+            ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -436,7 +448,7 @@ impl SettingsState {
                             *custom_value = Some(val.to_string());
                         }
                         return true;
-                    } else if key == "preset" {
+                    } else if key == "preset" || key == "aacs_backend" {
                         if let Some(pos) = options.iter().position(|o| o == val) {
                             *selected = pos;
                             return true;
@@ -465,6 +477,7 @@ impl SettingsState {
             ("BLUBACK_SHOW_FILTERED", "show_filtered"),
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
+            ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -522,6 +535,12 @@ impl SettingsState {
                             }
                         } else if val != DEFAULT_DEVICE {
                             config.device = Some(val.clone());
+                        }
+                    }
+                    "aacs_backend" => {
+                        let val = &options[*selected];
+                        if val != "auto" {
+                            config.aacs_backend = Some(val.clone());
                         }
                     }
                     _ => {}
@@ -633,9 +652,9 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 4 separators + 13 settings + 1 action = 18 items
+        // 4 separators + 14 settings + 1 action = 19 items
         let non_separator_count = state.items.iter().filter(|i| !matches!(i, SettingItem::Separator { .. })).count();
-        assert_eq!(non_separator_count, 14); // 13 settings + 1 action
+        assert_eq!(non_separator_count, 15); // 14 settings + 1 action
     }
 
     #[test]
