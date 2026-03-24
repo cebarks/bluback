@@ -1,3 +1,4 @@
+mod aacs;
 mod chapters;
 mod cli;
 mod config;
@@ -128,7 +129,7 @@ fn main() -> anyhow::Result<()> {
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);
 
-    let _aacs_backend = args.aacs_backend
+    let aacs_backend = args.aacs_backend
         .as_deref()
         .map(|s| match s {
             "libaacs" => config::AacsBackend::Libaacs,
@@ -136,6 +137,8 @@ fn main() -> anyhow::Result<()> {
             _ => config::AacsBackend::Auto,
         })
         .unwrap_or_else(|| config.aacs_backend());
+
+    aacs::preflight(aacs_backend)?;
 
     // Suppress libbluray's BD_DEBUG stderr output unless verbose mode is on.
     // Must be set before any ffmpeg/libbluray calls.
