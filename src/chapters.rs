@@ -56,3 +56,27 @@ pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<Ch
 
     Some(chapters)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_chapters_missing_path() {
+        let result = extract_chapters(
+            std::path::Path::new("/nonexistent/path"),
+            "00001",
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_chapters_missing_playlist() {
+        let dir = std::env::temp_dir().join("bluback_test_chapters");
+        let playlist_dir = dir.join("BDMV").join("PLAYLIST");
+        std::fs::create_dir_all(&playlist_dir).unwrap();
+        let result = extract_chapters(&dir, "99999");
+        assert!(result.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
