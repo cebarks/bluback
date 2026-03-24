@@ -88,6 +88,7 @@ pub enum PlaylistStatus {
     Pending,
     Ripping(RipProgress),
     Done(u64),
+    Skipped(u64),
     Failed(String),
 }
 

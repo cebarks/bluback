@@ -14,7 +14,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .rip
         .jobs
         .iter()
-        .filter(|j| matches!(j.status, PlaylistStatus::Done(_)))
+        .filter(|j| matches!(j.status, PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_)))
         .count();
     let total = app.rip.jobs.len();
 
@@ -78,6 +78,7 @@ pub fn render(f: &mut Frame, app: &App) {
                     (format!("{} {}%", bar, pct), size_str, eta_str)
                 }
                 PlaylistStatus::Done(sz) => ("Completed".to_string(), format_size(*sz), String::new()),
+                PlaylistStatus::Skipped(sz) => (format!("Skipped ({})", format_size(*sz)), String::new(), String::new()),
                 PlaylistStatus::Failed(msg) => {
                     (format!("Failed: {}", msg), String::new(), String::new())
                 }
@@ -100,7 +101,7 @@ pub fn render(f: &mut Frame, app: &App) {
                 PlaylistStatus::Ripping(_) => {
                     row.style(Style::default().fg(Color::Cyan))
                 }
-                PlaylistStatus::Done(_) => {
+                PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) => {
                     row.style(Style::default().fg(Color::DarkGray))
                 }
                 PlaylistStatus::Failed(_) => {
@@ -152,6 +153,15 @@ pub fn render_done(f: &mut Frame, app: &App) {
             _ => None,
         })
         .collect();
+    let skipped: Vec<_> = app
+        .rip
+        .jobs
+        .iter()
+        .filter_map(|j| match &j.status {
+            PlaylistStatus::Skipped(sz) => Some((j.filename.as_str(), *sz)),
+            _ => None,
+        })
+        .collect();
     let failed_count = app
         .rip
         .jobs
@@ -182,12 +192,19 @@ pub fn render_done(f: &mut Frame, app: &App) {
             .to_string()
     } else if !app.status_message.is_empty() {
         app.status_message.clone()
-    } else if failed_count > 0 {
+    } else if failed_count > 0 || !skipped.is_empty() {
+        let mut parts = vec![format!("{} ripped", completed.len())];
+        if !skipped.is_empty() {
+            parts.push(format!("{} skipped", skipped.len()));
+        }
+        if failed_count > 0 {
+            parts.push(format!("{} failed", failed_count));
+        }
         format!(
-            "Completed {} of {} playlist(s) ({} failed)",
-            completed.len(),
+            "Completed {} of {} playlist(s) ({})",
+            completed.len() + skipped.len(),
             app.rip.jobs.len(),
-            failed_count
+            parts.join(", ")
         )
     } else {
         format!("All done! Backed up {} playlist(s)", completed.len())
@@ -211,6 +228,12 @@ pub fn render_done(f: &mut Frame, app: &App) {
     } else {
         for (filename, sz) in &completed {
             lines.push(Line::from(format!("  {} ({})", filename, format_size(*sz))));
+        }
+        for (filename, sz) in &skipped {
+            lines.push(
+                Line::from(format!("  {} - SKIPPED ({})", filename, format_size(*sz)))
+                    .style(Style::default().fg(Color::DarkGray)),
+            );
         }
         for job in &app.rip.jobs {
             if let PlaylistStatus::Failed(msg) = &job.status {
@@ -283,7 +306,7 @@ fn check_all_done(app: &mut App) -> bool {
     let all_done = app.rip.jobs.iter().all(|j| {
         matches!(
             j.status,
-            PlaylistStatus::Done(_) | PlaylistStatus::Failed(_)
+            PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) | PlaylistStatus::Failed(_)
         )
     });
 
@@ -327,11 +350,14 @@ fn start_next_job(app: &mut App) {
         }
     }
 
-    // Skip if output file already exists
     if outfile.exists() {
         let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
-        app.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
-        return;
+        if app.config.overwrite() || app.args.overwrite {
+            let _ = std::fs::remove_file(&outfile);
+        } else {
+            app.rip.jobs[idx].status = PlaylistStatus::Skipped(file_size);
+            return;
+        }
     }
 
     // Extract chapters from MPLS if disc is mounted

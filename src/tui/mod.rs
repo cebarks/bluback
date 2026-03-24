@@ -542,7 +542,7 @@ fn run_app(
                                 start_disc_scan(&mut app);
                             } else {
                                 let all_succeeded = app.rip.jobs.iter().all(|j| {
-                                    matches!(j.status, crate::types::PlaylistStatus::Done(_))
+                                    matches!(j.status, crate::types::PlaylistStatus::Done(_) | crate::types::PlaylistStatus::Skipped(_))
                                 });
                                 if app.eject && !app.rip.jobs.is_empty() && all_succeeded {
                                     let device = app.args.device().to_string_lossy().to_string();
@@ -559,7 +559,7 @@ fn run_app(
                                 .rip
                                 .jobs
                                 .iter()
-                                .all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_)));
+                                .all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_) | crate::types::PlaylistStatus::Skipped(_)));
                             if app.eject && !app.rip.jobs.is_empty() && all_succeeded {
                                 let device = app.args.device().to_string_lossy().to_string();
                                 let _ = crate::disc::eject_disc(&device);
