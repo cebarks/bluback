@@ -154,7 +154,11 @@ fn main() -> anyhow::Result<()> {
 
     if args.device.is_none() {
         let drives = disc::detect_optical_drives();
-        args.device = Some(drives[0].clone());
+        if let Some(drive) = drives.first() {
+            args.device = Some(drive.clone());
+        } else {
+            anyhow::bail!("No optical drives detected");
+        }
     }
 
     if args.list_playlists {
