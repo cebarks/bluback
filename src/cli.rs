@@ -751,7 +751,7 @@ fn rip_selected(
                 "  {} ({}) -> {}",
                 pl.num,
                 pl.duration,
-                outfiles[i].file_name().unwrap().to_string_lossy()
+                outfiles[i].file_name().expect("output path has filename").to_string_lossy()
             );
         }
         return Ok(());
@@ -782,7 +782,7 @@ fn rip_selected(
     for (i, &idx) in selected.iter().enumerate() {
         let pl = &episodes_pl[idx];
         let outfile = &outfiles[i];
-        let filename = outfile.file_name().unwrap().to_string_lossy();
+        let filename = outfile.file_name().expect("output path has filename").to_string_lossy();
 
         // Skip if output file already exists
         if outfile.exists() {

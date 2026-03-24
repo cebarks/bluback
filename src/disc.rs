@@ -7,8 +7,8 @@ use crate::types::{LabelInfo, MediaInfo, Playlist};
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     [
-        Regex::new(r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)").unwrap(),
-        Regex::new(r"(?i)^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)").unwrap(),
+        Regex::new(r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)").expect("valid regex"),
+        Regex::new(r"(?i)^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)").expect("valid regex"),
     ]
 });
 
@@ -122,8 +122,8 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
     for re in LABEL_PATTERNS.iter() {
         if let Some(caps) = re.captures(label) {
             let show = caps["show"].trim_matches('_').replace('_', " ");
-            let season: u32 = caps["season"].parse().unwrap();
-            let disc: u32 = caps["disc"].parse().unwrap();
+            let season: u32 = caps["season"].parse().expect("regex guarantees numeric capture");
+            let disc: u32 = caps["disc"].parse().expect("regex guarantees numeric capture");
             return Some(LabelInfo { show, season, disc });
         }
     }
