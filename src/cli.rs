@@ -856,8 +856,18 @@ fn rip_selected(
                     println!("  Added {} chapter markers", chapters_added);
                 }
             }
+            Err(crate::media::MediaError::Cancelled) => {
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(outfile);
+                }
+                println!("Cancelled — removed partial file {}", filename);
+                break;
+            }
             Err(e) => {
-                println!("Error: {}", e);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(outfile);
+                }
+                println!("Error: {} — removed partial file {}", e, filename);
                 had_failure = true;
                 continue;
             }
