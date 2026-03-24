@@ -1,0 +1,7 @@
+{
+  "episodes": [
+    {"episode_number": 1, "name": "Pilot", "runtime": 58},
+    {"episode_number": 2, "name": "Cat's in the Bag...", "runtime": 48},
+    {"episode_number": 3, "name": "...And the Bag's in the River", "runtime": 48}
+  ]
+}
