@@ -149,6 +149,33 @@ pub fn set_max_speed(device: &str) {
     let _ = Command::new("eject").args(["-x", "0", device]).status();
 }
 
+pub struct MountGuard {
+    device: String,
+    mounted_by_us: bool,
+}
+
+impl MountGuard {
+    pub fn new(device: &str, mounted_by_us: bool) -> Self {
+        Self {
+            device: device.to_string(),
+            mounted_by_us,
+        }
+    }
+
+    pub fn cleanup(&mut self) {
+        if self.mounted_by_us {
+            let _ = unmount_disc(&self.device);
+            self.mounted_by_us = false;
+        }
+    }
+}
+
+impl Drop for MountGuard {
+    fn drop(&mut self) {
+        self.cleanup();
+    }
+}
+
 pub fn eject_disc(device: &str) -> anyhow::Result<()> {
     let status = Command::new("eject").arg(device).status()?;
 

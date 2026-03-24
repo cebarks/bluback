@@ -757,15 +757,18 @@ fn rip_selected(
         return Ok(());
     }
 
-    // Always mount for chapter extraction
-    let (mount_point, did_mount) = match disc::ensure_mounted(device) {
-        Ok((mount, did_mount)) => (Some(mount), did_mount),
+    // Always mount for chapter extraction (MountGuard ensures unmount on exit)
+    let (mount_point, mut _mount_guard) = match disc::ensure_mounted(device) {
+        Ok((mount, did_mount)) => (
+            Some(mount),
+            Some(disc::MountGuard::new(device, did_mount)),
+        ),
         Err(e) => {
             println!(
                 "Warning: could not mount disc for chapter extraction: {}",
                 e
             );
-            (None, false)
+            (None, None)
         }
     };
 
@@ -874,8 +877,8 @@ fn rip_selected(
         }
     }
 
-    if did_mount {
-        let _ = disc::unmount_disc(device);
+    if let Some(ref mut guard) = _mount_guard {
+        guard.cleanup();
     }
 
     println!(
