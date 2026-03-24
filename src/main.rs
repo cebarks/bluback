@@ -173,6 +173,17 @@ fn run_inner() -> anyhow::Result<i32> {
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);
 
+    if config_path.exists() {
+        if let Ok(raw) = std::fs::read_to_string(&config_path) {
+            for w in config::validate_raw_toml(&raw) {
+                eprintln!("Warning: {} in {}", w, config_path.display());
+            }
+            for w in config::validate_config(&config) {
+                eprintln!("Warning: {}", w);
+            }
+        }
+    }
+
     let aacs_backend = args.aacs_backend
         .as_deref()
         .map(|s| match s {
