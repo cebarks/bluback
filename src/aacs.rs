@@ -132,7 +132,6 @@ fn dirs_keydb_path() -> PathBuf {
 }
 
 /// Reap zombie child processes (makemkvcon cleanup).
-#[allow(dead_code)] // Called in future PR (signal handling / exit cleanup)
 pub fn reap_children() {
     use std::ptr;
     unsafe {

@@ -140,13 +140,15 @@ fn main() {
 }
 
 fn run() -> i32 {
-    match run_inner() {
+    let code = match run_inner() {
         Ok(code) => code,
         Err(e) => {
             eprintln!("Error: {:#}", e);
             classify_exit_code(&e)
         }
-    }
+    };
+    aacs::reap_children();
+    code
 }
 
 fn classify_exit_code(err: &anyhow::Error) -> i32 {
