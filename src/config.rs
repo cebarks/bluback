@@ -44,6 +44,7 @@ pub struct Config {
     /// Allows the muxer to write Cues at the front of the file for faster seeking.
     /// If the actual Cues are larger, they fall back to EOF (default behavior).
     pub reserve_index_space: Option<u32>,
+    pub overwrite: Option<bool>,
     pub aacs_backend: Option<String>,
 }
 
@@ -115,6 +116,7 @@ impl Config {
         emit_str(&mut out, "movie_format", &self.movie_format, DEFAULT_MOVIE_FORMAT);
         emit_str(&mut out, "special_format", &self.special_format, DEFAULT_SPECIAL_FORMAT);
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
+        emit_bool(&mut out, "overwrite", self.overwrite, false);
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
         emit_u32(&mut out, "reserve_index_space", self.reserve_index_space, DEFAULT_RESERVE_INDEX_SPACE);
         emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
@@ -211,6 +213,10 @@ impl Config {
 
     pub fn verbose_libbluray(&self) -> bool {
         self.verbose_libbluray.unwrap_or(false)
+    }
+
+    pub fn overwrite(&self) -> bool {
+        self.overwrite.unwrap_or(false)
     }
 
     pub fn reserve_index_space(&self) -> u32 {
@@ -773,5 +779,23 @@ also_unknown = 42"#;
         let config = Config { tv_format: Some("{show/{title}.mkv".into()), ..Default::default() };
         let warnings = validate_config(&config);
         assert!(warnings.iter().any(|w| w.contains("tv_format")));
+    }
+
+    #[test]
+    fn test_parse_overwrite() {
+        let config: Config = toml::from_str("overwrite = true").unwrap();
+        assert_eq!(config.overwrite, Some(true));
+    }
+
+    #[test]
+    fn test_overwrite_default_false() {
+        let config = Config::default();
+        assert!(!config.overwrite());
+    }
+
+    #[test]
+    fn test_overwrite_config_true() {
+        let config = Config { overwrite: Some(true), ..Default::default() };
+        assert!(config.overwrite());
     }
 }

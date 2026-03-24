@@ -100,6 +100,10 @@ pub struct Args {
     #[arg(long)]
     playlists: Option<String>,
 
+    /// Overwrite existing output files instead of skipping
+    #[arg(long)]
+    overwrite: bool,
+
     /// Scan disc and print playlist info, then exit
     #[arg(long)]
     list_playlists: bool,
