@@ -780,6 +780,11 @@ fn rip_selected(
     let mut had_failure = false;
 
     for (i, &idx) in selected.iter().enumerate() {
+        if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+            println!("\nCancelled.");
+            break;
+        }
+
         let pl = &episodes_pl[idx];
         let outfile = &outfiles[i];
         let filename = outfile.file_name().expect("output path has filename").to_string_lossy();
