@@ -792,16 +792,18 @@ fn rip_selected(
         let outfile = &outfiles[i];
         let filename = outfile.file_name().expect("output path has filename").to_string_lossy();
 
-        // Skip if output file already exists
         if outfile.exists() {
             let existing_size = std::fs::metadata(outfile)?.len();
-            println!(
-                "\nSkipping playlist {} -> {} (already exists, {})",
-                pl.num,
-                filename,
-                format_size(existing_size)
-            );
-            continue;
+            if args.overwrite || config.overwrite() {
+                println!("\nOverwriting {} ({})", filename, format_size(existing_size));
+                std::fs::remove_file(outfile)?;
+            } else {
+                println!(
+                    "\nSkipping playlist {} -> {} (already exists, {})",
+                    pl.num, filename, format_size(existing_size)
+                );
+                continue;
+            }
         }
 
         println!(

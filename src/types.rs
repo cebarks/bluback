@@ -88,6 +88,7 @@ pub enum PlaylistStatus {
     Pending,
     Ripping(RipProgress),
     Done(u64),
+    Skipped(u64),
     Failed(String),
 }
 
@@ -291,6 +292,11 @@ impl SettingsState {
                 key: "verbose_libbluray".into(),
                 value: config.verbose_libbluray.unwrap_or(false),
             },
+            SettingItem::Toggle {
+                label: "Overwrite Existing Files".into(),
+                key: "overwrite".into(),
+                value: config.overwrite.unwrap_or(false),
+            },
             SettingItem::Choice {
                 key: "aacs_backend".into(),
                 label: "AACS Backend".into(),
@@ -386,6 +392,7 @@ impl SettingsState {
             ("BLUBACK_SHOW_FILTERED", "show_filtered"),
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
+            ("BLUBACK_OVERWRITE", "overwrite"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
@@ -477,6 +484,7 @@ impl SettingsState {
             ("BLUBACK_SHOW_FILTERED", "show_filtered"),
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
+            ("BLUBACK_OVERWRITE", "overwrite"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
@@ -511,6 +519,7 @@ impl SettingsState {
                     "max_speed" if !*value => config.max_speed = Some(false),
                     "show_filtered" if *value => config.show_filtered = Some(true),
                     "verbose_libbluray" if *value => config.verbose_libbluray = Some(true),
+                    "overwrite" if *value => config.overwrite = Some(true),
                     _ => {}
                 },
                 SettingItem::Number { key, value, .. } => match key.as_str() {
@@ -652,9 +661,9 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 4 separators + 14 settings + 1 action = 19 items
+        // 4 separators + 15 settings + 1 action = 20 items
         let non_separator_count = state.items.iter().filter(|i| !matches!(i, SettingItem::Separator { .. })).count();
-        assert_eq!(non_separator_count, 15); // 14 settings + 1 action
+        assert_eq!(non_separator_count, 16); // 15 settings + 1 action
     }
 
     #[test]
