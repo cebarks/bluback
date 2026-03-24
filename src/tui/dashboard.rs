@@ -178,7 +178,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         app.status_message
             .split(':')
             .next()
-            .unwrap()
+            .expect("split always yields at least one element")
             .to_string()
     } else if !app.status_message.is_empty() {
         app.status_message.clone()

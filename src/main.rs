@@ -123,11 +123,66 @@ impl Args {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+const EXIT_SUCCESS: i32 = 0;
+const EXIT_RUNTIME_ERROR: i32 = 1;
+#[allow(dead_code)]
+const EXIT_USAGE_ERROR: i32 = 2;
+const EXIT_NO_DEVICE: i32 = 3;
+const EXIT_CANCELLED: i32 = 4;
+
+fn main() {
+    let code = run();
+    std::process::exit(code);
+}
+
+fn run() -> i32 {
+    match run_inner() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("Error: {:#}", e);
+            classify_exit_code(&e)
+        }
+    }
+}
+
+fn classify_exit_code(err: &anyhow::Error) -> i32 {
+    let msg = format!("{:#}", err);
+    if msg.contains("No optical drives")
+        || msg.contains("Device not found")
+        || msg.contains("No disc")
+    {
+        return EXIT_NO_DEVICE;
+    }
+    if msg.contains("cancelled") || msg.contains("Cancelled") {
+        return EXIT_CANCELLED;
+    }
+    if let Some(me) = err.downcast_ref::<crate::media::MediaError>() {
+        return match me {
+            crate::media::MediaError::DeviceNotFound(_)
+            | crate::media::MediaError::NoDisc => EXIT_NO_DEVICE,
+            crate::media::MediaError::Cancelled => EXIT_CANCELLED,
+            _ => EXIT_RUNTIME_ERROR,
+        };
+    }
+    EXIT_RUNTIME_ERROR
+}
+
+fn run_inner() -> anyhow::Result<i32> {
     let mut args = Args::parse();
 
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);
+
+    if config_path.exists() {
+        if let Ok(raw) = std::fs::read_to_string(&config_path) {
+            for w in config::validate_raw_toml(&raw) {
+                eprintln!("Warning: {} in {}", w, config_path.display());
+            }
+            for w in config::validate_config(&config) {
+                eprintln!("Warning: {}", w);
+            }
+        }
+    }
 
     let aacs_backend = args.aacs_backend
         .as_deref()
@@ -151,7 +206,8 @@ fn main() -> anyhow::Result<()> {
         if !atty_stdout() {
             anyhow::bail!("--settings requires a terminal (stdout is not a TTY)");
         }
-        return tui::run_settings(&config, config_path);
+        tui::run_settings(&config, config_path)?;
+        return Ok(EXIT_SUCCESS);
     }
 
     // Apply config defaults to args
@@ -178,17 +234,20 @@ fn main() -> anyhow::Result<()> {
     }
 
     if args.list_playlists {
-        return cli::list_playlists(&args, &config);
+        cli::list_playlists(&args, &config)?;
+        return Ok(EXIT_SUCCESS);
     }
 
     let use_tui = !args.no_tui && atty_stdout();
     let headless = args.yes || (!atty_stdin() && !use_tui);
 
     if use_tui {
-        tui::run(&args, &config, config_path)
+        tui::run(&args, &config, config_path)?;
     } else {
-        cli::run(&args, &config, headless)
+        cli::run(&args, &config, headless)?;
     }
+
+    Ok(EXIT_SUCCESS)
 }
 
 fn atty_stdout() -> bool {

@@ -47,11 +47,11 @@ pub fn render_template(template: &str, vars: &HashMap<&str, String>) -> String {
     const MARKER: char = '\u{200B}';
 
     static PLACEHOLDER_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\{([a-z_]+)\}").unwrap());
+        LazyLock::new(|| Regex::new(r"\{([a-z_]+)\}").expect("valid regex"));
     static EMPTY_BRACKET_RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\[[^\[\]]*\]").unwrap());
-    static MULTI_SPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" {2,}").unwrap());
-    static SPACE_BEFORE_DOT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" +\.").unwrap());
+        LazyLock::new(|| Regex::new(r"\[[^\[\]]*\]").expect("valid regex"));
+    static MULTI_SPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" {2,}").expect("valid regex"));
+    static SPACE_BEFORE_DOT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" +\.").expect("valid regex"));
 
     // 1. Substitute placeholders; wrap non-empty values with zero-width space markers
     let result = PLACEHOLDER_RE.replace_all(template, |caps: &regex::Captures| {

@@ -244,6 +244,55 @@ fn preset_format(name: &str, is_movie: bool) -> String {
     }
 }
 
+const KNOWN_KEYS: &[&str] = &[
+    "tmdb_api_key", "preset", "tv_format", "movie_format", "special_format",
+    "eject", "max_speed", "min_duration", "show_filtered", "output_dir",
+    "device", "stream_selection", "verbose_libbluray", "reserve_index_space",
+    "overwrite", "aacs_backend",
+];
+
+pub fn validate_raw_toml(raw: &str) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if let Ok(table) = raw.parse::<toml::Table>() {
+        for key in table.keys() {
+            if !KNOWN_KEYS.contains(&key.as_str()) {
+                warnings.push(format!("unknown config key '{}' (typo?)", key));
+            }
+        }
+    }
+    warnings
+}
+
+pub fn validate_config(config: &Config) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if let Some(d) = config.min_duration {
+        if d == 0 {
+            warnings.push("min_duration must be > 0".into());
+        }
+    }
+    if let Some(r) = config.reserve_index_space {
+        if r > 10000 {
+            warnings.push(format!(
+                "reserve_index_space = {} KB seems too large (max recommended: 10000 KB)", r
+            ));
+        }
+    }
+    for (name, fmt) in [
+        ("tv_format", &config.tv_format),
+        ("movie_format", &config.movie_format),
+        ("special_format", &config.special_format),
+    ] {
+        if let Some(ref f) = fmt {
+            let opens = f.chars().filter(|&c| c == '{').count();
+            let closes = f.chars().filter(|&c| c == '}').count();
+            if opens != closes {
+                warnings.push(format!("{} has unmatched braces", name));
+            }
+        }
+    }
+    warnings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,5 +734,44 @@ mod tests {
         let toml_str = "";
         let config: Config = toml::from_str(toml_str).unwrap();
         assert!(config.stream_selection.is_none());
+    }
+
+    #[test]
+    fn test_validate_unknown_keys_warns() {
+        let raw = r#"eject = true
+unknown_key = "foo"
+also_unknown = 42"#;
+        let warnings = validate_raw_toml(raw);
+        assert!(warnings.iter().any(|w| w.contains("unknown_key")));
+        assert!(warnings.iter().any(|w| w.contains("also_unknown")));
+        assert_eq!(warnings.len(), 2);
+    }
+
+    #[test]
+    fn test_validate_known_keys_no_warnings() {
+        let raw = r#"eject = true"#;
+        let warnings = validate_raw_toml(raw);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validate_min_duration_zero_warns() {
+        let config = Config { min_duration: Some(0), ..Default::default() };
+        let warnings = validate_config(&config);
+        assert!(warnings.iter().any(|w| w.contains("min_duration")));
+    }
+
+    #[test]
+    fn test_validate_reserve_index_space_too_large_warns() {
+        let config = Config { reserve_index_space: Some(50000), ..Default::default() };
+        let warnings = validate_config(&config);
+        assert!(warnings.iter().any(|w| w.contains("reserve_index_space")));
+    }
+
+    #[test]
+    fn test_validate_unmatched_braces_warns() {
+        let config = Config { tv_format: Some("{show/{title}.mkv".into()), ..Default::default() };
+        let warnings = validate_config(&config);
+        assert!(warnings.iter().any(|w| w.contains("tv_format")));
     }
 }
