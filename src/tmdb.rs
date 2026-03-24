@@ -2,9 +2,18 @@ use anyhow::{Context, Result};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
+use std::sync::LazyLock;
+use std::time::Duration;
 
 use crate::config::Config;
 use crate::types::{Episode, TmdbMovie, TmdbShow};
+
+static TMDB_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(15)))
+        .build()
+        .into()
+});
 
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME")
@@ -47,7 +56,8 @@ fn tmdb_get(path: &str, api_key: &str, extra_params: &[(&str, &str)]) -> Result<
         url.push_str(&urlencoding(v));
     }
 
-    ureq::get(&url)
+    TMDB_AGENT
+        .get(&url)
         .header("Accept", "application/json")
         .call()
         .context("TMDb request failed")?

@@ -13,7 +13,6 @@ static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
 });
 
 /// Return all optical drives (type "rom") found via lsblk.
-/// Falls back to `[/dev/sr0]` if none are found.
 pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
     let output = Command::new("lsblk")
         .args(["-rno", "NAME,TYPE"])
@@ -35,9 +34,6 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
         }
     }
 
-    if drives.is_empty() {
-        drives.push(std::path::PathBuf::from("/dev/sr0"));
-    }
     drives
 }
 
