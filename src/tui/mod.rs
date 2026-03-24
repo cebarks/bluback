@@ -590,6 +590,11 @@ fn run_app(
         // Poll background tasks
         poll_background(&mut app);
 
+        // Propagate process-level cancel signal to rip cancel flag
+        if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+            app.rip.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+
         // If ripping, check for progress updates
         if app.screen == Screen::Ripping {
             dashboard::tick(&mut app)?;

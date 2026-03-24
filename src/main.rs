@@ -12,6 +12,10 @@ mod util;
 
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+static FIRST_SIGNAL_MS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -136,13 +140,15 @@ fn main() {
 }
 
 fn run() -> i32 {
-    match run_inner() {
+    let code = match run_inner() {
         Ok(code) => code,
         Err(e) => {
             eprintln!("Error: {:#}", e);
             classify_exit_code(&e)
         }
-    }
+    };
+    aacs::reap_children();
+    code
 }
 
 fn classify_exit_code(err: &anyhow::Error) -> i32 {
@@ -169,6 +175,20 @@ fn classify_exit_code(err: &anyhow::Error) -> i32 {
 
 fn run_inner() -> anyhow::Result<i32> {
     let mut args = Args::parse();
+
+    ctrlc::set_handler(|| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let first = FIRST_SIGNAL_MS.load(Ordering::Relaxed);
+        if first > 0 && now.saturating_sub(first) < 2000 {
+            std::process::exit(130);
+        }
+        FIRST_SIGNAL_MS.store(now, Ordering::Relaxed);
+        CANCELLED.store(true, Ordering::Relaxed);
+    })
+    .expect("failed to set Ctrl+C handler");
 
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);

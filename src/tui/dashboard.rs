@@ -390,12 +390,20 @@ fn poll_active_job(app: &mut App) {
             }
             Ok(Err(crate::media::MediaError::Cancelled)) => {
                 let idx = app.rip.current_rip;
+                let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
                 app.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
                 app.rip.progress_rx = None;
                 return;
             }
             Ok(Err(e)) => {
                 let idx = app.rip.current_rip;
+                let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
                 app.rip.jobs[idx].status = PlaylistStatus::Failed(e.to_string());
                 app.rip.progress_rx = None;
                 return;

@@ -757,15 +757,18 @@ fn rip_selected(
         return Ok(());
     }
 
-    // Always mount for chapter extraction
-    let (mount_point, did_mount) = match disc::ensure_mounted(device) {
-        Ok((mount, did_mount)) => (Some(mount), did_mount),
+    // Always mount for chapter extraction (MountGuard ensures unmount on exit)
+    let (mount_point, mut _mount_guard) = match disc::ensure_mounted(device) {
+        Ok((mount, did_mount)) => (
+            Some(mount),
+            Some(disc::MountGuard::new(device, did_mount)),
+        ),
         Err(e) => {
             println!(
                 "Warning: could not mount disc for chapter extraction: {}",
                 e
             );
-            (None, false)
+            (None, None)
         }
     };
 
@@ -780,6 +783,11 @@ fn rip_selected(
     let mut had_failure = false;
 
     for (i, &idx) in selected.iter().enumerate() {
+        if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+            println!("\nCancelled.");
+            break;
+        }
+
         let pl = &episodes_pl[idx];
         let outfile = &outfiles[i];
         let filename = outfile.file_name().expect("output path has filename").to_string_lossy();
@@ -851,16 +859,26 @@ fn rip_selected(
                     println!("  Added {} chapter markers", chapters_added);
                 }
             }
+            Err(crate::media::MediaError::Cancelled) => {
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(outfile);
+                }
+                println!("Cancelled — removed partial file {}", filename);
+                break;
+            }
             Err(e) => {
-                println!("Error: {}", e);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(outfile);
+                }
+                println!("Error: {} — removed partial file {}", e, filename);
                 had_failure = true;
                 continue;
             }
         }
     }
 
-    if did_mount {
-        let _ = disc::unmount_disc(device);
+    if let Some(ref mut guard) = _mount_guard {
+        guard.cleanup();
     }
 
     println!(
