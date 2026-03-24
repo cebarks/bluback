@@ -168,6 +168,7 @@ dependencies = [
  "clap",
  "crossterm",
  "ffmpeg-the-third",
+ "libc",
  "mpls",
  "ratatui",
  "regex",

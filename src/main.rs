@@ -1,3 +1,4 @@
+mod aacs;
 mod chapters;
 mod cli;
 mod config;
@@ -98,6 +99,10 @@ pub struct Args {
     /// Scan disc and print playlist info, then exit
     #[arg(long)]
     list_playlists: bool,
+
+    /// AACS decryption backend: auto, libaacs, or libmmbd
+    #[arg(long, value_parser = ["auto", "libaacs", "libmmbd"])]
+    aacs_backend: Option<String>,
 }
 
 impl Args {
@@ -123,6 +128,17 @@ fn main() -> anyhow::Result<()> {
 
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);
+
+    let aacs_backend = args.aacs_backend
+        .as_deref()
+        .map(|s| match s {
+            "libaacs" => config::AacsBackend::Libaacs,
+            "libmmbd" => config::AacsBackend::Libmmbd,
+            _ => config::AacsBackend::Auto,
+        })
+        .unwrap_or_else(|| config.aacs_backend());
+
+    aacs::preflight(aacs_backend)?;
 
     // Suppress libbluray's BD_DEBUG stderr output unless verbose mode is on.
     // Must be set before any ffmpeg/libbluray calls.

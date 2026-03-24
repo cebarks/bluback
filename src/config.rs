@@ -18,6 +18,13 @@ pub const DEFAULT_DEVICE: &str = "auto-detect";
 pub const DEFAULT_MIN_DURATION: u32 = 900;
 pub const DEFAULT_RESERVE_INDEX_SPACE: u32 = 500;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AacsBackend {
+    Auto,
+    Libaacs,
+    Libmmbd,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
     pub tmdb_api_key: Option<String>,
@@ -37,6 +44,7 @@ pub struct Config {
     /// Allows the muxer to write Cues at the front of the file for faster seeking.
     /// If the actual Cues are larger, they fall back to EOF (default behavior).
     pub reserve_index_space: Option<u32>,
+    pub aacs_backend: Option<String>,
 }
 
 fn config_dir() -> PathBuf {
@@ -110,6 +118,7 @@ impl Config {
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
         emit_u32(&mut out, "reserve_index_space", self.reserve_index_space, DEFAULT_RESERVE_INDEX_SPACE);
         emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
+        emit_str(&mut out, "aacs_backend", &self.aacs_backend, "auto");
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
 
@@ -206,6 +215,14 @@ impl Config {
 
     pub fn reserve_index_space(&self) -> u32 {
         self.reserve_index_space.unwrap_or(DEFAULT_RESERVE_INDEX_SPACE)
+    }
+
+    pub fn aacs_backend(&self) -> AacsBackend {
+        match self.aacs_backend.as_deref() {
+            Some("libaacs") => AacsBackend::Libaacs,
+            Some("libmmbd") => AacsBackend::Libmmbd,
+            _ => AacsBackend::Auto,
+        }
     }
 
     pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
@@ -615,6 +632,43 @@ mod tests {
     fn test_resolve_config_path_explicit() {
         let path = resolve_config_path(Some(std::path::PathBuf::from("/tmp/custom.toml")));
         assert_eq!(path, std::path::PathBuf::from("/tmp/custom.toml"));
+    }
+
+    #[test]
+    fn test_parse_aacs_backend_auto() {
+        let config: Config = toml::from_str(r#"aacs_backend = "auto""#).unwrap();
+        assert_eq!(config.aacs_backend.as_deref(), Some("auto"));
+    }
+
+    #[test]
+    fn test_parse_aacs_backend_libmmbd() {
+        let config: Config = toml::from_str(r#"aacs_backend = "libmmbd""#).unwrap();
+        assert_eq!(config.aacs_backend.as_deref(), Some("libmmbd"));
+    }
+
+    #[test]
+    fn test_parse_aacs_backend_absent_defaults_auto() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.aacs_backend.is_none());
+    }
+
+    #[test]
+    fn test_aacs_backend_accessor() {
+        let config = Config { aacs_backend: Some("libmmbd".into()), ..Default::default() };
+        assert!(matches!(config.aacs_backend(), AacsBackend::Libmmbd));
+        let config = Config { aacs_backend: Some("libaacs".into()), ..Default::default() };
+        assert!(matches!(config.aacs_backend(), AacsBackend::Libaacs));
+        let config = Config::default();
+        assert!(matches!(config.aacs_backend(), AacsBackend::Auto));
+    }
+
+    #[test]
+    fn test_aacs_backend_serialization_roundtrip() {
+        let config = Config { aacs_backend: Some("libmmbd".into()), ..Default::default() };
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains(r#"aacs_backend = "libmmbd""#));
+        let reparsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(reparsed.aacs_backend.as_deref(), Some("libmmbd"));
     }
 
     #[test]

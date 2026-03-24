@@ -35,12 +35,14 @@ impl fmt::Display for MediaError {
         match self {
             Self::AacsRevoked => write!(
                 f,
-                "AACS host certificate revoked. This disc requires a per-disc VUK in KEYDB.cfg."
+                "AACS host certificate revoked. This disc requires a per-disc VUK in KEYDB.cfg. \
+                 If you have MakeMKV with LibreDrive, set aacs_backend = \"libmmbd\"."
             ),
             Self::AacsAuthFailed(msg) => write!(f, "AACS authentication failed: {}", msg),
             Self::AacsTimeout => write!(
                 f,
-                "AACS initialization timed out (60s). Check for orphaned libmmbd.so.0."
+                "AACS initialization timed out (60s). If libmmbd is installed, verify makemkvcon \
+                 is available, or set aacs_backend = \"libaacs\" to use plain libaacs."
             ),
             Self::DeviceNotFound(dev) => write!(f, "Device not found: {}", dev),
             Self::NoDisc => write!(f, "No disc in drive"),
