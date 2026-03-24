@@ -1,6 +1,6 @@
 # bluback TODO
 
-See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (37 items, 8 milestones).
+See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 items, 8 milestones).
 
 ## Current: v0.6 — Stability & Safety
 
@@ -12,6 +12,7 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (37 item
 - [ ] Config validation on load — warn on unknown keys, validate values
 - [ ] Structured exit codes (0/1/2/3/4)
 - [ ] Output directory auto-creation
+- [ ] Test fixtures + fake BDMV directory for integration testing
 
 ## Next: v0.7 — Architecture & CLI Completeness
 

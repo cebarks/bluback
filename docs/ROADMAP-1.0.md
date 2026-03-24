@@ -69,36 +69,48 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 - **Fix:** `std::fs::create_dir_all()` before writing output file
 - **Files:** `src/media/remux.rs` or `src/rip.rs` (wherever output path is resolved)
 
+### 9. Test fixtures + fake BDMV directory
+- **Goal:** Enable integration-level testing without physical hardware
+- **Fixtures:**
+  - Binary MPLS files with known chapter marks → test `chapters.rs` chapter extraction
+  - Synthetic M2TS via `ffmpeg -f lavfi` (~100KB) → test `remux()` stream mapping + chapter injection
+  - Small MP4/MKV test files → test `probe_media_info()` codec detection
+  - Canned TMDb JSON responses → test TMDb parsing without network
+- **Fake BDMV directory:** Minimal valid structure for libbluray (`index.bdmv`, `MovieObject.bdmv`, PLAYLIST, CLIPINF, STREAM dirs) — enables testing `scan_playlists()` via `bluray:///path/to/test_disc`
+- **Location:** `tests/fixtures/` for data files, integration tests in `tests/` directory
+- **CI:** Fixture generation script or pre-built fixtures checked into repo (small enough for git, no LFS needed)
+- **Files:** New `tests/` directory, fixture generation script
+
 ---
 
 ## v0.7 — Architecture & CLI Completeness
 
 *Extract shared workflow layer; round out CLI feature parity.*
 
-### 9. Workflow extraction (GUI-readiness)
+### 10. Workflow extraction (GUI-readiness)
 - **Goal:** Extract orchestration logic from `cli.rs` into shared `workflow.rs` module
 - **What moves:** TMDb lookup flow, playlist selection/filtering, filename generation, rip orchestration
 - **Design:** Trait-based callbacks for UI interaction (`WorkflowUI` trait)
 - TUI and CLI become thin adapters implementing this trait
 - **Files:** New `src/workflow.rs`, refactor `src/cli.rs`, refactor `src/tui/mod.rs`
 
-### 10. Specials: CLI parity + batch marking
+### 11. Specials: CLI parity + batch marking
 - **CLI:** `--specials <SEL>` flag (e.g., `--specials 3,5`) marks playlists as S00 episodes
 - **TUI:** Batch marking — select multiple rows, press `s` to toggle all
 - **Headless:** Auto-assign S00E01, S00E02, etc. to specified playlists
 - **Files:** `src/main.rs`, `src/cli.rs`, `src/tui/wizard.rs`, `src/util.rs`
 
-### 11. Headless progress output
+### 12. Headless progress output
 - **Goal:** Non-TTY stdout gets line-based progress instead of `\r` carriage returns
 - **Design:** Print `[playlist] 45% 120MB/s ETA 2:30` lines at intervals (every 5% or 10s)
 - **Files:** `src/rip.rs`, `src/cli.rs`
 
-### 12. `--list-playlists` stream info
+### 13. `--list-playlists` stream info
 - **Goal:** Show video codec, resolution, audio codecs/channels per playlist
 - **Design:** Per-playlist FFmpeg probe. Default: duration/size. `--verbose`: codec details.
 - **Files:** `src/cli.rs`, `src/media/probe.rs`
 
-### 13. `--check` setup validation
+### 14. `--check` setup validation
 - **Goal:** Validate environment without requiring a disc
 - **Checks:** FFmpeg libs, libaacs, KEYDB.cfg, optical drives, output dir writable, TMDb API key
 - **Output:** Checklist with pass/fail/warn per item
@@ -110,33 +122,33 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 
 *Features that make daily use more pleasant and reliable.*
 
-### 14. Log file support
+### 15. Log file support
 - `--log-file <PATH>` or auto-log to `~/.local/share/bluback/logs/`
 - Captures: FFmpeg, libbluray, disc detection, AACS, rip progress
 - `--log-level` or config for verbosity; rotate (keep last 10)
 - **Files:** New `src/logging.rs`, `src/main.rs`, `src/media/probe.rs`
 
-### 15. Pause/resume during ripping
+### 16. Pause/resume during ripping
 - `AtomicBool` pause flag; remux loop sleeps until unpaused
 - TUI: `p` to toggle, "PAUSED" indicator
 - **Files:** `src/media/remux.rs`, `src/rip.rs`, `src/tui/dashboard.rs`
 
-### 16. MKV metadata embedding
+### 17. MKV metadata embedding
 - Write title, season, episode, show name into MKV container metadata
 - Set `AVFormatContext` metadata dict before `write_header()`
 - **Files:** `src/media/remux.rs`, `src/types.rs`
 
-### 17. Post-rip hooks
+### 18. Post-rip hooks
 - `post_rip_command` config with template variables (`{file}`, `{title}`, `{season}`, `{episode}`)
 - Run via `std::process::Command`; don't fail rip on hook failure
 - **Files:** `src/config.rs`, `src/workflow.rs`
 
-### 18. Rip verification
+### 19. Rip verification
 - Post-remux: probe output file, compare expected vs actual duration, verify streams present
 - Warn on mismatch; option to auto-delete failed files
 - **Files:** New `src/verify.rs`, `src/rip.rs`
 
-### 19. Per-stream track selection
+### 20. Per-stream track selection
 - **TUI:** Track picker with codec, language, channels; checkboxes
 - **CLI:** `--audio "eng,5.1"` / `--subtitle "eng"` flags
 - **Config:** `audio_languages`, `subtitle_languages` defaults
@@ -148,21 +160,21 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 
 *Requires its own detailed design spec before implementation.*
 
-### 20. Disc type abstraction
+### 21. Disc type abstraction
 - `enum DiscType { BluRay, Dvd }`, `DiscInfo` struct
 - Detection via filesystem probe (`BDMV/` vs `VIDEO_TS/`) or protocol attempt
 - **Files:** `src/disc.rs`, `src/media/probe.rs`, `src/main.rs`
 
-### 21. DVD title enumeration
+### 22. DVD title enumeration
 - FFmpeg `dvd://` protocol; log capture or sequential probing fallback
 - **Files:** `src/media/probe.rs`
 
-### 22. DVD chapter extraction
+### 23. DVD chapter extraction
 - Preferred: FFmpeg `AVChapter` from `dvd://` inputs
 - Fallback: minimal IFO parser or libdvdread FFI
 - **Files:** `src/chapters.rs`, potentially `src/ifo.rs`
 
-### 23. DVD error handling + volume labels
+### 24. DVD error handling + volume labels
 - Errors: `CssDecryptionFailed`, `DvdRegionLocked`, `DvdTitleNotFound`
 - DVD label patterns (32 char max, different conventions)
 - `--check` validates libdvdcss/libdvdread
@@ -174,16 +186,16 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 
 *Verify and improve support for 4K UHD Blu-ray discs.*
 
-### 24. AACS 2.0 investigation
+### 25. AACS 2.0 investigation
 - Test with physical UHD disc; document key requirements
 - Determine if libaacs handles AACS 2.0 or if additional libraries needed
 
-### 25. HDR metadata preservation
+### 26. HDR metadata preservation
 - Verify Dolby Vision, HDR10, HDR10+ metadata survives remux
 - Test and fix if metadata is dropped
 - **Files:** `src/media/remux.rs`, `src/media/probe.rs`
 
-### 26. UHD-specific UX
+### 27. UHD-specific UX
 - Show HDR type prominently in playlist info and TUI
 - Warn on Dolby Vision profile compatibility issues
 - **Files:** `src/tui/wizard.rs`, `src/cli.rs`
@@ -192,22 +204,22 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 
 ## v0.11 — Multi-Drive & Automation
 
-### 27. Multi-drive detection + selection UI
+### 28. Multi-drive detection + selection UI
 - TUI: scanning screen shows all drives with status
 - CLI: multiple `--device` flags or `--device all`
 - **Files:** `src/disc.rs`, `src/tui/mod.rs`, `src/types.rs`
 
-### 28. Parallel ripping
+### 29. Parallel ripping
 - Per-drive remux thread + mpsc; per-drive progress bars; independent cancellation
 - **Files:** `src/rip.rs`, `src/tui/dashboard.rs`, `src/tui/mod.rs`, `src/workflow.rs`
 
-### 29. Continuous batch mode
+### 30. Continuous batch mode
 - Rip → eject → wait for next disc → auto-start
 - TUI: "continuous mode" toggle; CLI: `--batch` flag
 - Disc history integration: skip already-ripped discs
 - **Files:** `src/tui/mod.rs`, `src/cli.rs`, `src/workflow.rs`
 
-### 30. Disc history / rip database
+### 31. Disc history / rip database
 - Track ripped discs (volume label, date, output files, success/failure)
 - Storage: `~/.local/share/bluback/history.json`
 - `--history` to list; `--force` to override duplicate detection
@@ -217,16 +229,16 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 
 ## v0.12 — Intelligence & Distribution
 
-### 31. TMDb specials (S00) auto-matching
+### 32. TMDb specials (S00) auto-matching
 - Fetch season 0 from TMDb alongside regular season
 - Auto-suggest marking playlists that don't match episode-length pattern
 - **Files:** `src/tmdb.rs`, `src/tui/wizard.rs`, `src/workflow.rs`
 
-### 32. Shell completions
+### 33. Shell completions
 - `clap_complete` for bash/zsh/fish; include in release artifacts
 - **Files:** `Cargo.toml`, build script, `.github/workflows/release.yml`
 
-### 33. Man page
+### 34. Man page
 - `clap_mangen`; include in release artifacts
 - **Files:** `Cargo.toml`, build script, `.github/workflows/release.yml`
 
@@ -234,18 +246,18 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 
 ## v1.0 — Final Release
 
-### 34. README rewrite
+### 35. README rewrite
 - Document all features with workflow examples
 - Config reference, build/runtime requirements update
 
-### 35. Investigation spikes
+### 36. Investigation spikes
 - **Resume partial rips:** Test FFmpeg MKV muxer seek support. Document for 1.1.
 - **macOS/Windows:** Document platform abstraction needs. Estimate effort for 1.1+.
 
-### 36. Integration testing
+### 37. Integration testing
 - End-to-end testing of all features; regression testing; edge cases
 
-### 37. Release
+### 38. Release
 - Bump to 1.0.0; CHANGELOG; tag + push
 - CI: completions, man page, multi-arch binaries
 
