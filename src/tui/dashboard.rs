@@ -319,7 +319,12 @@ fn start_next_job(app: &mut App) {
     let playlist_num = job.playlist.num.clone();
     let outfile = app.args.output.join(&job.filename);
     if let Some(parent) = outfile.parent() {
-        std::fs::create_dir_all(parent).ok();
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            app.rip.jobs[idx].status = PlaylistStatus::Failed(
+                format!("Failed to create output directory {}: {}", parent.display(), e),
+            );
+            return;
+        }
     }
 
     // Skip if output file already exists
