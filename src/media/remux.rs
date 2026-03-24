@@ -29,6 +29,8 @@ pub struct RemuxOptions {
     pub chapters: Vec<ChapterMark>,
     pub stream_selection: StreamSelection,
     pub cancel: Arc<AtomicBool>,
+    /// KB of void space to reserve after the MKV header for the seek index.
+    pub reserve_index_space_kb: u32,
 }
 
 /// Determine which input stream indices to include in the output.
@@ -253,8 +255,12 @@ where
     // Inject chapters before writing header
     let chapters_added = inject_chapters(&mut octx, &options.chapters, total_duration_secs)?;
 
-    // Write output header
-    octx.write_header()
+    // Write output header, reserving void space for the seek index (Cues)
+    // so they can be written at the front of the file for faster seeking.
+    let reserve_bytes = (options.reserve_index_space_kb as u64) * 1024;
+    let mut muxer_opts = Dictionary::new();
+    muxer_opts.set("reserve_index_space", &reserve_bytes.to_string());
+    octx.write_header_with(muxer_opts)
         .map_err(|e| MediaError::RemuxFailed(format!("Failed to write header: {}", e)))?;
 
     // Packet remux loop

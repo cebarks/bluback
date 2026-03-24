@@ -577,6 +577,7 @@ fn rip_selected(
             chapters: chapters.clone(),
             stream_selection: stream_selection.clone(),
             cancel,
+            reserve_index_space_kb: config.reserve_index_space(),
         };
 
         let pl_seconds = pl.seconds;

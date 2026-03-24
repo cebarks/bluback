@@ -352,6 +352,7 @@ fn start_next_job(app: &mut App) {
         chapters,
         stream_selection,
         cancel,
+        reserve_index_space_kb: app.config.reserve_index_space(),
     };
 
     let (tx, rx) = mpsc::channel();

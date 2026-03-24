@@ -16,6 +16,7 @@ pub const JELLYFIN_MOVIE_FORMAT: &str = "{title} ({year})/{title} ({year}).mkv";
 pub const DEFAULT_OUTPUT_DIR: &str = ".";
 pub const DEFAULT_DEVICE: &str = "auto-detect";
 pub const DEFAULT_MIN_DURATION: u32 = 900;
+pub const DEFAULT_RESERVE_INDEX_SPACE: u32 = 500;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
@@ -32,6 +33,10 @@ pub struct Config {
     pub device: Option<String>,
     pub stream_selection: Option<String>,
     pub verbose_libbluray: Option<bool>,
+    /// KB of void space reserved after MKV header for the seek index (Cues).
+    /// Allows the muxer to write Cues at the front of the file for faster seeking.
+    /// If the actual Cues are larger, they fall back to EOF (default behavior).
+    pub reserve_index_space: Option<u32>,
 }
 
 fn config_dir() -> PathBuf {
@@ -103,6 +108,7 @@ impl Config {
         emit_str(&mut out, "special_format", &self.special_format, DEFAULT_SPECIAL_FORMAT);
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
+        emit_u32(&mut out, "reserve_index_space", self.reserve_index_space, DEFAULT_RESERVE_INDEX_SPACE);
         emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
@@ -196,6 +202,10 @@ impl Config {
 
     pub fn verbose_libbluray(&self) -> bool {
         self.verbose_libbluray.unwrap_or(false)
+    }
+
+    pub fn reserve_index_space(&self) -> u32 {
+        self.reserve_index_space.unwrap_or(DEFAULT_RESERVE_INDEX_SPACE)
     }
 
     pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
