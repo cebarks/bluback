@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_TV_FORMAT: &str = "S{season}E{episode}_{title}.mkv";
 pub const DEFAULT_MOVIE_FORMAT: &str = "{title}_({year}).mkv";
-pub const DEFAULT_SPECIAL_FORMAT: &str = "{show} S00E{episode} {title}.mkv";
+pub const DEFAULT_SPECIAL_FORMAT: &str = "{show} S{season}SP{episode} {title}.mkv";
 
 pub const PLEX_TV_FORMAT: &str = "{show}/Season {season}/S{season}E{episode} - {title} [Bluray-{resolution}][{audio} {channels}][{codec}].mkv";
 pub const PLEX_MOVIE_FORMAT: &str =
@@ -493,19 +493,19 @@ mod tests {
 
     #[test]
     fn test_parse_special_format() {
-        let config: Config = toml::from_str(r#"special_format = "{show} S00E{episode}.mkv""#).unwrap();
-        assert_eq!(config.special_format.unwrap(), "{show} S00E{episode}.mkv");
+        let config: Config = toml::from_str(r#"special_format = "{show} S{season}SP{episode}.mkv""#).unwrap();
+        assert_eq!(config.special_format.unwrap(), "{show} S{season}SP{episode}.mkv");
     }
 
     #[test]
     fn test_resolve_special_format_from_config() {
         let config = Config {
-            special_format: Some("custom/{show} S00E{episode}.mkv".into()),
+            special_format: Some("custom/{show} S{season}SP{episode}.mkv".into()),
             ..Default::default()
         };
         assert_eq!(
             config.resolve_special_format(None),
-            "custom/{show} S00E{episode}.mkv"
+            "custom/{show} S{season}SP{episode}.mkv"
         );
     }
 
