@@ -882,31 +882,54 @@ fn rip_selected(
         };
 
         let pl_seconds = pl.seconds;
+        let is_tty = crate::atty_stdout();
+        let last_print = std::cell::Cell::new(std::time::Instant::now());
+        let started = std::cell::Cell::new(false);
+        let pl_num = pl.num.clone();
+
         let result = crate::media::remux::remux(options, |progress| {
-            let size = format_size(progress.total_size);
-            let time = format_time(progress.out_time_secs);
-            let mut parts = vec![
-                format!("frame={}", progress.frame),
-                format!("fps={:.1}", progress.fps),
-                format!("size={}", size),
-                format!("time={}", time),
-                format!("bitrate={}", progress.bitrate),
-                format!("speed={:.1}x", progress.speed),
-            ];
-            if let Some(est) = rip::estimate_final_size(progress, pl_seconds) {
-                parts.push(format!("est=~{}", format_size(est)));
+            if is_tty {
+                // Existing TTY path unchanged
+                let size = format_size(progress.total_size);
+                let time = format_time(progress.out_time_secs);
+                let mut parts = vec![
+                    format!("frame={}", progress.frame),
+                    format!("fps={:.1}", progress.fps),
+                    format!("size={}", size),
+                    format!("time={}", time),
+                    format!("bitrate={}", progress.bitrate),
+                    format!("speed={:.1}x", progress.speed),
+                ];
+                if let Some(est) = rip::estimate_final_size(progress, pl_seconds) {
+                    parts.push(format!("est=~{}", format_size(est)));
+                }
+                if let Some(eta_secs) = rip::estimate_eta(progress, pl_seconds) {
+                    parts.push(format!("eta={}", rip::format_eta(eta_secs)));
+                }
+                print!("\r  {:<100}", parts.join(" "));
+                io::stdout().flush().ok();
+            } else {
+                // Non-TTY: line-based progress at 10-second intervals
+                if !started.get() {
+                    started.set(true);
+                    println!("  {}", format_progress_line(&pl_num, progress, pl_seconds));
+                    last_print.set(std::time::Instant::now());
+                } else if last_print.get().elapsed() >= std::time::Duration::from_secs(10) {
+                    println!("  {}", format_progress_line(&pl_num, progress, pl_seconds));
+                    last_print.set(std::time::Instant::now());
+                }
             }
-            if let Some(eta_secs) = rip::estimate_eta(progress, pl_seconds) {
-                parts.push(format!("eta={}", rip::format_eta(eta_secs)));
-            }
-            print!("\r  {:<100}", parts.join(" "));
-            io::stdout().flush().ok();
         });
 
-        println!();
+        if is_tty {
+            println!(); // newline after \r progress
+        }
         match result {
             Ok(chapters_added) => {
                 let final_size = std::fs::metadata(outfile)?.len();
+                if !is_tty {
+                    println!("  [{}] 100% {} — done", pl.num, format_size(final_size));
+                }
                 println!("Done: {} ({})", filename, format_size(final_size));
                 if chapters_added > 0 {
                     println!("  Added {} chapter markers", chapters_added);
@@ -955,6 +978,36 @@ fn format_time(seconds: u32) -> String {
     let m = (seconds % 3600) / 60;
     let s = seconds % 60;
     format!("{}:{:02}:{:02}", h, m, s)
+}
+
+fn format_progress_line(
+    playlist_num: &str,
+    progress: &crate::types::RipProgress,
+    total_seconds: u32,
+) -> String {
+    let pct = if total_seconds > 0 {
+        (progress.out_time_secs as f64 / total_seconds as f64 * 100.0).min(100.0) as u32
+    } else {
+        0
+    };
+    let size = format_size(progress.total_size);
+    let speed_str = format!(
+        "{:.0}MiB/s",
+        progress.total_size as f64 / progress.out_time_secs.max(1) as f64 / 1048576.0
+    );
+    let eta_str = rip::estimate_eta(progress, total_seconds)
+        .map(|e| format!("ETA {}", rip::format_eta(e)))
+        .unwrap_or_default();
+    let mut parts = vec![
+        format!("[{}]", playlist_num),
+        format!("{}%", pct),
+        size,
+        speed_str,
+    ];
+    if !eta_str.is_empty() {
+        parts.push(eta_str);
+    }
+    parts.join(" ")
 }
 
 fn prompt(msg: &str) -> io::Result<String> {
