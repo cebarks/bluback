@@ -4,10 +4,6 @@ A CLI/TUI tool for backing up Blu-ray discs to MKV files using FFmpeg library bi
 
 Supports TV shows (sequential or manual episode assignment, including multi-episode playlists) and movies. All rips are lossless remuxes — no re-encoding. Blu-ray chapter markers are automatically embedded during remux.
 
-## Why not MakeMKV?
-
-MakeMKV doesn't work reliably with USB Blu-ray drives using ASMedia USB-SATA bridge chips (e.g., ASUS BW-16D1X-U). The bridge mangles SCSI passthrough commands needed for disc access. Standard block-level reads via `/dev/sr0` work fine, so bluback uses FFmpeg with libbluray instead.
-
 ## Requirements
 
 ### Runtime
