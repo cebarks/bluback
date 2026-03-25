@@ -112,6 +112,10 @@ pub struct Args {
     #[arg(long)]
     list_playlists: bool,
 
+    /// Show detailed info (e.g. stream info with --list-playlists)
+    #[arg(short = 'v', long)]
+    verbose: bool,
+
     /// AACS decryption backend: auto, libaacs, or libmmbd
     #[arg(long, value_parser = ["auto", "libaacs", "libmmbd"])]
     aacs_backend: Option<String>,
