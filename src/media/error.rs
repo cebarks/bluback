@@ -41,8 +41,8 @@ impl fmt::Display for MediaError {
             Self::AacsAuthFailed(msg) => write!(f, "AACS authentication failed: {}", msg),
             Self::AacsTimeout => write!(
                 f,
-                "AACS initialization timed out (60s). If libmmbd is installed, verify makemkvcon \
-                 is available, or set aacs_backend = \"libaacs\" to use plain libaacs."
+                "AACS initialization timed out (120s). If libmmbd is installed, verify makemkvcon \
+                 is available and MakeMKV is registered, or set aacs_backend = \"libaacs\" to use plain libaacs."
             ),
             Self::DeviceNotFound(dev) => write!(f, "Device not found: {}", dev),
             Self::NoDisc => write!(f, "No disc in drive"),

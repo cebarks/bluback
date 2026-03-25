@@ -11,7 +11,9 @@ use crate::types::{AudioStream, MediaInfo, Playlist, StreamInfo};
 use crate::util::duration_to_seconds;
 
 /// Timeout for AACS/libbluray operations (seconds).
-const SCAN_TIMEOUT_SECS: u64 = 60;
+/// libmmbd + makemkvcon can take 90+ seconds for initial disc scan,
+/// so this needs to be generous.
+const SCAN_TIMEOUT_SECS: u64 = 120;
 
 /// Open a bluray device with an optional playlist selection via `input_with_dictionary`.
 /// Returns the format context for the opened device+playlist.

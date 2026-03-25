@@ -74,10 +74,13 @@ pub fn preflight(backend: AacsBackend) -> Result<()> {
                      Install MakeMKV or set aacs_backend = \"auto\"."
                 );
             }
-            if let Some(path) = find_library("libmmbd", LIBMMBD_PATHS) {
-                let path_str = path.to_string_lossy().to_string();
-                std::env::set_var("LIBAACS_PATH", &path_str);
-                std::env::set_var("LIBBDPLUS_PATH", &path_str);
+            // libbluray's dl_dlopen appends ".so.{version}" to the name,
+            // so LIBAACS_PATH must be a library NAME (e.g. "libmmbd"),
+            // NOT a full path. A full path like "/lib64/libmmbd.so.0"
+            // becomes "/lib64/libmmbd.so.0.so.0" and silently fails.
+            if find_library("libmmbd", LIBMMBD_PATHS).is_some() {
+                std::env::set_var("LIBAACS_PATH", "libmmbd");
+                std::env::set_var("LIBBDPLUS_PATH", "libmmbd");
             }
             Ok(())
         }
@@ -88,16 +91,12 @@ pub fn preflight(backend: AacsBackend) -> Result<()> {
                         "Warning: system libaacs.so is a symlink to libmmbd. \
                          Searching for real libaacs..."
                     );
-                    // Try to find the real libaacs by checking each known path
-                    for candidate in LIBAACS_PATHS {
-                        let p = PathBuf::from(candidate);
-                        if p.exists() && !is_libmmbd(&p) {
-                            std::env::set_var("LIBAACS_PATH", candidate);
-                            break;
-                        }
-                    }
+                    // Try to force real libaacs by name — libbluray's dl_dlopen
+                    // appends ".so.{version}", so we pass a library name, not path.
+                    std::env::set_var("LIBAACS_PATH", "libaacs");
                 } else {
-                    std::env::set_var("LIBAACS_PATH", path.to_string_lossy().as_ref());
+                    // Real libaacs found, set by name (not path)
+                    std::env::set_var("LIBAACS_PATH", "libaacs");
                 }
             }
             let keydb = dirs_keydb_path();
