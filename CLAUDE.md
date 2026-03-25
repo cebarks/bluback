@@ -104,7 +104,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **MKV index reservation** — `reserve_index_space` config option (default 500 KB) reserves void space after the MKV header for the seek index (Cues) and in-place metadata edits. Cues at the front of the file enable faster seeking over HTTP byte-range requests, and the extra void space allows tools like `mkvpropedit` to update metadata without rewriting the entire file. If the actual Cues exceed the reserved space, they fall back to EOF (standard behavior). Passed to FFmpeg via `write_header_with` dictionary option.
 - **libbluray stderr suppression** — `BD_DEBUG_MASK=0` set by default to prevent libbluray debug output from corrupting TUI. Controlled by `verbose_libbluray` config option.
 - **Episode assignment** — Default: sequential with multi-episode detection (uses median playlist duration with 1.5x threshold to detect double-episode playlists). Volume label parsing guesses the starting episode from disc number. The Playlist Manager screen allows overriding individual playlist assignments inline (`e` hotkey), including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
-- **Specials support** — Playlists can be marked as specials (`s` hotkey in Playlist Manager), which assigns them season 0 episode numbers and uses a separate `special_format` naming template. `r` resets a single row's assignment, `R` resets all.
+- **Specials support** — Playlists can be marked as specials (`s` hotkey in TUI Playlist Manager, `--specials <SEL>` in CLI using filtered indices). Uses `S{season}SP{episode}` naming format (actual season, not S00) and a separate `special_format` naming template. TUI: `r` resets a single row's assignment, `R` resets all. CLI: specials auto-assigned SP01, SP02, etc.
 - **All playlists visible** — The Playlist Manager shows all disc playlists, not just episode-length ones. Filtered playlists (below `min_duration`) are hidden by default but can be toggled with `f`. Controlled by `show_filtered` config option.
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
 - **Settings overlay** — `App.overlay: Option<Overlay>` renders on top of the current screen. When active, all global key handlers except `Ctrl+C` are blocked; input routes to the overlay handler. `SettingsState` holds typed `SettingItem` variants (Toggle, Choice, Text, Number, Separator, Action). Choice variant has optional `custom_value` for the "Custom..." option (used by device dropdown). `Ctrl+S` in the overlay saves to `config.toml` with commented-out defaults and triggers workflow reset (rescan) unless mid-rip. Toggle/Choice changes apply to the session immediately without saving.
@@ -116,6 +116,8 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Overwrite protection** — `--overwrite` flag + `overwrite` config option (default: false). Without flag: CLI prints skip message, TUI marks as `PlaylistStatus::Skipped(file_size)` (displayed dimmed). With flag: deletes existing file and re-rips.
 - **Config validation** — `validate_raw_toml()` checks unknown keys against `KNOWN_KEYS`. `validate_config()` checks `min_duration > 0`, `reserve_index_space <= 10000`, unmatched braces in format templates. Warnings to stderr, never errors (forward-compatible).
 - **Structured exit codes** — `main()` → `run()` → `run_inner()`. `classify_exit_code()` uses both string matching and `MediaError` downcast for error-to-code mapping.
+- **Setup validation** — `--check` validates environment without requiring a disc: FFmpeg libs, libbluray, libaacs, KEYDB.cfg, libmmbd, makemkvcon, udisksctl, optical drives, drive permissions, output directory, TMDb API key, config file. Exit code 0 (all required pass) or 2 (any required fail). Dispatches before AACS preflight.
+- **Headless progress** — Non-TTY stdout gets `println!` progress lines at 10-second wall-clock intervals instead of `\r` carriage returns. TTY keeps existing carriage return behavior.
 
 ## Testing
 
@@ -160,9 +162,12 @@ bluback [OPTIONS]
       --title <STRING>         Set show/movie title directly (skips TMDb)
       --year <STRING>          Movie release year (with --title in --movie mode)
       --playlists <SEL>        Select specific playlists (e.g. 1,2,3 or 1-3 or all)
+      --specials <SEL>         Mark playlists as specials (uses filtered indices, e.g. 1,3)
       --list-playlists         Print playlist info and exit
+  -v, --verbose                Verbose output (with --list-playlists: show stream details)
       --overwrite              Overwrite existing output files instead of skipping
       --aacs-backend <BACKEND> AACS decryption backend: auto, libaacs, or libmmbd
+      --check                  Validate environment setup and exit (no disc required)
       --settings               Open settings panel (no disc/ffmpeg required)
       --config <PATH>          Path to config file (also: BLUBACK_CONFIG env var)
 ```
