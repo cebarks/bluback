@@ -2,19 +2,22 @@
 
 See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 items, 8 milestones).
 
-## Current: v0.6 — Stability & Safety
+## Completed: v0.6 — Stability & Safety
 
-- [ ] Fix `detect_optical_drives()` panic on empty vec
-- [ ] Error handling audit — replace production `.unwrap()` with proper propagation
-- [ ] Signal handling + partial file cleanup on Ctrl+C/error during remux
-- [ ] Overwrite protection — `--overwrite` flag, default skip with warning
-- [ ] TMDb request timeout (15s)
-- [ ] Config validation on load — warn on unknown keys, validate values
-- [ ] Structured exit codes (0/1/2/3/4)
-- [ ] Output directory auto-creation
-- [ ] Test fixtures + fake BDMV directory for integration testing
+- [x] Fix `detect_optical_drives()` panic on empty vec
+- [x] Error handling audit — replace production `.unwrap()` with `.expect()` context
+- [x] Signal handling (ctrlc) + partial file cleanup on Ctrl+C/error during remux
+- [x] Overwrite protection — `--overwrite` flag + `PlaylistStatus::Skipped` in TUI
+- [x] TMDb request timeout (15s via ureq agent)
+- [x] Config validation on load — warn on unknown keys, validate values
+- [x] Structured exit codes (0=success, 1=runtime, 2=usage, 3=no device, 4=cancelled)
+- [x] Output directory auto-creation (error propagation fix in TUI)
+- [x] Test fixtures + integration tests (synthetic media, TMDb JSON, chapter extraction)
+- [x] AACS backend detection — `aacs_backend` config (auto/libaacs/libmmbd), preflight checks
+- [x] MountGuard for guaranteed disc unmount on all exit paths
+- [x] Zombie makemkvcon process reaping on exit
 
-## Next: v0.7 — Architecture & CLI Completeness
+## Current: v0.7 — Architecture & CLI Completeness
 
 - [ ] Workflow extraction (`workflow.rs` with `WorkflowUI` trait) for GUI-readiness
 - [ ] Specials: CLI parity (`--specials`) + TUI batch marking

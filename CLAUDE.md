@@ -15,7 +15,7 @@ MakeMKV doesn't work with USB Blu-ray drives using ASMedia USB-SATA bridge chips
 ### How it works
 
 - **FFmpeg API** (via `ffmpeg-the-third` Rust bindings) with libbluray scans disc playlists and remuxes streams into MKV (lossless copy, no re-encoding). No CLI subprocess calls.
-- **libaacs** + `~/.config/aacs/KEYDB.cfg` handles AACS decryption
+- **AACS decryption** via libaacs (KEYDB.cfg) or libmmbd (MakeMKV's LibreDrive backend), controlled by `aacs_backend` config
 - **Chapters** are embedded during remux via the AVChapter API (no external tools needed)
 
 ### Build Requirements
@@ -37,11 +37,17 @@ FFmpeg development libraries and clang are required at build time (bindgen gener
 
 **KEYDB.cfg** is sourced from the [FindVUK Online Database](http://fvonline-db.bplaced.net/) and lives at `~/.config/aacs/KEYDB.cfg`. It contains device keys (DK), processing keys (PK), host certificates (HC), and per-disc Volume Unique Keys (VUK).
 
+**AACS backend selection (`aacs_backend` config option):**
+- `auto` (default) — let libbluray decide. Preflight warns if libmmbd is masquerading as libaacs without makemkvcon available.
+- `libaacs` — force system libaacs with KEYDB.cfg. Requires per-disc VUKs for MKBv72+ discs.
+- `libmmbd` — force MakeMKV's libmmbd. Requires `makemkvcon` in PATH and a registered MakeMKV (beta key or purchased — trial version silently fails). Enables LibreDrive mode for drives with patched firmware.
+- **CRITICAL:** `LIBAACS_PATH` must be set to a library NAME (`libmmbd`), not a full path. libbluray's `dl_dlopen` appends `.so.{version}`, so a path like `/lib64/libmmbd.so.0` becomes `/lib64/libmmbd.so.0.so.0` and silently fails.
+- `scan_playlists` has a 120-second timeout (libmmbd + makemkvcon is slower than direct libaacs due to IPC overhead).
+- Preflight checks (`src/aacs.rs`) run before any FFmpeg/libbluray calls: verify makemkvcon availability, detect libmmbd masquerading as libaacs, set LIBAACS_PATH/LIBBDPLUS_PATH env vars.
+
 **Known limitations with the ASUS BW-16D1X-U (ASMedia USB bridge):**
-- The only publicly available AACS host certificate is **revoked in MKBv72+**. Discs with MKBv72+ MKBs require a per-disc VUK in the KEYDB to decrypt.
-- MMC SCSI commands (REPORT KEY / SEND KEY) for AACS authentication sometimes fail through the USB bridge. Basic commands like AGID requests work, but host certificate exchange can get I/O errors or authentication failures depending on the disc.
-- **libmmbd.so.0** (MakeMKV's libaacs bridge library) must NOT be installed system-wide (`/usr/lib64/libmmbd.so.0`) — if present without a working MakeMKV backend, libaacs hangs indefinitely during AACS init. If ffprobe hangs on disc scan, check for orphaned libmmbd.so.0.
-- `scan_playlists` has a 60-second timeout to prevent infinite hangs when AACS fails.
+- The only publicly available AACS host certificate is **revoked in MKBv72+**. Discs with MKBv72+ MKBs require a per-disc VUK in the KEYDB or libmmbd with LibreDrive.
+- MMC SCSI commands (REPORT KEY / SEND KEY) for AACS authentication sometimes fail through the USB bridge. Using `aacs_backend = "libmmbd"` with LibreDrive firmware bypasses this entirely.
 
 **Recommended drive replacement:** An internal SATA LG WH16NS60 or ASUS BW-16D1HT (same drive without USB enclosure) eliminates all bridge-related issues. The BW-16D1X-U can also be removed from its enclosure and connected directly via SATA.
 
@@ -60,7 +66,7 @@ cargo clippy                   # Lint
 
 ### Data Flow
 
-1. `main.rs` parses CLI args, loads config, sets `BD_DEBUG_MASK` based on `verbose_libbluray`, detects TTY, dispatches to TUI or CLI mode
+1. `main.rs` parses CLI args, loads config, runs AACS preflight (`aacs.rs`), registers ctrlc signal handler, sets `BD_DEBUG_MASK` based on `verbose_libbluray`, validates config, detects TTY, dispatches to TUI or CLI mode. Structured as `main()` → `run()` → `run_inner()` with exit codes.
 2. Both modes follow the same workflow: scan disc → filter playlists → TMDb lookup (optional) → assign episodes → review/manual mapping (optional) → build filenames → rip (with chapters embedded during remux)
 3. `disc.rs` handles volume label parsing, disc mount/unmount operations (via `udisksctl`), and delegates to `media` module for probing
 4. `media/probe.rs` — FFmpeg API-based playlist scanning (custom log callback captures libbluray output), stream probing, and media info extraction
@@ -68,7 +74,8 @@ cargo clippy                   # Lint
 6. `media/error.rs` — MediaError enum with AACS error classification
 7. `rip.rs` — orchestrates remux jobs with progress tracking via mpsc channel
 8. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
-9. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority
+9. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority, validates on load (unknown keys, numeric bounds, template syntax)
+10. `aacs.rs` — AACS backend preflight (library detection via ldconfig, makemkvcon availability, LIBAACS_PATH env var setup, zombie process reaping)
 
 ### Two UI Modes
 
@@ -102,20 +109,35 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
 - **Settings overlay** — `App.overlay: Option<Overlay>` renders on top of the current screen. When active, all global key handlers except `Ctrl+C` are blocked; input routes to the overlay handler. `SettingsState` holds typed `SettingItem` variants (Toggle, Choice, Text, Number, Separator, Action). Choice variant has optional `custom_value` for the "Custom..." option (used by device dropdown). `Ctrl+S` in the overlay saves to `config.toml` with commented-out defaults and triggers workflow reset (rescan) unless mid-rip. Toggle/Choice changes apply to the session immediately without saving.
 - **Config path resolution** — Priority: `--config` CLI flag → `BLUBACK_CONFIG` env var → `~/.config/bluback/config.toml`. The resolved path is stored as `config_path: PathBuf` on `App`.
-- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `TMDB_API_KEY`.
+- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `BLUBACK_AACS_BACKEND`, `BLUBACK_OVERWRITE`, `TMDB_API_KEY`.
 - **`--settings` standalone mode** — Opens settings panel without disc detection or dependency checks. Dirty close prompts to save. Exits after panel close.
+- **Signal handling** — `ctrlc` crate registers handler for SIGINT/SIGTERM. First signal sets global `AtomicBool` cancel flag (propagated to remux cancel). Second signal within 2 seconds force-exits with code 130. Partial MKV files are deleted on cancel or error in both CLI and TUI modes.
+- **MountGuard** — RAII struct in `disc.rs` with both explicit `cleanup()` and `Drop` impl for disc unmount. Primary cleanup is explicit (called before `std::process::exit()`); `Drop` is a safety net for panics.
+- **Overwrite protection** — `--overwrite` flag + `overwrite` config option (default: false). Without flag: CLI prints skip message, TUI marks as `PlaylistStatus::Skipped(file_size)` (displayed dimmed). With flag: deletes existing file and re-rips.
+- **Config validation** — `validate_raw_toml()` checks unknown keys against `KNOWN_KEYS`. `validate_config()` checks `min_duration > 0`, `reserve_index_space <= 10000`, unmatched braces in format templates. Warnings to stderr, never errors (forward-compatible).
+- **Structured exit codes** — `main()` → `run()` → `run_inner()`. `classify_exit_code()` uses both string matching and `MediaError` downcast for error-to-code mapping.
 
 ## Testing
 
-Unit tests live in `#[cfg(test)] mod tests` blocks within each module. All tests are for pure functions — no tests require hardware or network access.
+Unit tests live in `#[cfg(test)] mod tests` blocks within each module. Integration tests in `tests/` directory. No tests require hardware or network access.
 
+**Unit tests (234):**
 - `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering
 - `disc.rs` — volume label parsing, playlist filtering
 - `media/probe.rs` — HDR classification, channel layout formatting, framerate/aspect ratio formatting, playlist log line parsing, GCD, DTS profile formatting
 - `media/remux.rs` — stream selection logic (all, prefer_surround, manual), map arg building, progress line parsing, size/ETA estimation, chapter OGM formatting
-- `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output
+- `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output, validation (unknown keys, numeric bounds, template braces), aacs_backend parsing, overwrite option
 - `types.rs` — MediaInfo field mapping, ChapterMark struct, SettingsState construction/roundtrip, cursor navigation, env var overrides
 - `tui/settings.rs` — truncate/mask helpers, input handling (toggle, choice, text edit, number validation, cursor movement, confirm close prompt)
+- `aacs.rs` — command_exists, is_libmmbd path detection
+- `chapters.rs` — chapter extraction with missing paths/playlists
+
+**Integration tests (3):**
+- `tests/tmdb_parsing.rs` — TMDb JSON deserialization from fixture files (`tests/fixtures/tmdb/`)
+
+**Test fixtures:**
+- `tests/fixtures/media/` — synthetic MKV files generated via `tests/generate_fixtures.sh`
+- `tests/fixtures/tmdb/` — canned TMDb API JSON responses
 
 ## CLI Flags
 
@@ -139,12 +161,24 @@ bluback [OPTIONS]
       --year <STRING>          Movie release year (with --title in --movie mode)
       --playlists <SEL>        Select specific playlists (e.g. 1,2,3 or 1-3 or all)
       --list-playlists         Print playlist info and exit
+      --overwrite              Overwrite existing output files instead of skipping
+      --aacs-backend <BACKEND> AACS decryption backend: auto, libaacs, or libmmbd
       --settings               Open settings panel (no disc/ffmpeg required)
       --config <PATH>          Path to config file (also: BLUBACK_CONFIG env var)
 ```
 
 `--format` and `--format-preset` are mutually exclusive (clap argument group).
 `--yes` auto-enables when stdin is not a TTY (headless/scripted contexts).
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Runtime error (rip failure, FFmpeg error, I/O) |
+| 2 | Usage/config error |
+| 3 | No disc/device |
+| 4 | User cancelled |
 
 ## TUI Keybindings
 
@@ -204,3 +238,5 @@ bluback [OPTIONS]
 | `regex` | Volume label parsing, log line parsing |
 | `anyhow` | Application error handling |
 | `mpls` | MPLS playlist parsing for chapter extraction |
+| `ctrlc` | Signal handling (SIGINT/SIGTERM) |
+| `libc` | POSIX waitpid for zombie process reaping |

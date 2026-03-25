@@ -2,7 +2,7 @@
 
 ## Context
 
-bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, TUI wizard, headless CLI, chapter preservation, TMDb integration). A comprehensive audit identified stability gaps, feature gaps, and architectural improvements needed for a production-quality 1.0 release. The goal is a feature-complete release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
+bluback is at v0.6.0 with solid core functionality and a stable foundation (FFmpeg-based Blu-ray remux, TUI wizard, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection). The v0.6 milestone addressed stability gaps and safety issues. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
 
 ## Architectural Principles
 
@@ -25,61 +25,26 @@ bluback is at v0.5.0 with solid core functionality (FFmpeg-based Blu-ray remux, 
 
 ---
 
-## v0.6 — Stability & Safety Foundation
+## v0.6 — Stability & Safety Foundation (RELEASED)
 
-*Prerequisite for building confidently on top.*
+*Prerequisite for building confidently on top. Released 2026-03-24.*
 
-### 1. Fix `detect_optical_drives()` panic
-- **Bug:** `main.rs:157` — `drives[0]` panics if vec is empty (masked by `/dev/sr0` fallback)
-- **Fix:** `.first()` with proper error bail: `"No optical drives detected"`
-- **Files:** `src/main.rs`, `src/disc.rs`
+All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety-design.md` for full design spec.
 
-### 2. Error handling audit
-- **Goal:** Replace production `.unwrap()` with proper error propagation or `.expect()` with context
-- **Key targets:** `types.rs:660-821` (13 settings state unwraps), `cli.rs:754,785` (file_name unwraps)
-- **Approach:** Grep all `.unwrap()` outside `#[cfg(test)]`, evaluate each
-- **Files:** All `src/**/*.rs`
+**What shipped:**
+- Fix `detect_optical_drives()` panic — use `.first()` with bail, removed `/dev/sr0` fallback
+- Error handling audit — 11 production `.unwrap()` → `.expect()` with context
+- Signal handling — `ctrlc` crate, double-signal force exit, partial MKV cleanup, `MountGuard` for disc unmount
+- Overwrite protection — `--overwrite` flag, `PlaylistStatus::Skipped` in TUI
+- TMDb request timeout — 15s via `ureq::Agent` with `timeout_global`
+- Config validation — unknown key detection, numeric bounds, format template brace matching
+- Structured exit codes — 0 success, 1 runtime, 2 usage, 3 no device, 4 cancelled
+- Output directory error propagation — TUI no longer silently swallows `create_dir_all` errors
+- Test fixtures — synthetic media files, canned TMDb JSON, chapter extraction unit tests, integration tests
+- **AACS backend detection** (added during v0.6) — `aacs_backend` config (auto/libaacs/libmmbd), preflight checks for makemkvcon availability, library path detection via ldconfig, improved AACS error messages, settings panel integration
+- Zombie makemkvcon process reaping on exit via `waitpid`
 
-### 3. Signal handling + partial file cleanup
-- **Goal:** Delete partial MKV files on Ctrl+C/error during remux; ensure disc unmount on all exit paths
-- **Design:** Track output path in remux context; delete partial file on `RemuxFailed`/`Cancelled` in caller; register panic hook for cleanup
-- **Files:** `src/media/remux.rs`, `src/rip.rs`, `src/cli.rs`, `src/tui/dashboard.rs`
-
-### 4. Overwrite protection
-- **Goal:** `--overwrite` CLI flag + `overwrite` config option (default: false)
-- **Behavior:** Without flag: skip existing files with clear warning and file size. With flag: delete and re-rip.
-- **Files:** `src/main.rs`, `src/config.rs`, `src/cli.rs`, `src/tui/dashboard.rs`
-
-### 5. TMDb request timeout
-- **Fix:** `.timeout(Duration::from_secs(15))` on all ureq calls
-- **Files:** `src/tmdb.rs`
-
-### 6. Config validation on load
-- **Goal:** Warn on unknown keys (typos), validate values (`min_duration > 0`, `output_dir` writable)
-- **Behavior:** Warnings to stderr, don't fail (forward-compat)
-- **Files:** `src/config.rs`
-
-### 7. Structured exit codes
-- **Codes:** `0` success, `1` runtime error, `2` usage/config error, `3` no disc/device, `4` user cancelled
-- **Implementation:** Explicit `std::process::exit()` in `main()` based on error type
-- **Files:** `src/main.rs`, `src/media/error.rs`
-
-### 8. Output directory auto-creation
-- **Goal:** Auto-create parent directories when output path doesn't exist
-- **Fix:** `std::fs::create_dir_all()` before writing output file
-- **Files:** `src/media/remux.rs` or `src/rip.rs` (wherever output path is resolved)
-
-### 9. Test fixtures + fake BDMV directory
-- **Goal:** Enable integration-level testing without physical hardware
-- **Fixtures:**
-  - Binary MPLS files with known chapter marks → test `chapters.rs` chapter extraction
-  - Synthetic M2TS via `ffmpeg -f lavfi` (~100KB) → test `remux()` stream mapping + chapter injection
-  - Small MP4/MKV test files → test `probe_media_info()` codec detection
-  - Canned TMDb JSON responses → test TMDb parsing without network
-- **Fake BDMV directory:** Minimal valid structure for libbluray (`index.bdmv`, `MovieObject.bdmv`, PLAYLIST, CLIPINF, STREAM dirs) — enables testing `scan_playlists()` via `bluray:///path/to/test_disc`
-- **Location:** `tests/fixtures/` for data files, integration tests in `tests/` directory
-- **CI:** Fixture generation script or pre-built fixtures checked into repo (small enough for git, no LFS needed)
-- **Files:** New `tests/` directory, fixture generation script
+**Key discovery:** `LIBAACS_PATH` env var must be a library NAME (`libmmbd`), not a full path — libbluray's `dl_dlopen` appends `.so.{version}`.
 
 ---
 
