@@ -160,6 +160,36 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         headless,
     )?;
 
+    // Resolve --specials flag to playlist numbers
+    let specials_set: std::collections::HashSet<String> = if let Some(ref sel_str) = args.specials {
+        match parse_selection(sel_str, episodes_pl.len()) {
+            Some(indices) => {
+                let selected_set: std::collections::HashSet<usize> = selected.iter().copied().collect();
+                let mut specials = std::collections::HashSet::new();
+                for idx in indices {
+                    if selected_set.contains(&idx) {
+                        specials.insert(episodes_pl[idx].num.clone());
+                    } else {
+                        eprintln!(
+                            "Warning: --specials index {} is not in the selected playlists, skipping",
+                            idx + 1
+                        );
+                    }
+                }
+                specials
+            }
+            None => {
+                anyhow::bail!(
+                    "Invalid --specials value '{}'. Use e.g. '4,5', '4-5' (max {}).",
+                    sel_str,
+                    episodes_pl.len()
+                );
+            }
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+
     let outfiles = build_filenames(
         args,
         config,
@@ -169,6 +199,7 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         &episodes_pl,
         &selected,
         &tmdb_ctx,
+        &specials_set,
         movie_mode,
         headless,
     )?;
@@ -607,6 +638,7 @@ fn build_filenames(
     episodes_pl: &[Playlist],
     selected: &[usize],
     tmdb_ctx: &TmdbContext,
+    specials: &std::collections::HashSet<String>,
     movie_mode: bool,
     headless: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
@@ -636,13 +668,16 @@ fn build_filenames(
         })
     };
 
+    let mut special_ep_cursor = 1u32;
+
     let default_names: Vec<String> = selected
         .iter()
         .enumerate()
         .map(|(sel_i, &idx)| {
             let pl = &episodes_pl[idx];
+            let is_special = specials.contains(&pl.num);
 
-            let media_info = if use_custom_format {
+            let media_info = if use_custom_format || is_special {
                 disc::probe_media_info(device, &pl.num)
             } else {
                 None
@@ -677,6 +712,22 @@ fn build_filenames(
                     year,
                     part,
                     fmt,
+                    media_info.as_ref(),
+                    Some(&extra_vars),
+                )
+            } else if is_special {
+                let special_fmt = config.resolve_special_format(args.format.as_deref());
+                let ep = Episode {
+                    episode_number: special_ep_cursor,
+                    name: String::new(),
+                    runtime: None,
+                };
+                special_ep_cursor += 1;
+                util::make_filename(
+                    &pl.num,
+                    &[ep],
+                    tmdb_ctx.season_num.unwrap_or(0),
+                    Some(special_fmt.as_str()),
                     media_info.as_ref(),
                     Some(&extra_vars),
                 )

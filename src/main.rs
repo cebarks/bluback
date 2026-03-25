@@ -100,6 +100,10 @@ pub struct Args {
     #[arg(long)]
     playlists: Option<String>,
 
+    /// Mark playlists as specials (S{season}SP{episode}), e.g. "4,5" or "4-5"
+    #[arg(long, conflicts_with = "movie")]
+    specials: Option<String>,
+
     /// Overwrite existing output files instead of skipping
     #[arg(long)]
     overwrite: bool,
