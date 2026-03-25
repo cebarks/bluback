@@ -1,5 +1,6 @@
 mod aacs;
 mod chapters;
+mod check;
 mod cli;
 mod config;
 mod disc;
@@ -100,6 +101,10 @@ pub struct Args {
     #[arg(long)]
     playlists: Option<String>,
 
+    /// Mark playlists as specials (S{season}SP{episode}), e.g. "4,5" or "4-5"
+    #[arg(long, conflicts_with = "movie")]
+    specials: Option<String>,
+
     /// Overwrite existing output files instead of skipping
     #[arg(long)]
     overwrite: bool,
@@ -108,9 +113,17 @@ pub struct Args {
     #[arg(long)]
     list_playlists: bool,
 
+    /// Show detailed info (e.g. stream info with --list-playlists)
+    #[arg(short = 'v', long)]
+    verbose: bool,
+
     /// AACS decryption backend: auto, libaacs, or libmmbd
     #[arg(long, value_parser = ["auto", "libaacs", "libmmbd"])]
     aacs_backend: Option<String>,
+
+    /// Validate environment and configuration, then exit
+    #[arg(long)]
+    check: bool,
 }
 
 impl Args {
@@ -206,6 +219,10 @@ fn run_inner() -> anyhow::Result<i32> {
                 eprintln!("Warning: {}", w);
             }
         }
+    }
+
+    if args.check {
+        return Ok(check::run_check(&config, &config_path));
     }
 
     let aacs_backend = args.aacs_backend

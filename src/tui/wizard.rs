@@ -90,7 +90,7 @@ pub fn playlist_filename(
         make_filename(
             &pl.num,
             episodes,
-            0, // season 0 for specials
+            app.wizard.season_num.unwrap_or(0), // actual season for specials
             Some(format_template.as_str()),
             media_info,
             Some(&extra),
@@ -770,11 +770,45 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
             // Episode column
             let ep_str = if is_editing {
                 format!("{}|", app.wizard.input_buffer)
+            } else if is_special {
+                if let Some(eps) = app.wizard.episode_assignments.get(&pl.num) {
+                    if eps.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        let season = app.wizard.season_num.unwrap_or(0);
+                        if eps.len() == 1 {
+                            if eps[0].name.is_empty() {
+                                format!("S{:02}SP{:02}", season, eps[0].episode_number)
+                            } else {
+                                format!(
+                                    "S{:02}SP{:02} - {}",
+                                    season, eps[0].episode_number, eps[0].name
+                                )
+                            }
+                        } else {
+                            let first = &eps[0];
+                            let last = &eps[eps.len() - 1];
+                            if first.name.is_empty() {
+                                format!(
+                                    "S{:02}SP{:02}-SP{:02}",
+                                    season, first.episode_number, last.episode_number
+                                )
+                            } else {
+                                format!(
+                                    "S{:02}SP{:02}-SP{:02} - {}",
+                                    season, first.episode_number, last.episode_number, first.name
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    "(none)".to_string()
+                }
             } else if let Some(eps) = app.wizard.episode_assignments.get(&pl.num) {
                 if eps.is_empty() {
                     "(none)".to_string()
                 } else {
-                    let season = if is_special { 0 } else { app.wizard.season_num.unwrap_or(0) };
+                    let season = app.wizard.season_num.unwrap_or(0);
                     if eps.len() == 1 {
                         if eps[0].name.is_empty() {
                             format!("S{:02}E{:02}", season, eps[0].episode_number)
@@ -804,7 +838,7 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
                 "(none)".to_string()
             };
 
-            let special_marker = if is_special { " [S]" } else { "" };
+            let special_marker = if is_special { " [SP]" } else { "" };
             let ep_display = format!("{}{}", ep_str, special_marker);
 
             let filename = playlist_filename(app, real_idx, None);

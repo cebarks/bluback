@@ -978,4 +978,44 @@ mod tests {
         assert_eq!(result["00002"].len(), 1);
         assert_eq!(result["00002"][0].episode_number, 2);
     }
+
+    #[test]
+    fn test_make_filename_special_format() {
+        let episodes = vec![Episode {
+            episode_number: 1,
+            name: String::new(),
+            runtime: None,
+        }];
+        let result = make_filename(
+            "00006",
+            &episodes,
+            2,
+            Some("{show} S{season}SP{episode} {title}.mkv"),
+            None,
+            Some(&{
+                let mut m = HashMap::new();
+                m.insert("show", "Test Show".to_string());
+                m
+            }),
+        );
+        assert_eq!(result, "Test Show S02SP01.mkv");
+    }
+
+    #[test]
+    fn test_make_filename_special_format_with_season() {
+        let episodes = vec![Episode {
+            episode_number: 3,
+            name: "Behind the Scenes".to_string(),
+            runtime: None,
+        }];
+        let result = make_filename(
+            "00010",
+            &episodes,
+            5,
+            Some("S{season}SP{episode}_{title}.mkv"),
+            None,
+            None,
+        );
+        assert_eq!(result, "S05SP03_Behind the Scenes.mkv");
+    }
 }

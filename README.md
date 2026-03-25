@@ -210,7 +210,7 @@ bluback relies on libaacs for AACS decryption. You need a `KEYDB.cfg` file at `~
 
 ## AI Disclosure
 
-Portions of this codebase were developed with the assistance of generative AI (Claude, Anthropic).
+Portions of this codebase were developed with the assistance of generative AI (Claude Code). This project was started as a test of Claude Code's limits, but turned out to be a genuinely useful tool. 
 
 ## License
 

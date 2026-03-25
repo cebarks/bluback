@@ -9,6 +9,38 @@ use crate::types::*;
 use crate::util::{self, *};
 use crate::Args;
 
+fn format_video_column(info: &crate::types::MediaInfo) -> String {
+    let mut parts = Vec::new();
+    if !info.codec.is_empty() {
+        let codec = match info.codec.as_str() {
+            "h264" => "H.264",
+            "hevc" => "HEVC",
+            "vc1" => "VC-1",
+            "mpeg2video" => "MPEG-2",
+            other => other,
+        };
+        parts.push(codec.to_string());
+    }
+    if !info.resolution.is_empty() {
+        parts.push(info.resolution.clone());
+    }
+    if !info.framerate.is_empty() {
+        parts.push(info.framerate.clone());
+    }
+    parts.join(" ")
+}
+
+fn format_audio_column(streams: &[crate::types::AudioStream]) -> String {
+    streams
+        .iter()
+        .map(|s| {
+            let codec = s.profile.as_deref().unwrap_or(&s.codec);
+            format!("{} {}", codec, s.channel_layout)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 struct TmdbContext {
     episode_assignments: EpisodeAssignments,
     season_num: Option<u32>,
@@ -73,15 +105,47 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         }
     }
 
-    println!(
-        "  {:<4}  {:<10}  {:<10}{}  Sel",
-        "#", "Playlist", "Duration", header_ch
-    );
-    println!(
-        "  {:<4}  {:<10}  {:<10}{}  ---",
-        "---", "--------", "--------",
-        if has_ch { "  --" } else { "" },
-    );
+    // Verbose mode: probe stream info for each playlist
+    let verbose_info: Vec<Option<(crate::types::MediaInfo, crate::types::StreamInfo)>> =
+        if args.verbose {
+            eprintln!("Probing streams...");
+            playlists
+                .iter()
+                .map(|pl| {
+                    let media = crate::media::probe::probe_media_info(&device, &pl.num).ok();
+                    let streams = crate::media::probe::probe_streams(&device, &pl.num).ok();
+                    match (media, streams) {
+                        (Some(m), Some(s)) => Some((m, s)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        } else {
+            vec![None; playlists.len()]
+        };
+
+    if args.verbose {
+        println!(
+            "  {:<4}  {:<10}  {:<10}{}  {:<18}  Audio  Sel",
+            "#", "Playlist", "Duration", header_ch, "Video"
+        );
+        println!(
+            "  {:<4}  {:<10}  {:<10}{}  {:<18}  -----  ---",
+            "---", "--------", "--------",
+            if has_ch { "  --" } else { "" },
+            "------------------"
+        );
+    } else {
+        println!(
+            "  {:<4}  {:<10}  {:<10}{}  Sel",
+            "#", "Playlist", "Duration", header_ch
+        );
+        println!(
+            "  {:<4}  {:<10}  {:<10}{}  ---",
+            "---", "--------", "--------",
+            if has_ch { "  --" } else { "" },
+        );
+    }
 
     for (i, pl) in playlists.iter().enumerate() {
         let ch_str = if has_ch {
@@ -102,14 +166,33 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
             "  *".to_string()
         };
 
-        println!(
-            "  {:<4}  {:<10}  {:<10}{}{}",
-            i + 1,
-            pl.num,
-            pl.duration,
-            ch_str,
-            sel_str,
-        );
+        if args.verbose {
+            let (video_str, audio_str) = if let Some((ref media, ref streams)) = verbose_info[i] {
+                (format_video_column(media), format_audio_column(&streams.audio_streams))
+            } else {
+                ("".to_string(), "".to_string())
+            };
+
+            println!(
+                "  {:<4}  {:<10}  {:<10}{}  {:<18}  {}{}",
+                i + 1,
+                pl.num,
+                pl.duration,
+                ch_str,
+                video_str,
+                audio_str,
+                sel_str,
+            );
+        } else {
+            println!(
+                "  {:<4}  {:<10}  {:<10}{}{}",
+                i + 1,
+                pl.num,
+                pl.duration,
+                ch_str,
+                sel_str,
+            );
+        }
     }
 
     let episode_count = filtered_index.len();
@@ -160,6 +243,36 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         headless,
     )?;
 
+    // Resolve --specials flag to playlist numbers
+    let specials_set: std::collections::HashSet<String> = if let Some(ref sel_str) = args.specials {
+        match parse_selection(sel_str, episodes_pl.len()) {
+            Some(indices) => {
+                let selected_set: std::collections::HashSet<usize> = selected.iter().copied().collect();
+                let mut specials = std::collections::HashSet::new();
+                for idx in indices {
+                    if selected_set.contains(&idx) {
+                        specials.insert(episodes_pl[idx].num.clone());
+                    } else {
+                        eprintln!(
+                            "Warning: --specials index {} is not in the selected playlists, skipping",
+                            idx + 1
+                        );
+                    }
+                }
+                specials
+            }
+            None => {
+                anyhow::bail!(
+                    "Invalid --specials value '{}'. Use e.g. '4,5', '4-5' (max {}).",
+                    sel_str,
+                    episodes_pl.len()
+                );
+            }
+        }
+    } else {
+        std::collections::HashSet::new()
+    };
+
     let outfiles = build_filenames(
         args,
         config,
@@ -169,6 +282,7 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         &episodes_pl,
         &selected,
         &tmdb_ctx,
+        &specials_set,
         movie_mode,
         headless,
     )?;
@@ -607,6 +721,7 @@ fn build_filenames(
     episodes_pl: &[Playlist],
     selected: &[usize],
     tmdb_ctx: &TmdbContext,
+    specials: &std::collections::HashSet<String>,
     movie_mode: bool,
     headless: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
@@ -636,13 +751,16 @@ fn build_filenames(
         })
     };
 
+    let mut special_ep_cursor = 1u32;
+
     let default_names: Vec<String> = selected
         .iter()
         .enumerate()
         .map(|(sel_i, &idx)| {
             let pl = &episodes_pl[idx];
+            let is_special = specials.contains(&pl.num);
 
-            let media_info = if use_custom_format {
+            let media_info = if use_custom_format || is_special {
                 disc::probe_media_info(device, &pl.num)
             } else {
                 None
@@ -677,6 +795,22 @@ fn build_filenames(
                     year,
                     part,
                     fmt,
+                    media_info.as_ref(),
+                    Some(&extra_vars),
+                )
+            } else if is_special {
+                let special_fmt = config.resolve_special_format(args.format.as_deref());
+                let ep = Episode {
+                    episode_number: special_ep_cursor,
+                    name: String::new(),
+                    runtime: None,
+                };
+                special_ep_cursor += 1;
+                util::make_filename(
+                    &pl.num,
+                    &[ep],
+                    tmdb_ctx.season_num.unwrap_or(0),
+                    Some(special_fmt.as_str()),
                     media_info.as_ref(),
                     Some(&extra_vars),
                 )
@@ -831,31 +965,54 @@ fn rip_selected(
         };
 
         let pl_seconds = pl.seconds;
+        let is_tty = crate::atty_stdout();
+        let last_print = std::cell::Cell::new(std::time::Instant::now());
+        let started = std::cell::Cell::new(false);
+        let pl_num = pl.num.clone();
+
         let result = crate::media::remux::remux(options, |progress| {
-            let size = format_size(progress.total_size);
-            let time = format_time(progress.out_time_secs);
-            let mut parts = vec![
-                format!("frame={}", progress.frame),
-                format!("fps={:.1}", progress.fps),
-                format!("size={}", size),
-                format!("time={}", time),
-                format!("bitrate={}", progress.bitrate),
-                format!("speed={:.1}x", progress.speed),
-            ];
-            if let Some(est) = rip::estimate_final_size(progress, pl_seconds) {
-                parts.push(format!("est=~{}", format_size(est)));
+            if is_tty {
+                // Existing TTY path unchanged
+                let size = format_size(progress.total_size);
+                let time = format_time(progress.out_time_secs);
+                let mut parts = vec![
+                    format!("frame={}", progress.frame),
+                    format!("fps={:.1}", progress.fps),
+                    format!("size={}", size),
+                    format!("time={}", time),
+                    format!("bitrate={}", progress.bitrate),
+                    format!("speed={:.1}x", progress.speed),
+                ];
+                if let Some(est) = rip::estimate_final_size(progress, pl_seconds) {
+                    parts.push(format!("est=~{}", format_size(est)));
+                }
+                if let Some(eta_secs) = rip::estimate_eta(progress, pl_seconds) {
+                    parts.push(format!("eta={}", rip::format_eta(eta_secs)));
+                }
+                print!("\r  {:<100}", parts.join(" "));
+                io::stdout().flush().ok();
+            } else {
+                // Non-TTY: line-based progress at 10-second intervals
+                if !started.get() {
+                    started.set(true);
+                    println!("  {}", format_progress_line(&pl_num, progress, pl_seconds));
+                    last_print.set(std::time::Instant::now());
+                } else if last_print.get().elapsed() >= std::time::Duration::from_secs(10) {
+                    println!("  {}", format_progress_line(&pl_num, progress, pl_seconds));
+                    last_print.set(std::time::Instant::now());
+                }
             }
-            if let Some(eta_secs) = rip::estimate_eta(progress, pl_seconds) {
-                parts.push(format!("eta={}", rip::format_eta(eta_secs)));
-            }
-            print!("\r  {:<100}", parts.join(" "));
-            io::stdout().flush().ok();
         });
 
-        println!();
+        if is_tty {
+            println!(); // newline after \r progress
+        }
         match result {
             Ok(chapters_added) => {
                 let final_size = std::fs::metadata(outfile)?.len();
+                if !is_tty {
+                    println!("  [{}] 100% {} — done", pl.num, format_size(final_size));
+                }
                 println!("Done: {} ({})", filename, format_size(final_size));
                 if chapters_added > 0 {
                     println!("  Added {} chapter markers", chapters_added);
@@ -904,6 +1061,36 @@ fn format_time(seconds: u32) -> String {
     let m = (seconds % 3600) / 60;
     let s = seconds % 60;
     format!("{}:{:02}:{:02}", h, m, s)
+}
+
+fn format_progress_line(
+    playlist_num: &str,
+    progress: &crate::types::RipProgress,
+    total_seconds: u32,
+) -> String {
+    let pct = if total_seconds > 0 {
+        (progress.out_time_secs as f64 / total_seconds as f64 * 100.0).min(100.0) as u32
+    } else {
+        0
+    };
+    let size = format_size(progress.total_size);
+    let speed_str = format!(
+        "{:.0}MiB/s",
+        progress.total_size as f64 / progress.out_time_secs.max(1) as f64 / 1048576.0
+    );
+    let eta_str = rip::estimate_eta(progress, total_seconds)
+        .map(|e| format!("ETA {}", rip::format_eta(e)))
+        .unwrap_or_default();
+    let mut parts = vec![
+        format!("[{}]", playlist_num),
+        format!("{}%", pct),
+        size,
+        speed_str,
+    ];
+    if !eta_str.is_empty() {
+        parts.push(eta_str);
+    }
+    parts.join(" ")
 }
 
 fn prompt(msg: &str) -> io::Result<String> {
@@ -1175,4 +1362,89 @@ fn headless_tmdb_tv(
         season: season_num,
         show_name: show.name.clone(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_progress_line() {
+        let progress = crate::types::RipProgress {
+            frame: 1000,
+            fps: 50.0,
+            total_size: 256 * 1024 * 1024, // 256 MiB
+            out_time_secs: 300,
+            bitrate: "25000".into(),
+            speed: 2.0,
+        };
+        let line = format_progress_line("00001", &progress, 2500);
+        assert!(line.starts_with("[00001] 12%"));
+        assert!(line.contains("MiB"));
+        assert!(line.contains("ETA"));
+    }
+
+    #[test]
+    fn test_format_progress_line_complete() {
+        let progress = crate::types::RipProgress {
+            frame: 0,
+            fps: 0.0,
+            total_size: 2 * 1024 * 1024 * 1024, // 2 GiB
+            out_time_secs: 2500,
+            bitrate: String::new(),
+            speed: 1.0,
+        };
+        let line = format_progress_line("00001", &progress, 2500);
+        assert!(line.starts_with("[00001] 100%"));
+    }
+
+    #[test]
+    fn test_format_video_column() {
+        let info = crate::types::MediaInfo {
+            codec: "h264".into(),
+            resolution: "1080p".into(),
+            framerate: "23.976".into(),
+            ..Default::default()
+        };
+        assert_eq!(format_video_column(&info), "H.264 1080p 23.976");
+    }
+
+    #[test]
+    fn test_format_video_column_hevc() {
+        let info = crate::types::MediaInfo {
+            codec: "hevc".into(),
+            resolution: "2160p".into(),
+            framerate: "23.976".into(),
+            ..Default::default()
+        };
+        assert_eq!(format_video_column(&info), "HEVC 2160p 23.976");
+    }
+
+    #[test]
+    fn test_format_audio_column() {
+        let streams = vec![
+            crate::types::AudioStream {
+                index: 0,
+                codec: "truehd".into(),
+                channels: 8,
+                channel_layout: "7.1".into(),
+                language: Some("eng".into()),
+                profile: Some("TrueHD".into()),
+            },
+            crate::types::AudioStream {
+                index: 1,
+                codec: "ac3".into(),
+                channels: 2,
+                channel_layout: "stereo".into(),
+                language: Some("eng".into()),
+                profile: None,
+            },
+        ];
+        assert_eq!(format_audio_column(&streams), "TrueHD 7.1, ac3 stereo");
+    }
+
+    #[test]
+    fn test_format_audio_column_empty() {
+        assert_eq!(format_audio_column(&[]), "");
+    }
 }

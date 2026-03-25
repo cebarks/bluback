@@ -59,26 +59,30 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - TUI and CLI become thin adapters implementing this trait
 - **Files:** New `src/workflow.rs`, refactor `src/cli.rs`, refactor `src/tui/mod.rs`
 
-### 11. Specials: CLI parity + batch marking
-- **CLI:** `--specials <SEL>` flag (e.g., `--specials 3,5`) marks playlists as S00 episodes
-- **TUI:** Batch marking — select multiple rows, press `s` to toggle all
-- **Headless:** Auto-assign S00E01, S00E02, etc. to specified playlists
+### 11. Specials: CLI parity + batch marking ✓
+- **CLI:** `--specials <SEL>` flag (e.g., `--specials 3,5`) marks playlists as specials using filtered indices
+- **Naming:** Changed from `S00E{episode}` to `S{season}SP{episode}` (uses actual season, not S00)
+- **TUI:** Individual marking with `s` hotkey implemented; batch marking (select multiple rows) deferred
+- **Headless:** Auto-assign SP01, SP02, etc. to specified playlists
 - **Files:** `src/main.rs`, `src/cli.rs`, `src/tui/wizard.rs`, `src/util.rs`
 
-### 12. Headless progress output
+### 12. Headless progress output ✓
 - **Goal:** Non-TTY stdout gets line-based progress instead of `\r` carriage returns
-- **Design:** Print `[playlist] 45% 120MB/s ETA 2:30` lines at intervals (every 5% or 10s)
+- **Design:** Print `[playlist] 45% 120MB/s ETA 2:30` lines at 10-second wall-clock intervals
+- **Implementation:** TTY detection via `stdout().is_terminal()`, interval-based `println!` for non-TTY
 - **Files:** `src/rip.rs`, `src/cli.rs`
 
-### 13. `--list-playlists` stream info
+### 13. `--list-playlists` stream info ✓
 - **Goal:** Show video codec, resolution, audio codecs/channels per playlist
-- **Design:** Per-playlist FFmpeg probe. Default: duration/size. `--verbose`: codec details.
+- **Design:** Per-playlist FFmpeg probe. Default: duration/size. `--verbose`/`-v` flag: codec details.
+- **Implementation:** `--verbose` adds Video (codec, resolution, framerate) and Audio (all streams with codec + channel layout) columns
 - **Files:** `src/cli.rs`, `src/media/probe.rs`
 
-### 14. `--check` setup validation
+### 14. `--check` setup validation ✓
 - **Goal:** Validate environment without requiring a disc
-- **Checks:** FFmpeg libs, libaacs, KEYDB.cfg, optical drives, output dir writable, TMDb API key
-- **Output:** Checklist with pass/fail/warn per item
+- **Checks:** 12 total — FFmpeg libs, libbluray, libaacs, KEYDB.cfg, libmmbd, makemkvcon, udisksctl, optical drives, drive permissions, output dir writable, TMDb API key, config file
+- **Output:** Checklist with pass/fail/warn per item; exit code 0 (all required pass) or 2 (any required fail)
+- **Implementation:** Dispatches before AACS preflight, validates all runtime dependencies
 - **Files:** `src/main.rs`, `src/disc.rs`, `src/config.rs`
 
 ---

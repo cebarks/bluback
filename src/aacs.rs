@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Check if a command exists in PATH.
-fn command_exists(name: &str) -> bool {
+pub fn command_exists(name: &str) -> bool {
     Command::new("which")
         .arg(name)
         .output()
@@ -13,7 +13,7 @@ fn command_exists(name: &str) -> bool {
 }
 
 /// Search for a shared library using ldconfig, falling back to known paths.
-fn find_library(name: &str, known_paths: &[&str]) -> Option<PathBuf> {
+pub fn find_library(name: &str, known_paths: &[&str]) -> Option<PathBuf> {
     // Try ldconfig -p first
     if let Ok(output) = Command::new("ldconfig").arg("-p").output() {
         if output.status.success() {
@@ -42,7 +42,7 @@ fn find_library(name: &str, known_paths: &[&str]) -> Option<PathBuf> {
 }
 
 /// Check if a library path is actually libmmbd (via symlink resolution).
-fn is_libmmbd(path: &std::path::Path) -> bool {
+pub fn is_libmmbd(path: &std::path::Path) -> bool {
     match std::fs::canonicalize(path) {
         Ok(real) => real
             .file_name()
@@ -52,16 +52,22 @@ fn is_libmmbd(path: &std::path::Path) -> bool {
     }
 }
 
-const LIBMMBD_PATHS: &[&str] = &[
+pub const LIBMMBD_PATHS: &[&str] = &[
     "/usr/lib64/libmmbd.so.0",
     "/usr/lib/x86_64-linux-gnu/libmmbd.so.0",
     "/usr/lib/libmmbd.so.0",
 ];
 
-const LIBAACS_PATHS: &[&str] = &[
+pub const LIBAACS_PATHS: &[&str] = &[
     "/usr/lib64/libaacs.so.0",
     "/usr/lib/x86_64-linux-gnu/libaacs.so.0",
     "/usr/lib/libaacs.so.0",
+];
+
+pub const LIBBLURAY_PATHS: &[&str] = &[
+    "/usr/lib64/libbluray.so.2",
+    "/usr/lib/x86_64-linux-gnu/libbluray.so.2",
+    "/usr/lib/libbluray.so.2",
 ];
 
 /// Run AACS backend preflight checks. Call before any FFmpeg/libbluray init.
@@ -123,7 +129,7 @@ pub fn preflight(backend: AacsBackend) -> Result<()> {
     }
 }
 
-fn dirs_keydb_path() -> PathBuf {
+pub fn dirs_keydb_path() -> PathBuf {
     let home = std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/tmp"));
