@@ -52,12 +52,16 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 *Extract shared workflow layer; round out CLI feature parity.*
 
-### 10. Workflow extraction (GUI-readiness)
+### 10. Workflow extraction (GUI-readiness) ✓
 - **Goal:** Extract orchestration logic from `cli.rs` into shared `workflow.rs` module
-- **What moves:** TMDb lookup flow, playlist selection/filtering, filename generation, rip orchestration
-- **Design:** Trait-based callbacks for UI interaction (`WorkflowUI` trait)
-- TUI and CLI become thin adapters implementing this trait
-- **Files:** New `src/workflow.rs`, refactor `src/cli.rs`, refactor `src/tui/mod.rs`
+- **Implementation:** Extracted 3 shared functions into `src/workflow.rs` (no trait abstraction yet)
+  - `build_output_filename()` — unified filename generation for CLI and TUI
+  - `check_overwrite()` — file existence + overwrite decision with `OverwriteAction` enum
+  - `prepare_remux_options()` — chapter extraction + RemuxOptions construction
+  - `detect_movie_mode()` dropped (one-liner not worth extracting)
+- CLI and TUI refactored to use workflow functions, eliminating ~150 lines of duplication
+- **Deferred:** Full trait-based abstraction (`WorkflowUI`) — will be designed when GUI work begins
+- **Files:** New `src/workflow.rs`, refactored `src/cli.rs`, refactored `src/tui/mod.rs`
 
 ### 11. Specials: CLI parity + batch marking ✓
 - **CLI:** `--specials <SEL>` flag (e.g., `--specials 3,5`) marks playlists as specials using filtered indices

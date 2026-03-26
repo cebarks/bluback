@@ -73,9 +73,10 @@ cargo clippy                   # Lint
 5. `media/remux.rs` — FFmpeg API-based lossless remux with progress callbacks, stream selection, and AVChapter injection from MPLS data
 6. `media/error.rs` — MediaError enum with AACS error classification
 7. `rip.rs` — orchestrates remux jobs with progress tracking via mpsc channel
-8. `util.rs` contains all pure functions (filename generation, template rendering, selection parsing)
-9. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority, validates on load (unknown keys, numeric bounds, template syntax)
-10. `aacs.rs` — AACS backend preflight (library detection via ldconfig, makemkvcon availability, LIBAACS_PATH env var setup, zombie process reaping)
+8. `workflow.rs` — shared business logic: filename generation (`build_output_filename`), overwrite handling (`check_overwrite`), remux job setup (`prepare_remux_options`)
+9. `util.rs` contains all pure functions (template rendering, selection parsing)
+10. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority, validates on load (unknown keys, numeric bounds, template syntax)
+11. `aacs.rs` — AACS backend preflight (library detection via ldconfig, makemkvcon availability, LIBAACS_PATH env var setup, zombie process reaping)
 
 ### Two UI Modes
 
