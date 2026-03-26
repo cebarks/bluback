@@ -40,3 +40,4 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 - macOS/Windows support (platform abstraction for udisksctl/lsblk/eject)
 - GUI frontend (architecture prepared via v0.7 workflow extraction)
 - Desktop notifications on rip completion
+- native libredrive support
