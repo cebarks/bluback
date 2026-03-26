@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use super::{App, InputFocus, Screen};
 use crate::tmdb;
 use crate::types::BackgroundResult;
-use crate::util::{assign_episodes, guess_start_episode, make_filename, make_movie_filename, parse_episode_input};
+use crate::util::{assign_episodes, guess_start_episode, parse_episode_input};
 
 const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -22,8 +22,6 @@ pub fn playlist_filename(
     let pl = &app.disc.playlists[playlist_index];
     let is_special = app.wizard.specials.contains(&pl.num);
 
-    // Build extra vars
-    let mut extra: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     let show_name = if !app.tmdb.show_name.is_empty() {
         app.tmdb.show_name.clone()
     } else {
@@ -33,100 +31,56 @@ pub fn playlist_filename(
             .map(|l| l.show.clone())
             .unwrap_or_else(|| "Unknown".to_string())
     };
-    extra.insert("show", show_name);
-    extra.insert(
-        "disc",
-        app.disc
-            .label_info
-            .as_ref()
-            .map(|l| l.disc.to_string())
-            .unwrap_or_default(),
-    );
-    extra.insert("label", app.disc.label.clone());
-    extra.insert("playlist", pl.num.clone());
 
-    if app.tmdb.movie_mode {
-        let format_template = app.config.resolve_format(
-            true,
-            app.args.format.as_deref(),
-            app.args.format_preset.as_deref(),
-        );
-        let use_custom = app.args.format.is_some()
-            || app.args.format_preset.is_some()
-            || app.config.movie_format.is_some()
-            || app.config.preset.is_some();
-        let fmt = if use_custom {
-            Some(format_template.as_str())
-        } else {
-            None
-        };
-
+    let movie_title = if app.tmdb.movie_mode {
         let movie = app.tmdb.selected_movie.and_then(|i| app.tmdb.movie_results.get(i));
         let title = movie.map(|m| m.title.as_str()).unwrap_or("movie");
         let year = movie
             .and_then(|m| m.release_date.as_deref())
             .and_then(|d| d.get(..4))
             .unwrap_or("");
+        Some((title.to_string(), year.to_string()))
+    } else {
+        None
+    };
+
+    let part = if app.tmdb.movie_mode {
         let selected_count = app.wizard.playlist_selected.iter().filter(|&&s| s).count();
-        let part = if selected_count > 1 {
-            // Determine part number from position among selected playlists
-            let part_num = app.disc.playlists.iter().enumerate()
+        if selected_count > 1 {
+            app.disc.playlists.iter().enumerate()
                 .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
                 .position(|(i, _)| i == playlist_index)
-                .map(|p| p as u32 + 1);
-            part_num
+                .map(|p| p as u32 + 1)
         } else {
             None
-        };
-        make_movie_filename(title, year, part, fmt, media_info, Some(&extra))
-    } else if is_special {
-        let format_template = app.config.resolve_special_format(app.args.format.as_deref());
-        let episodes = app
-            .wizard
-            .episode_assignments
-            .get(&pl.num)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
-        make_filename(
-            &pl.num,
-            episodes,
-            app.wizard.season_num.unwrap_or(0), // actual season for specials
-            Some(format_template.as_str()),
-            media_info,
-            Some(&extra),
-        )
+        }
     } else {
-        let format_template = app.config.resolve_format(
-            false,
-            app.args.format.as_deref(),
-            app.args.format_preset.as_deref(),
-        );
-        let use_custom = app.args.format.is_some()
-            || app.args.format_preset.is_some()
-            || app.config.tv_format.is_some()
-            || app.config.movie_format.is_some()
-            || app.config.preset.is_some();
-        let fmt = if use_custom {
-            Some(format_template.as_str())
-        } else {
-            None
-        };
+        None
+    };
 
-        let episodes = app
-            .wizard
-            .episode_assignments
-            .get(&pl.num)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[]);
-        make_filename(
-            &pl.num,
-            episodes,
-            app.wizard.season_num.unwrap_or(0),
-            fmt,
-            media_info,
-            Some(&extra),
-        )
-    }
+    let episodes = app
+        .wizard
+        .episode_assignments
+        .get(&pl.num)
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+
+    crate::workflow::build_output_filename(
+        pl,
+        episodes,
+        app.wizard.season_num.unwrap_or(0),
+        app.tmdb.movie_mode,
+        is_special,
+        movie_title.as_ref().map(|(t, y)| (t.as_str(), y.as_str())),
+        &show_name,
+        &app.disc.label,
+        app.disc.label_info.as_ref(),
+        &app.config,
+        app.args.format.as_deref(),
+        app.args.format_preset.as_deref(),
+        media_info,
+        part,
+    )
 }
 
 fn standard_layout(area: Rect) -> std::rc::Rc<[Rect]> {

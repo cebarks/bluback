@@ -10,6 +10,7 @@ mod tmdb;
 mod tui;
 mod types;
 mod util;
+mod workflow;
 
 use clap::Parser;
 use std::path::PathBuf;
