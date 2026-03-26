@@ -7,6 +7,7 @@ use crate::rip;
 use crate::tmdb;
 use crate::types::*;
 use crate::util::{self, *};
+use crate::workflow;
 use crate::Args;
 
 fn format_video_column(info: &crate::types::MediaInfo) -> String {
@@ -725,17 +726,6 @@ fn build_filenames(
     movie_mode: bool,
     headless: bool,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let format_template = config.resolve_format(
-        movie_mode,
-        args.format.as_deref(),
-        args.format_preset.as_deref(),
-    );
-    let use_custom_format = args.format.is_some()
-        || args.format_preset.is_some()
-        || config.tv_format.is_some()
-        || config.movie_format.is_some()
-        || config.preset.is_some();
-
     let show_name_str = if movie_mode {
         tmdb_ctx
             .movie_title
@@ -751,6 +741,13 @@ fn build_filenames(
         })
     };
 
+    // Determine if we need to probe media info for any playlists
+    let use_custom_format = args.format.is_some()
+        || args.format_preset.is_some()
+        || config.tv_format.is_some()
+        || config.movie_format.is_some()
+        || config.preset.is_some();
+
     let mut special_ep_cursor = 1u32;
 
     let default_names: Vec<String> = selected
@@ -760,75 +757,51 @@ fn build_filenames(
             let pl = &episodes_pl[idx];
             let is_special = specials.contains(&pl.num);
 
+            // Probe media info if needed for custom format or special
             let media_info = if use_custom_format || is_special {
                 disc::probe_media_info(device, &pl.num)
             } else {
                 None
             };
 
-            let fmt = if use_custom_format {
-                Some(format_template.as_str())
+            let part = if tmdb_ctx.movie_title.is_some() && selected.len() > 1 {
+                Some(sel_i as u32 + 1)
             } else {
                 None
             };
 
-            let mut extra_vars: HashMap<&str, String> = HashMap::new();
-            extra_vars.insert("show", show_name_str.clone());
-            extra_vars.insert(
-                "disc",
-                label_info
-                    .as_ref()
-                    .map(|l| l.disc.to_string())
-                    .unwrap_or_default(),
-            );
-            extra_vars.insert("label", label.to_string());
-            extra_vars.insert("playlist", pl.num.clone());
-
-            if let Some((ref title, ref year)) = tmdb_ctx.movie_title {
-                let part = if selected.len() > 1 {
-                    Some(sel_i as u32 + 1)
-                } else {
-                    None
-                };
-                util::make_movie_filename(
-                    title,
-                    year,
-                    part,
-                    fmt,
-                    media_info.as_ref(),
-                    Some(&extra_vars),
-                )
-            } else if is_special {
-                let special_fmt = config.resolve_special_format(args.format.as_deref());
+            let episodes = if is_special {
                 let ep = Episode {
                     episode_number: special_ep_cursor,
                     name: String::new(),
                     runtime: None,
                 };
                 special_ep_cursor += 1;
-                util::make_filename(
-                    &pl.num,
-                    &[ep],
-                    tmdb_ctx.season_num.unwrap_or(0),
-                    Some(special_fmt.as_str()),
-                    media_info.as_ref(),
-                    Some(&extra_vars),
-                )
+                vec![ep]
             } else {
-                let episodes = tmdb_ctx
+                tmdb_ctx
                     .episode_assignments
                     .get(&pl.num)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]);
-                util::make_filename(
-                    &pl.num,
-                    episodes,
-                    tmdb_ctx.season_num.unwrap_or(0),
-                    fmt,
-                    media_info.as_ref(),
-                    Some(&extra_vars),
-                )
-            }
+                    .cloned()
+                    .unwrap_or_default()
+            };
+
+            workflow::build_output_filename(
+                pl,
+                &episodes,
+                tmdb_ctx.season_num.unwrap_or(0),
+                movie_mode,
+                is_special,
+                tmdb_ctx.movie_title.as_ref().map(|(t, y)| (t.as_str(), y.as_str())),
+                &show_name_str,
+                label,
+                label_info.as_ref(),
+                config,
+                args.format.as_deref(),
+                args.format_preset.as_deref(),
+                media_info.as_ref(),
+                part,
+            )
         })
         .collect();
 
@@ -926,17 +899,17 @@ fn rip_selected(
         let outfile = &outfiles[i];
         let filename = outfile.file_name().expect("output path has filename").to_string_lossy();
 
-        if outfile.exists() {
-            let existing_size = std::fs::metadata(outfile)?.len();
-            if args.overwrite || config.overwrite() {
-                println!("\nOverwriting {} ({})", filename, format_size(existing_size));
-                std::fs::remove_file(outfile)?;
-            } else {
+        match crate::workflow::check_overwrite(outfile, args.overwrite || config.overwrite())? {
+            crate::workflow::OverwriteAction::Proceed => {}
+            crate::workflow::OverwriteAction::Skip(size) => {
                 println!(
                     "\nSkipping playlist {} -> {} (already exists, {})",
-                    pl.num, filename, format_size(existing_size)
+                    pl.num, filename, format_size(size)
                 );
                 continue;
+            }
+            crate::workflow::OverwriteAction::DeleteAndProceed(size) => {
+                println!("\nOverwriting {} ({})", filename, format_size(size));
             }
         }
 
@@ -945,24 +918,16 @@ fn rip_selected(
             pl.num, pl.duration, filename
         );
 
-        let chapters = mount_point
-            .as_ref()
-            .and_then(|mount| {
-                crate::chapters::extract_chapters(std::path::Path::new(mount), &pl.num)
-            })
-            .unwrap_or_default();
-
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-        let options = crate::media::RemuxOptions {
-            device: device.to_string(),
-            playlist: pl.num.clone(),
-            output: outfile.clone(),
-            chapters: chapters.clone(),
-            stream_selection: stream_selection.clone(),
+        let options = crate::workflow::prepare_remux_options(
+            device,
+            pl,
+            outfile,
+            mount_point.as_deref(),
+            stream_selection.clone(),
             cancel,
-            reserve_index_space_kb: config.reserve_index_space(),
-        };
+            config.reserve_index_space(),
+        );
 
         let pl_seconds = pl.seconds;
         let is_tty = crate::atty_stdout();

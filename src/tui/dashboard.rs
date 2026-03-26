@@ -337,10 +337,9 @@ fn start_next_job(app: &mut App) {
     };
 
     app.rip.current_rip = idx;
-    let job = &app.rip.jobs[idx];
+    let job_playlist = app.rip.jobs[idx].playlist.clone();
     let device = app.args.device().to_string_lossy().to_string();
-    let playlist_num = job.playlist.num.clone();
-    let outfile = app.args.output.join(&job.filename);
+    let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
     if let Some(parent) = outfile.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             app.rip.jobs[idx].status = PlaylistStatus::Failed(
@@ -350,41 +349,32 @@ fn start_next_job(app: &mut App) {
         }
     }
 
-    if outfile.exists() {
-        let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
-        if app.config.overwrite() || app.args.overwrite {
-            let _ = std::fs::remove_file(&outfile);
-        } else {
-            app.rip.jobs[idx].status = PlaylistStatus::Skipped(file_size);
+    match crate::workflow::check_overwrite(&outfile, app.config.overwrite() || app.args.overwrite) {
+        Ok(crate::workflow::OverwriteAction::Proceed) => {}
+        Ok(crate::workflow::OverwriteAction::Skip(size)) => {
+            app.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
+            return;
+        }
+        Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
+        Err(e) => {
+            app.rip.jobs[idx].status = PlaylistStatus::Failed(format!("Overwrite check failed: {}", e));
             return;
         }
     }
 
-    // Extract chapters from MPLS if disc is mounted
-    let chapters = app
-        .disc
-        .mount_point
-        .as_ref()
-        .and_then(|mount| {
-            crate::chapters::extract_chapters(std::path::Path::new(mount), &playlist_num)
-        })
-        .unwrap_or_default();
-
     let stream_selection = app.config.resolve_stream_selection();
     let cancel = app.rip.cancel.clone();
-
-    // Reset cancel flag for this new job
     cancel.store(false, Ordering::Relaxed);
 
-    let options = crate::media::RemuxOptions {
-        device,
-        playlist: playlist_num,
-        output: outfile,
-        chapters,
+    let options = crate::workflow::prepare_remux_options(
+        &device,
+        &job_playlist,
+        &outfile,
+        app.disc.mount_point.as_deref(),
         stream_selection,
         cancel,
-        reserve_index_space_kb: app.config.reserve_index_space(),
-    };
+        app.config.reserve_index_space(),
+    );
 
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
