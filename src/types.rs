@@ -165,6 +165,8 @@ pub enum BackgroundResult {
     WaitingForDisc(String),
     /// Disc found, now scanning playlists
     DiscFound(String),
+    /// Scan progress: (elapsed_secs, timeout_secs)
+    ScanProgress(u64, u64),
     /// Disc scan completed: (device, label, playlists)
     DiscScan(anyhow::Result<(String, String, Vec<Playlist>)>),
     /// TMDb show search completed

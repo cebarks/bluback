@@ -130,10 +130,6 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
     None
 }
 
-pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>> {
-    crate::media::scan_playlists(device).map_err(|e| anyhow::anyhow!("{}", e))
-}
-
 pub fn filter_episodes(playlists: &[Playlist], min_duration: u32) -> Vec<&Playlist> {
     playlists
         .iter()

@@ -41,8 +41,12 @@ impl fmt::Display for MediaError {
             Self::AacsAuthFailed(msg) => write!(f, "AACS authentication failed: {}", msg),
             Self::AacsTimeout => write!(
                 f,
-                "AACS initialization timed out (120s). If libmmbd is installed, verify makemkvcon \
-                 is available and MakeMKV is registered, or set aacs_backend = \"libaacs\" to use plain libaacs."
+                "AACS initialization timed out.\n\
+                 This can happen with USB Blu-ray drives (ASMedia bridge SCSI passthrough issue)\n\
+                 or when the AACS host certificate is revoked (MKBv72+ discs).\n\
+                 Try:\n  \
+                   - aacs_backend = \"libmmbd\" (requires makemkvcon + registered MakeMKV)\n  \
+                   - Add a per-disc VUK to KEYDB.cfg"
             ),
             Self::DeviceNotFound(dev) => write!(f, "Device not found: {}", dev),
             Self::NoDisc => write!(f, "No disc in drive"),

@@ -1,4 +1,3 @@
-use std::sync::mpsc;
 use std::time::Duration;
 
 use ffmpeg_the_third::codec::profile::Profile;
@@ -11,9 +10,9 @@ use crate::types::{AudioStream, MediaInfo, Playlist, StreamInfo};
 use crate::util::duration_to_seconds;
 
 /// Timeout for AACS/libbluray operations (seconds).
-/// libmmbd + makemkvcon can take 90+ seconds for initial disc scan,
-/// so this needs to be generous.
-const SCAN_TIMEOUT_SECS: u64 = 120;
+/// libmmbd + makemkvcon typically completes in 20-35 seconds.
+/// If AACS hasn't completed by 60s, it's likely a SCSI hang (USB bridge issue).
+const SCAN_TIMEOUT_SECS: u64 = 60;
 
 /// Open a bluray device with an optional playlist selection via `input_with_dictionary`.
 /// Returns the format context for the opened device+playlist.
@@ -51,81 +50,127 @@ fn open_bluray(
 /// callback via `av_log_set_callback` to capture those lines, parse them with a
 /// regex, and build `Playlist` structs.
 ///
-/// The open is done in a spawned thread with a 60-second timeout to protect
-/// against AACS hangs.
-pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>, MediaError> {
+/// The open runs in a forked subprocess to isolate the process from kernel
+/// D-state hangs (SCSI ioctls through USB bridges can block indefinitely and
+/// prevent the process from exiting). On timeout the child is SIGKILL'd and
+/// the parent continues cleanly. The child writes captured log lines back
+/// through a pipe.
+pub fn scan_playlists_with_progress(
+    device: &str,
+    on_progress: Option<&dyn Fn(u64, u64)>,
+) -> Result<Vec<Playlist>, MediaError> {
     ensure_init();
 
     let playlist_re =
         Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").expect("valid regex");
 
-    // Install a custom log callback that captures log lines into a global buffer.
-    // We use a Mutex<Vec<String>> to collect lines from the callback thread-safely.
-    // The callback uses av_log_format_line2 to render the format+va_list into a string.
-    let captured_lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let callback_lines = std::sync::Arc::clone(&captured_lines);
+    // Create pipe for child→parent communication of captured log lines.
+    // The child writes log lines (newline-separated) then a NUL byte for
+    // success or 0x01 byte for failure followed by the error message.
+    let mut pipe_fds = [0i32; 2];
+    if unsafe { libc::pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(MediaError::AacsAuthFailed("pipe creation failed".into()));
+    }
+    let (pipe_read, pipe_write) = (pipe_fds[0], pipe_fds[1]);
 
-    // Temporarily raise log level to INFO to capture libbluray playlist output
-    ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
-
-    // Install custom log callback via FFI.
-    // The callback receives (avcl, level, fmt, vl) and uses av_log_format_line2
-    // to format the message into a buffer, then pushes it to our Vec.
-    //
-    // SAFETY: av_log_set_callback is thread-safe per FFmpeg docs. The callback
-    // itself must be thread-safe, which we achieve via a global Mutex.
-    // We store the Arc in a global so the callback can access it.
-    {
-        let mut guard = LOG_CAPTURE_LINES
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *guard = Some(callback_lines);
+    // Suppress libbluray stderr in the child (BD_DEBUG_MASK is already set
+    // in main, but reinforce for the forked process).
+    let child_pid = unsafe { libc::fork() };
+    if child_pid < 0 {
+        unsafe {
+            libc::close(pipe_read);
+            libc::close(pipe_write);
+        }
+        return Err(MediaError::AacsAuthFailed("fork failed".into()));
     }
 
-    unsafe {
-        ffmpeg_the_third::ffi::av_log_set_callback(Some(log_capture_callback));
+    if child_pid == 0 {
+        // === CHILD PROCESS ===
+        unsafe { libc::close(pipe_read) };
+
+        // Set up log capture in the child's address space
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        {
+            let mut guard = LOG_CAPTURE_LINES
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            *guard = Some(std::sync::Arc::clone(&captured));
+        }
+        ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
+        unsafe {
+            ffmpeg_the_third::ffi::av_log_set_callback(Some(log_capture_callback));
+        }
+
+        let result = open_bluray(device, None);
+
+        // Collect log lines
+        let lines = captured.lock().unwrap_or_else(|p| p.into_inner());
+
+        // Write lines to pipe: each line followed by '\n', then status byte
+        let mut buf = String::new();
+        for line in lines.iter() {
+            buf.push_str(line);
+            buf.push('\n');
+        }
+
+        let status = if result.is_ok() { 0u8 } else { 1u8 };
+        buf.push(status as char);
+
+        if let Err(ref e) = result {
+            buf.push_str(&e.to_string());
+        }
+
+        let bytes = buf.as_bytes();
+        unsafe {
+            libc::write(pipe_write, bytes.as_ptr() as *const libc::c_void, bytes.len());
+            libc::close(pipe_write);
+            libc::_exit(0);
+        }
     }
 
-    // Spawn the format open in a thread with timeout
-    let device_owned = device.to_string();
-    let (tx, rx) = mpsc::channel();
+    // === PARENT PROCESS ===
+    unsafe { libc::close(pipe_write) };
 
-    std::thread::spawn(move || {
-        let result = open_bluray(&device_owned, None);
-        // Drop the context immediately -- we only needed the open to trigger log output
-        let _ = tx.send(result.map(|_ctx| ()));
-    });
+    // Poll the child with timeout, reporting progress
+    let poll_interval = Duration::from_secs(5);
+    let start = std::time::Instant::now();
+    let child_result = loop {
+        let mut status = 0i32;
+        let ret = unsafe { libc::waitpid(child_pid, &mut status, libc::WNOHANG) };
+        if ret > 0 {
+            // Child exited — read pipe contents
+            break read_pipe_to_string(pipe_read);
+        }
 
-    let open_result = rx
-        .recv_timeout(Duration::from_secs(SCAN_TIMEOUT_SECS))
-        .map_err(|_| MediaError::AacsTimeout)?;
-
-    // Set log level to quiet to suppress libbluray noise on subsequent calls.
-    // The default callback prints to stderr which corrupts TUI mode.
-    unsafe {
-        ffmpeg_the_third::ffi::av_log_set_callback(Some(
-            ffmpeg_the_third::ffi::av_log_default_callback,
-        ));
-    }
-    ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Quiet);
-
-    // Grab captured lines
-    let lines = {
-        let mut guard = LOG_CAPTURE_LINES
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let arc = guard.take();
-        arc.map(|a| {
-            let inner = a.lock().unwrap_or_else(|p| p.into_inner());
-            inner.clone()
-        })
-        .unwrap_or_default()
+        std::thread::sleep(poll_interval);
+        let elapsed = start.elapsed().as_secs();
+        if elapsed >= SCAN_TIMEOUT_SECS {
+            unsafe {
+                libc::kill(child_pid, libc::SIGKILL);
+                // Don't waitpid — the child may be in kernel D-state (stuck
+                // SCSI ioctl). It becomes a zombie until the kernel SCSI
+                // timeout fires, then init reaps it.
+            }
+            unsafe { libc::close(pipe_read) };
+            return Err(MediaError::AacsTimeout);
+        }
+        if let Some(cb) = on_progress {
+            cb(elapsed, SCAN_TIMEOUT_SECS);
+        }
     };
+    unsafe { libc::close(pipe_read) };
 
-    // If the open itself failed, check whether we got playlists from the logs anyway.
-    // libbluray logs playlist info before AACS errors sometimes.
-    if let Err(ref e) = open_result {
-        // Parse what we got before returning the error
+    // Parse the pipe data: lines followed by status byte
+    let (lines_str, status, error_msg) = parse_child_output(&child_result);
+
+    let lines: Vec<String> = lines_str
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect();
+
+    if status != 0 {
+        // Child reported failure — check if we got playlists from logs anyway
         let playlists: Vec<Playlist> = lines
             .iter()
             .filter_map(|line| parse_playlist_log_line(&playlist_re, line))
@@ -134,12 +179,9 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>, MediaError> {
         if !playlists.is_empty() {
             return Ok(playlists);
         }
-        return Err(match e {
-            MediaError::AacsRevoked => MediaError::AacsRevoked,
-            MediaError::AacsAuthFailed(msg) => MediaError::AacsAuthFailed(msg.clone()),
-            MediaError::AacsTimeout => MediaError::AacsTimeout,
-            _ => MediaError::AacsAuthFailed(e.to_string()),
-        });
+        return Err(MediaError::AacsAuthFailed(
+            error_msg.unwrap_or_else(|| "AACS authentication failed".into()),
+        ));
     }
 
     let playlists: Vec<Playlist> = lines
@@ -148,6 +190,39 @@ pub fn scan_playlists(device: &str) -> Result<Vec<Playlist>, MediaError> {
         .collect();
 
     Ok(playlists)
+}
+
+fn read_pipe_to_string(fd: i32) -> String {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = unsafe { libc::read(fd, chunk.as_mut_ptr() as *mut libc::c_void, chunk.len()) };
+        if n <= 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n as usize]);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+fn parse_child_output(data: &str) -> (&str, u8, Option<String>) {
+    // Format: log lines (newline-separated), then status byte (0=ok, 1=err),
+    // then optional error message
+    if let Some(pos) = data.rfind('\0') {
+        // Status 0 (success)
+        (&data[..pos], 0, None)
+    } else if let Some(pos) = data.rfind('\x01') {
+        // Status 1 (error)
+        let error_msg = if pos + 1 < data.len() {
+            Some(data[pos + 1..].to_string())
+        } else {
+            None
+        };
+        (&data[..pos], 1, error_msg)
+    } else {
+        // No status byte — child was likely killed
+        (data, 1, Some("Child process terminated unexpectedly".into()))
+    }
 }
 
 /// Global storage for the log capture callback's output buffer.

@@ -65,8 +65,15 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         println!("Volume label: {}", label);
     }
 
-    println!("Scanning disc at {}...\n", device);
-    let playlists = disc::scan_playlists(&device)?;
+    eprint!("Scanning disc at {}...", device);
+    let playlists = crate::media::scan_playlists_with_progress(
+        &device,
+        Some(&|elapsed, timeout| {
+            eprint!("\rScanning disc at {} (AACS negotiation {}s/{}s)...", device, elapsed, timeout);
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    eprintln!();
     if playlists.is_empty() {
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
@@ -311,8 +318,15 @@ fn scan_disc(
         println!("Volume label: {}", label);
     }
 
-    println!("Scanning disc at {}...", device);
-    let playlists = disc::scan_playlists(&device)?;
+    eprint!("Scanning disc at {}...", device);
+    let playlists = crate::media::scan_playlists_with_progress(
+        &device,
+        Some(&|elapsed, timeout| {
+            eprint!("\rScanning disc at {} (AACS negotiation {}s/{}s)...", device, elapsed, timeout);
+        }),
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    eprintln!();
     if playlists.is_empty() {
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }

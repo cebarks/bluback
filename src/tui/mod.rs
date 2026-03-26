@@ -167,7 +167,14 @@ pub(crate) fn start_disc_scan(app: &mut App) {
         }
         let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>)> {
             let label = crate::disc::get_volume_label(&found);
-            let playlists = crate::disc::scan_playlists(&found)?;
+            let tx_progress = tx.clone();
+            let playlists = crate::media::scan_playlists_with_progress(
+                &found,
+                Some(&move |elapsed, timeout| {
+                    let _ = tx_progress.send(BackgroundResult::ScanProgress(elapsed, timeout));
+                }),
+            )
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
             Ok((found, label, playlists))
         })();
         let _ = tx.send(BackgroundResult::DiscScan(result));
@@ -644,13 +651,22 @@ fn poll_background(app: &mut App) {
             app.status_message = format!("Scanning {}...", device);
             return; // Keep pending_rx alive
         }
+        BackgroundResult::ScanProgress(elapsed, timeout) => {
+            app.status_message = format!(
+                "AACS negotiation in progress ({}s / {}s)...",
+                elapsed, timeout
+            );
+            return; // Keep pending_rx alive
+        }
         _ => {}
     }
 
     app.pending_rx = None;
 
     match result {
-        BackgroundResult::WaitingForDisc(_) | BackgroundResult::DiscFound(_) => unreachable!(),
+        BackgroundResult::WaitingForDisc(_)
+        | BackgroundResult::DiscFound(_)
+        | BackgroundResult::ScanProgress(_, _) => unreachable!(),
         BackgroundResult::DiscScan(Ok(_)) | BackgroundResult::DiscScan(Err(_))
             if app.screen == Screen::Done =>
         {
