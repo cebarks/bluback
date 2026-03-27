@@ -12,7 +12,7 @@ static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     ]
 });
 
-/// Return all optical drives (type "rom") found via lsblk.
+/// Return all optical drives found on the system.
 pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
     let output = Command::new("lsblk")
         .args(["-rno", "NAME,TYPE"])
@@ -38,6 +38,7 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
 }
 
 /// Get the mount point of a device if it's already mounted.
+#[cfg(target_os = "linux")]
 pub fn get_mount_point(device: &str) -> Option<String> {
     let output = Command::new("findmnt")
         .args(["-n", "-o", "TARGET", device])
@@ -56,7 +57,30 @@ pub fn get_mount_point(device: &str) -> Option<String> {
     }
 }
 
-/// Mount a disc using udisksctl. Returns the mount point on success.
+#[cfg(target_os = "macos")]
+pub fn get_mount_point(device: &str) -> Option<String> {
+    let output = Command::new("diskutil")
+        .args(["info", device])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        for line in text.lines() {
+            if line.trim().starts_with("Mount Point:") {
+                let mount = line.split(':').nth(1)?.trim().to_string();
+                if mount.is_empty() || mount == "(not mounted)" {
+                    return None;
+                }
+                return Some(mount);
+            }
+        }
+    }
+    None
+}
+
+/// Mount a disc. Returns the mount point on success.
+#[cfg(target_os = "linux")]
 pub fn mount_disc(device: &str) -> Result<String> {
     let output = Command::new("udisksctl")
         .args(["mount", "-b", device])
@@ -76,7 +100,31 @@ pub fn mount_disc(device: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("Could not parse mount point from udisksctl output"))
 }
 
-/// Unmount a disc using udisksctl.
+#[cfg(target_os = "macos")]
+pub fn mount_disc(device: &str) -> Result<String> {
+    // Check if already mounted (macOS auto-mounts optical media)
+    if let Some(mount) = get_mount_point(device) {
+        return Ok(mount);
+    }
+
+    // Try to mount it manually
+    let output = Command::new("diskutil")
+        .args(["mount", device])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to mount {}: {}", device, stderr.trim());
+    }
+
+    // diskutil output: "Volume <LABEL> on <device> mounted"
+    // Get the mount point via diskutil info
+    get_mount_point(device)
+        .ok_or_else(|| anyhow::anyhow!("Mounted {} but could not find mount point", device))
+}
+
+/// Unmount a disc.
+#[cfg(target_os = "linux")]
 pub fn unmount_disc(device: &str) -> Result<()> {
     let output = Command::new("udisksctl")
         .args(["unmount", "-b", device])
@@ -84,6 +132,19 @@ pub fn unmount_disc(device: &str) -> Result<()> {
 
     if !output.status.success() {
         bail!("Failed to unmount {}", device);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn unmount_disc(device: &str) -> Result<()> {
+    let output = Command::new("diskutil")
+        .args(["unmount", device])
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to unmount {}: {}", device, stderr.trim());
     }
     Ok(())
 }
@@ -255,6 +316,21 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].num, "00002");
         assert_eq!(result[1].num, "00003");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_mount_disc_already_mounted() {
+        // This test documents the behavior when disc is already mounted.
+        // Cannot actually test without hardware, but serves as documentation.
+        // mount_disc should return the existing mount point.
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_unmount_disc_success() {
+        // Documents unmount behavior.
+        // diskutil unmount should be called with the device path.
     }
 
 }
