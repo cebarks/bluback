@@ -1,3 +1,4 @@
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use ffmpeg_the_third::codec::profile::Profile;
@@ -12,6 +13,7 @@ use crate::util::duration_to_seconds;
 /// Timeout for AACS/libbluray operations (seconds).
 /// libmmbd + makemkvcon typically completes in 20-35 seconds.
 /// If AACS hasn't completed by 60s, it's likely a SCSI hang (USB bridge issue).
+#[cfg(target_os = "linux")]
 const SCAN_TIMEOUT_SECS: u64 = 60;
 
 /// Open a bluray device with an optional playlist selection via `input_with_dictionary`.
@@ -64,22 +66,77 @@ pub fn scan_playlists_with_progress(
     let playlist_re =
         Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").expect("valid regex");
 
-    // Create pipe for child→parent communication of captured log lines.
-    // The child writes log lines (newline-separated) then a NUL byte for
-    // success or 0x01 byte for failure followed by the error message.
+    // Capture log lines and parse playlists. Platform-specific isolation:
+    // - Linux: fork subprocess to prevent kernel D-state hangs from SCSI ioctls
+    // - macOS: scan directly — fork() crashes due to Objective-C runtime, and
+    //   macOS IOKit doesn't have the same D-state issue with USB bridges
+    let (lines, scan_error) = scan_with_log_capture(device, on_progress)?;
+
+    let playlists: Vec<Playlist> = lines
+        .iter()
+        .filter_map(|line| parse_playlist_log_line(&playlist_re, line))
+        .collect();
+
+    if let Some(err_msg) = scan_error {
+        if !playlists.is_empty() {
+            return Ok(playlists);
+        }
+        return Err(MediaError::AacsAuthFailed(err_msg));
+    }
+
+    Ok(playlists)
+}
+
+/// Run the disc scan with log capture. Returns (captured_lines, optional_error_message).
+#[cfg(target_os = "macos")]
+fn scan_with_log_capture(
+    device: &str,
+    _on_progress: Option<&dyn Fn(u64, u64)>,
+) -> Result<(Vec<String>, Option<String>), MediaError> {
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    {
+        let mut guard = LOG_CAPTURE_LINES
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        *guard = Some(std::sync::Arc::clone(&captured));
+    }
+    ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
+    unsafe {
+        ffmpeg_the_third::ffi::av_log_set_callback(Some(log_capture_callback));
+    }
+
+    let result = open_bluray(device, None);
+
+    let lines: Vec<String> = captured
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .filter(|l| !l.is_empty())
+        .cloned()
+        .collect();
+
+    match result {
+        Ok(_) => Ok((lines, None)),
+        Err(e) => Ok((lines, Some(e.to_string()))),
+    }
+}
+
+/// Run the disc scan in a forked subprocess for D-state isolation.
+#[cfg(target_os = "linux")]
+fn scan_with_log_capture(
+    device: &str,
+    on_progress: Option<&dyn Fn(u64, u64)>,
+) -> Result<(Vec<String>, Option<String>), MediaError> {
     let mut pipe_fds = [0i32; 2];
     if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
         return Err(MediaError::AacsAuthFailed("pipe creation failed".into()));
     }
-    // Set close-on-exec (pipe2 with O_CLOEXEC is Linux-only in the libc crate)
     unsafe {
         libc::fcntl(pipe_fds[0], libc::F_SETFD, libc::FD_CLOEXEC);
         libc::fcntl(pipe_fds[1], libc::F_SETFD, libc::FD_CLOEXEC);
     }
     let (pipe_read, pipe_write) = (pipe_fds[0], pipe_fds[1]);
 
-    // Suppress libbluray stderr in the child (BD_DEBUG_MASK is already set
-    // in main, but reinforce for the forked process).
     let child_pid = unsafe { libc::fork() };
     if child_pid < 0 {
         unsafe {
@@ -93,7 +150,6 @@ pub fn scan_playlists_with_progress(
         // === CHILD PROCESS ===
         unsafe { libc::close(pipe_read) };
 
-        // Set up log capture in the child's address space
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         {
             let mut guard = LOG_CAPTURE_LINES
@@ -108,10 +164,7 @@ pub fn scan_playlists_with_progress(
 
         let result = open_bluray(device, None);
 
-        // Collect log lines
         let lines = captured.lock().unwrap_or_else(|p| p.into_inner());
-
-        // Write lines to pipe: each line followed by '\n', then status byte
         let mut buf = String::new();
         for line in lines.iter() {
             buf.push_str(line);
@@ -136,14 +189,12 @@ pub fn scan_playlists_with_progress(
     // === PARENT PROCESS ===
     unsafe { libc::close(pipe_write) };
 
-    // Poll the child with timeout, reporting progress
     let poll_interval = Duration::from_secs(5);
     let start = std::time::Instant::now();
     let child_result = loop {
         let mut status = 0i32;
         let ret = unsafe { libc::waitpid(child_pid, &mut status, libc::WNOHANG) };
         if ret > 0 {
-            // Child exited — read pipe contents
             break read_pipe_to_string(pipe_read);
         }
 
@@ -152,9 +203,6 @@ pub fn scan_playlists_with_progress(
         if elapsed >= SCAN_TIMEOUT_SECS {
             unsafe {
                 libc::kill(child_pid, libc::SIGKILL);
-                // Don't waitpid — the child may be in kernel D-state (stuck
-                // SCSI ioctl). It becomes a zombie until the kernel SCSI
-                // timeout fires, then init reaps it.
             }
             unsafe { libc::close(pipe_read) };
             return Err(MediaError::AacsTimeout);
@@ -165,7 +213,6 @@ pub fn scan_playlists_with_progress(
     };
     unsafe { libc::close(pipe_read) };
 
-    // Parse the pipe data: lines followed by status byte
     let (lines_str, status, error_msg) = parse_child_output(&child_result);
 
     let lines: Vec<String> = lines_str
@@ -174,29 +221,16 @@ pub fn scan_playlists_with_progress(
         .map(String::from)
         .collect();
 
-    if status != 0 {
-        // Child reported failure — check if we got playlists from logs anyway
-        let playlists: Vec<Playlist> = lines
-            .iter()
-            .filter_map(|line| parse_playlist_log_line(&playlist_re, line))
-            .collect();
+    let scan_error = if status != 0 {
+        Some(error_msg.unwrap_or_else(|| "AACS authentication failed".into()))
+    } else {
+        None
+    };
 
-        if !playlists.is_empty() {
-            return Ok(playlists);
-        }
-        return Err(MediaError::AacsAuthFailed(
-            error_msg.unwrap_or_else(|| "AACS authentication failed".into()),
-        ));
-    }
-
-    let playlists: Vec<Playlist> = lines
-        .iter()
-        .filter_map(|line| parse_playlist_log_line(&playlist_re, line))
-        .collect();
-
-    Ok(playlists)
+    Ok((lines, scan_error))
 }
 
+#[cfg(target_os = "linux")]
 fn read_pipe_to_string(fd: i32) -> String {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -210,6 +244,7 @@ fn read_pipe_to_string(fd: i32) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+#[cfg(target_os = "linux")]
 fn parse_child_output(data: &str) -> (&str, u8, Option<String>) {
     // Format: log lines (newline-separated), then status byte (0=ok, 1=err),
     // then optional error message

@@ -11,7 +11,9 @@ Supports TV shows (sequential or manual episode assignment, including multi-epis
 - **FFmpeg shared libraries** (libavformat, libavcodec, libavutil, libswscale, libswresample) — bluback links against these at runtime via `ffmpeg-the-third` bindings. No `ffmpeg` or `ffprobe` CLI tools needed.
 - **libbluray** — for Blu-ray playlist enumeration
 - **libaacs** with a populated `~/.config/aacs/KEYDB.cfg` (containing device keys, processing keys, and/or per-disc VUKs)
-- A Blu-ray drive accessible as a block device (e.g., `/dev/sr0`)
+- A Blu-ray drive accessible as a block device:
+  - **Linux:** `/dev/sr0`, `/dev/sr1`, etc.
+  - **macOS:** `/dev/disk2`, `/dev/disk3`, etc. (use `diskutil list` to find)
 
 Optional:
 - A [TMDb API key](https://www.themoviedb.org/settings/api) for automatic show/episode metadata lookup
@@ -25,6 +27,18 @@ FFmpeg development libraries and clang are required at build time for FFI bindin
 | **Fedora/RHEL** | `sudo dnf install ffmpeg-free-devel clang clang-libs pkg-config` (or `ffmpeg-devel` from [RPMFusion](https://rpmfusion.org/) for broader codec support) |
 | **Ubuntu/Debian** | `sudo apt install libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev` |
 | **Arch** | `sudo pacman -S ffmpeg clang pkgconf` |
+| **macOS** | `brew install ffmpeg llvm pkg-config` (ensure llvm's clang is in PATH: `export PATH="/opt/homebrew/opt/llvm/bin:$PATH"`) |
+
+### Runtime Dependencies by Platform
+
+**Linux:**
+- `udisksctl` (from `udisks2`) for disc mounting
+- `eject` for disc ejection and speed control
+
+**macOS:**
+- `diskutil` (built-in) for disc mounting and volume info
+- `drutil` (built-in) for optical drive detection
+- FFmpeg, libbluray, libaacs: `brew install ffmpeg libbluray libaacs`
 
 ## Installation
 
@@ -42,6 +56,8 @@ cd bluback
 cargo build --release
 # Binary at target/release/bluback
 ```
+
+For detailed macOS setup, see [docs/macos-installation.md](docs/macos-installation.md).
 
 ## Usage
 

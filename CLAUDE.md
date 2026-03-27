@@ -25,13 +25,19 @@ FFmpeg development libraries and clang are required at build time (bindgen gener
 **Fedora/RHEL:** `sudo dnf install ffmpeg-free-devel clang clang-libs pkg-config` (or `ffmpeg-devel` from [RPMFusion](https://rpmfusion.org/) for broader codec support)
 **Ubuntu/Debian:** `sudo apt install libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev`
 **Arch:** `sudo pacman -S ffmpeg clang pkgconf`
+**macOS:** `brew install ffmpeg llvm pkg-config` — Ensure llvm's clang is in PATH: `export PATH="/opt/homebrew/opt/llvm/bin:$PATH"`
 
 ### Runtime Requirements
 
 - FFmpeg shared libraries (libavformat, libavcodec, libavutil, etc.) — typically installed with the dev packages above or the `ffmpeg` package
-- **libaacs** + **libbluray** — for Blu-ray AACS decryption and playlist enumeration
+- **libaacs** + **libbluray** — for Blu-ray AACS decryption and playlist enumeration (macOS: `brew install libaacs libbluray`)
 - `~/.config/aacs/KEYDB.cfg` — containing device keys, processing keys, and/or per-disc VUKs
-- A Blu-ray drive accessible as a block device (e.g., `/dev/sr0`)
+- A Blu-ray drive accessible as a block device:
+  - Linux: `/dev/sr0`, `/dev/sr1`, etc.
+  - macOS: `/dev/disk2`, `/dev/disk3`, etc. (find with `diskutil list`)
+- Platform-specific tools:
+  - Linux: `udisksctl` (from `udisks2`), `eject`
+  - macOS: `diskutil`, `drutil` (both built-in)
 
 ### AACS Decryption Details
 

@@ -84,6 +84,23 @@ pub const LIBBLURAY_PATHS: &[&str] = &[
 
 /// Run AACS backend preflight checks. Call before any FFmpeg/libbluray init.
 pub fn preflight(backend: AacsBackend) -> Result<()> {
+    // On macOS, libbluray uses dlopen() to load libaacs/libmmbd by name, but
+    // Homebrew's /opt/homebrew/lib/ isn't in the default dyld search path.
+    // Extend DYLD_LIBRARY_PATH so dlopen("libmmbd.dylib") finds Homebrew libs.
+    #[cfg(target_os = "macos")]
+    {
+        let mut dyld_path = std::env::var("DYLD_LIBRARY_PATH").unwrap_or_default();
+        for dir in ["/opt/homebrew/lib", "/usr/local/lib"] {
+            if !dyld_path.contains(dir) {
+                if !dyld_path.is_empty() {
+                    dyld_path.push(':');
+                }
+                dyld_path.push_str(dir);
+            }
+        }
+        std::env::set_var("DYLD_LIBRARY_PATH", &dyld_path);
+    }
+
     match backend {
         AacsBackend::Libmmbd => {
             if !command_exists("makemkvcon") {

@@ -40,23 +40,16 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
 
 #[cfg(target_os = "macos")]
 pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
-    // Use system_profiler to find optical drives — more reliable than parsing
-    // diskutil list output which doesn't clearly distinguish optical from other disks.
-    if let Ok(output) = Command::new("system_profiler")
-        .args(["SPDiscBurningDataType", "-detailLevel", "basic"])
-        .output()
-    {
+    // drutil status shows the current optical drive's device path in the format:
+    //   "Type: BD-ROM               Name: /dev/disk6"
+    if let Ok(output) = Command::new("drutil").arg("status").output() {
         if output.status.success() {
             let text = String::from_utf8_lossy(&output.stdout);
-            // system_profiler output contains "BSD Name: diskN" for each optical drive
             for line in text.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with("BSD Name:") {
-                    if let Some(name) = trimmed.strip_prefix("BSD Name:") {
-                        let name = name.trim();
-                        if !name.is_empty() {
-                            return vec![std::path::PathBuf::from(format!("/dev/{}", name))];
-                        }
+                if let Some(idx) = line.find("Name:") {
+                    let after = line[idx + 5..].trim();
+                    if after.starts_with("/dev/") {
+                        return vec![std::path::PathBuf::from(after)];
                     }
                 }
             }
