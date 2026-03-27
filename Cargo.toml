@@ -15,11 +15,16 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 mpls = "0.2"
-toml = "1.0.7"
+toml = "1.1"
 ureq = { version = "3", features = ["json"] }
 ffmpeg-the-third = "4"
 libc = "0.2"
 ctrlc = "3"
+
+[lints.rust]
+# ff_api_avstream_side_data is emitted by ffmpeg-sys-the-third's build script
+# when FFmpeg < 7.0 still has the deprecated AVStream.side_data fields.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("ff_api_avstream_side_data"))'] }
 
 [dev-dependencies]
 tempfile = "3"

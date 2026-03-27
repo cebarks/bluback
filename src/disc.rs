@@ -13,6 +13,7 @@ static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
 });
 
 /// Return all optical drives found on the system.
+#[cfg(target_os = "linux")]
 pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
     let output = Command::new("lsblk")
         .args(["-rno", "NAME,TYPE"])
@@ -35,6 +36,34 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
     }
 
     drives
+}
+
+#[cfg(target_os = "macos")]
+pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
+    // Use system_profiler to find optical drives — more reliable than parsing
+    // diskutil list output which doesn't clearly distinguish optical from other disks.
+    if let Ok(output) = Command::new("system_profiler")
+        .args(["SPDiscBurningDataType", "-detailLevel", "basic"])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            // system_profiler output contains "BSD Name: diskN" for each optical drive
+            for line in text.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("BSD Name:") {
+                    if let Some(name) = trimmed.strip_prefix("BSD Name:") {
+                        let name = name.trim();
+                        if !name.is_empty() {
+                            return vec![std::path::PathBuf::from(format!("/dev/{}", name))];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Vec::new()
 }
 
 /// Get the mount point of a device if it's already mounted.
@@ -161,6 +190,7 @@ pub fn ensure_mounted(device: &str) -> Result<(String, bool)> {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn get_volume_label(device: &str) -> String {
     Command::new("lsblk")
         .args(["-no", "LABEL", device])
@@ -172,6 +202,26 @@ pub fn get_volume_label(device: &str) -> String {
             } else {
                 None
             }
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+pub fn get_volume_label(device: &str) -> String {
+    Command::new("diskutil")
+        .args(["info", device])
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                for line in text.lines() {
+                    if line.trim().starts_with("Volume Name:") {
+                        return line.split_once(':').map(|(_, v)| v.trim().to_string());
+                    }
+                }
+            }
+            None
         })
         .unwrap_or_default()
 }
@@ -202,8 +252,14 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
     crate::media::probe_media_info(device, playlist_num).ok()
 }
 
+#[cfg(target_os = "linux")]
 pub fn set_max_speed(device: &str) {
     let _ = Command::new("eject").args(["-x", "0", device]).status();
+}
+
+#[cfg(target_os = "macos")]
+pub fn set_max_speed(_device: &str) {
+    // No direct equivalent on macOS — drive speed is auto-negotiated.
 }
 
 pub struct MountGuard {
@@ -233,11 +289,24 @@ impl Drop for MountGuard {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn eject_disc(device: &str) -> anyhow::Result<()> {
     let status = Command::new("eject").arg(device).status()?;
 
     if !status.success() {
         bail!("eject exited with code {}", status.code().unwrap_or(-1));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn eject_disc(device: &str) -> anyhow::Result<()> {
+    let status = Command::new("diskutil")
+        .args(["eject", device])
+        .status()?;
+
+    if !status.success() {
+        bail!("diskutil eject exited with code {}", status.code().unwrap_or(-1));
     }
     Ok(())
 }
@@ -316,21 +385,6 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].num, "00002");
         assert_eq!(result[1].num, "00003");
-    }
-
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn test_mount_disc_already_mounted() {
-        // This test documents the behavior when disc is already mounted.
-        // Cannot actually test without hardware, but serves as documentation.
-        // mount_disc should return the existing mount point.
-    }
-
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn test_unmount_disc_success() {
-        // Documents unmount behavior.
-        // diskutil unmount should be called with the device path.
     }
 
 }

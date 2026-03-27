@@ -68,8 +68,13 @@ pub fn scan_playlists_with_progress(
     // The child writes log lines (newline-separated) then a NUL byte for
     // success or 0x01 byte for failure followed by the error message.
     let mut pipe_fds = [0i32; 2];
-    if unsafe { libc::pipe2(pipe_fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+    if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } != 0 {
         return Err(MediaError::AacsAuthFailed("pipe creation failed".into()));
+    }
+    // Set close-on-exec (pipe2 with O_CLOEXEC is Linux-only in the libc crate)
+    unsafe {
+        libc::fcntl(pipe_fds[0], libc::F_SETFD, libc::FD_CLOEXEC);
+        libc::fcntl(pipe_fds[1], libc::F_SETFD, libc::FD_CLOEXEC);
     }
     let (pipe_read, pipe_write) = (pipe_fds[0], pipe_fds[1]);
 
@@ -487,16 +492,19 @@ fn extract_side_data_types(stream: &ffmpeg_the_third::Stream) -> Vec<String> {
     unsafe {
         let stream_ptr = stream.as_ptr();
 
-        // AVStream.nb_side_data + AVStream.side_data (pre-8.0)
-        let nb_stream_sd = (*stream_ptr).nb_side_data;
-        let stream_sd = (*stream_ptr).side_data;
-        if nb_stream_sd > 0 && !stream_sd.is_null() {
-            for i in 0..nb_stream_sd as usize {
-                let sd = &*stream_sd.add(i);
-                let name_ptr = ffi::av_packet_side_data_name(sd.type_);
-                if !name_ptr.is_null() {
-                    if let Ok(name) = std::ffi::CStr::from_ptr(name_ptr).to_str() {
-                        types.push(name.to_string());
+        // AVStream.nb_side_data + AVStream.side_data (FFmpeg < 7.0)
+        #[cfg(feature = "ff_api_avstream_side_data")]
+        {
+            let nb_stream_sd = (*stream_ptr).nb_side_data;
+            let stream_sd = (*stream_ptr).side_data;
+            if nb_stream_sd > 0 && !stream_sd.is_null() {
+                for i in 0..nb_stream_sd as usize {
+                    let sd = &*stream_sd.add(i);
+                    let name_ptr = ffi::av_packet_side_data_name(sd.type_);
+                    if !name_ptr.is_null() {
+                        if let Ok(name) = std::ffi::CStr::from_ptr(name_ptr).to_str() {
+                            types.push(name.to_string());
+                        }
                     }
                 }
             }

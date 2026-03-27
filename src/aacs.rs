@@ -53,21 +53,33 @@ pub fn is_libmmbd(path: &std::path::Path) -> bool {
 }
 
 pub const LIBMMBD_PATHS: &[&str] = &[
+    // Linux
     "/usr/lib64/libmmbd.so.0",
     "/usr/lib/x86_64-linux-gnu/libmmbd.so.0",
     "/usr/lib/libmmbd.so.0",
+    // macOS (Homebrew)
+    "/opt/homebrew/lib/libmmbd.dylib",
+    "/usr/local/lib/libmmbd.dylib",
 ];
 
 pub const LIBAACS_PATHS: &[&str] = &[
+    // Linux
     "/usr/lib64/libaacs.so.0",
     "/usr/lib/x86_64-linux-gnu/libaacs.so.0",
     "/usr/lib/libaacs.so.0",
+    // macOS (Homebrew)
+    "/opt/homebrew/lib/libaacs.dylib",
+    "/usr/local/lib/libaacs.dylib",
 ];
 
 pub const LIBBLURAY_PATHS: &[&str] = &[
+    // Linux
     "/usr/lib64/libbluray.so.2",
     "/usr/lib/x86_64-linux-gnu/libbluray.so.2",
     "/usr/lib/libbluray.so.2",
+    // macOS (Homebrew)
+    "/opt/homebrew/lib/libbluray.dylib",
+    "/usr/local/lib/libbluray.dylib",
 ];
 
 /// Run AACS backend preflight checks. Call before any FFmpeg/libbluray init.

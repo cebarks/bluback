@@ -168,12 +168,21 @@ pub fn run_check(config: &crate::config::Config, config_path: &std::path::Path) 
         &mut any_required_failed,
     );
 
-    // Check 7: udisksctl (required)
+    // Check 7: Mount utility (required, platform-specific)
+    #[cfg(target_os = "linux")]
     check_command(
         &mut results,
         "udisksctl",
         true,
         "needed for disc mount/chapter extraction",
+        &mut any_required_failed,
+    );
+    #[cfg(target_os = "macos")]
+    check_command(
+        &mut results,
+        "diskutil",
+        true,
+        "needed for disc mount/volume info",
         &mut any_required_failed,
     );
 
