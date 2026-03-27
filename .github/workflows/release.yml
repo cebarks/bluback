@@ -34,7 +34,7 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --locked -- -D warnings
 
-  build:
+  build-linux:
     needs: gate
     strategy:
       matrix:
@@ -67,8 +67,41 @@ jobs:
           name: bluback-${{ matrix.target }}
           path: bluback-${{ matrix.target }}.tar.gz
 
+  build-macos:
+    needs: gate
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install dependencies
+        run: |
+          brew install ffmpeg llvm pkg-config
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          tar czf bluback-${{ matrix.target }}.tar.gz \
+            -C target/release bluback \
+            -C "$GITHUB_WORKSPACE" LICENSE README.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bluback-${{ matrix.target }}
+          path: bluback-${{ matrix.target }}.tar.gz
+
   publish:
-    needs: build
+    needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
