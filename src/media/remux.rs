@@ -152,8 +152,8 @@ fn inject_chapters(
         match octx.add_chapter(i as i64, time_base, start_ms, end_ms, title) {
             Ok(_) => added += 1,
             Err(e) => {
-                eprintln!(
-                    "Warning: could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
+                log::warn!(
+                    "could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
                     i + 1,
                     start_ms,
                     end_ms,

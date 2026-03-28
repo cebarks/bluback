@@ -80,7 +80,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         }),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
-    eprintln!();
+    println!();
     if playlists.is_empty() {
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
@@ -123,7 +123,8 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     // Verbose mode: probe stream info for each playlist
     let verbose_info: Vec<Option<(crate::types::MediaInfo, crate::types::StreamInfo)>> =
         if args.verbose {
-            eprintln!("Probing streams...");
+            log::info!("Probing streams...");
+            println!("Probing streams...");
             playlists
                 .iter()
                 .map(|pl| {
@@ -283,8 +284,8 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
                     if selected_set.contains(&idx) {
                         specials.insert(episodes_pl[idx].num.clone());
                     } else {
-                        eprintln!(
-                            "Warning: --specials index {} is not in the selected playlists, skipping",
+                        log::warn!(
+                            "--specials index {} is not in the selected playlists, skipping",
                             idx + 1
                         );
                     }
@@ -351,7 +352,7 @@ fn scan_disc(
         }),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
-    eprintln!();
+    println!();
     if playlists.is_empty() {
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
@@ -1322,7 +1323,8 @@ fn headless_tmdb_movie(
         .unwrap_or("")
         .to_string();
 
-    eprintln!("TMDb: auto-selected \"{}\" ({})", movie.title, year);
+    log::info!("TMDb: auto-selected \"{}\" ({})", movie.title, year);
+    println!("TMDb: auto-selected \"{}\" ({})", movie.title, year);
     Ok(Some((movie.title.clone(), year)))
 }
 
@@ -1345,7 +1347,8 @@ fn headless_tmdb_tv(
     }
 
     let show = &results[0];
-    eprintln!("TMDb: auto-selected \"{}\"", show.name);
+    log::info!("TMDb: auto-selected \"{}\"", show.name);
+    println!("TMDb: auto-selected \"{}\"", show.name);
 
     let season_num = match cli_season {
         Some(s) => s,
