@@ -10,24 +10,83 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Install FFmpeg development libraries
-        run: sudo apt-get update && sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked
-
   lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - name: Install FFmpeg development libraries
-        run: sudo apt-get update && sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          libavformat-dev libavcodec-dev libavutil-dev
+          libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev
+          pkg-config clang libclang-dev
+
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
+
       - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --check
       - run: cargo clippy --locked -- -D warnings
+
+  build-and-test:
+    name: Build & Test (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: Ubuntu aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: Fedora x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu-fedora
+            container: fedora:43
+          - name: Fedora aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu-fedora
+            container: fedora:43
+          - name: macOS aarch64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies (Ubuntu)
+        if: startsWith(matrix.name, 'Ubuntu')
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          libavformat-dev libavcodec-dev libavutil-dev
+          libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev
+          pkg-config clang libclang-dev
+
+      - name: Install dependencies (Fedora)
+        if: startsWith(matrix.name, 'Fedora')
+        run: dnf install -y ffmpeg-free-devel clang clang-devel pkg-config rust cargo
+
+      - name: Install dependencies (macOS)
+        if: startsWith(matrix.name, 'macOS')
+        run: |
+          brew install ffmpeg llvm pkg-config
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+
+      - name: Install Rust
+        if: ${{ !matrix.container }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        if: ${{ !matrix.container }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - run: cargo build --locked
+      - run: cargo test --locked
