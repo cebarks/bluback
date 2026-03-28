@@ -2,7 +2,7 @@
 
 ## Context
 
-bluback is at v0.6.0 with solid core functionality and a stable foundation (FFmpeg-based Blu-ray remux, TUI wizard, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection). The v0.6 milestone addressed stability gaps and safety issues. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
+bluback is at v0.8.0 with solid core functionality, a stable foundation, and cross-platform support (Linux + macOS). Core features: FFmpeg-based Blu-ray remux, TUI wizard, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
 
 ## Architectural Principles
 
@@ -16,11 +16,12 @@ bluback is at v0.6.0 with solid core functionality and a stable foundation (FFmp
 |---------|-------|-------|
 | **v0.6** | Stability & Safety | Bug fixes, error handling, signal handling, overwrite, exit codes, output dir auto-creation |
 | **v0.7** | Architecture & CLI Completeness | Workflow extraction, specials CLI, headless progress, `--check`, `--list-playlists` stream info |
-| **v0.8** | Quality of Life | Log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection |
-| **v0.9** | DVD Support | Disc type abstraction, title enumeration, chapter extraction, CSS errors |
-| **v0.10** | UHD Blu-ray | AACS 2.0, HDR metadata verification |
-| **v0.11** | Multi-Drive & Automation | Parallel ripping, drive selection, continuous batch mode, disc history |
-| **v0.12** | Intelligence & Distribution | TMDb S00 auto-matching, shell completions, man page |
+| **v0.8** | macOS Support | Platform-specific disc ops, FFmpeg 7.0+ compat, fork-free scanning, Homebrew library discovery, macOS CI + release builds |
+| **v0.9** | Quality of Life | Log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection |
+| **v0.10** | DVD Support | Disc type abstraction, title enumeration, chapter extraction, CSS errors |
+| **v0.11** | UHD Blu-ray | AACS 2.0, HDR metadata verification |
+| **v0.12** | Multi-Drive & Automation | Parallel ripping, drive selection, continuous batch mode, disc history |
+| **v0.13** | Intelligence & Distribution | TMDb S00 auto-matching, shell completions, man page |
 | **v1.0** | Final Release | README rewrite, investigation spikes, integration testing, release |
 
 ---
@@ -48,9 +49,9 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.7 — Architecture & CLI Completeness
+## v0.7 — Architecture & CLI Completeness (RELEASED)
 
-*Extract shared workflow layer; round out CLI feature parity.*
+*Extract shared workflow layer; round out CLI feature parity. Released 2026-03-26.*
 
 ### 10. Workflow extraction (GUI-readiness) ✓
 - **Goal:** Extract orchestration logic from `cli.rs` into shared `workflow.rs` module
@@ -91,7 +92,26 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.8 — Quality of Life
+## v0.8 — macOS Support (RELEASED)
+
+*Cross-platform support for macOS. Released 2026-03-28.*
+
+**What shipped:**
+- Platform-specific disc operations via `#[cfg(target_os)]`: `detect_optical_drives` (drutil), `get_volume_label` (diskutil info), `mount_disc`/`unmount_disc` (diskutil), `eject_disc` (diskutil eject), `set_max_speed` (no-op on macOS)
+- FFmpeg compatibility: `pipe2` → `pipe`+`fcntl` (libc crate portability), `AVStream.side_data` gated behind `ff_api_avstream_side_data` cfg (removed in FFmpeg 7.0+)
+- Fork-free disc scanning on macOS — Objective-C runtime crashes on `fork()` without `exec()`; macOS IOKit doesn't have the Linux D-state hang issue
+- AACS library discovery with Homebrew `.dylib` paths + `DYLD_LIBRARY_PATH` injection for libbluray's dlopen
+- Platform-specific `--check` validation (diskutil on macOS, udisksctl on Linux)
+- macOS CI workflow + aarch64-apple-darwin release builds
+- macOS installation guide (`docs/macos-installation.md`)
+
+**Key discovery:** macOS's Objective-C runtime is not fork-safe — any process that loads ObjC frameworks (VideoToolbox, AudioToolbox via FFmpeg) will crash in the child after `fork()`. The fork-based scan isolation (for Linux kernel D-state hangs) must be skipped on macOS.
+
+**Key discovery:** Homebrew's `/opt/homebrew/lib/` is not in macOS's default `dlopen` search path. libbluray's runtime library loading requires `DYLD_LIBRARY_PATH` or symlinks to `/usr/local/lib/`.
+
+---
+
+## v0.9 — Quality of Life
 
 *Features that make daily use more pleasant and reliable.*
 
@@ -129,7 +149,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.9 — DVD Support
+## v0.10 — DVD Support
 
 *Requires its own detailed design spec before implementation.*
 
@@ -155,7 +175,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.10 — UHD Blu-ray
+## v0.11 — UHD Blu-ray
 
 *Verify and improve support for 4K UHD Blu-ray discs.*
 
@@ -175,7 +195,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.11 — Multi-Drive & Automation
+## v0.12 — Multi-Drive & Automation
 
 ### 28. Multi-drive detection + selection UI
 - TUI: scanning screen shows all drives with status
@@ -200,7 +220,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.12 — Intelligence & Distribution
+## v0.13 — Intelligence & Distribution
 
 ### 32. TMDb specials (S00) auto-matching
 - Fetch season 0 from TMDb alongside regular season
@@ -225,7 +245,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ### 36. Investigation spikes
 - **Resume partial rips:** Test FFmpeg MKV muxer seek support. Document for 1.1.
-- **macOS/Windows:** Document platform abstraction needs. Estimate effort for 1.1+.
+- **Windows:** Document platform abstraction needs. Estimate effort for 1.1+. (macOS shipped in v0.8.)
 
 ### 37. Integration testing
 - End-to-end testing of all features; regression testing; edge cases
@@ -252,11 +272,11 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - Depends on v1.0 investigation spike into FFmpeg MKV muxer seek support
 - May require tracking progress externally (byte offset or timestamp) if FFmpeg can't seek into existing containers
 
-### macOS / Windows Support
-- Replace Linux-specific tools: `udisksctl` → `diskutil` (macOS) / WMI (Windows), `lsblk` → platform equivalents, `eject` → platform equivalents
-- Platform abstraction layer in `disc.rs`
-- New CI targets (macOS runners, Windows cross-compilation)
-- Depends on v1.0 investigation spike for effort estimate
+### Windows Support
+- macOS support shipped in v0.8
+- Windows remains: replace Linux-specific tools with WMI/PowerShell equivalents
+- Platform abstraction layer in `disc.rs` (pattern established by macOS `#[cfg]` approach)
+- Windows CI targets and cross-compilation
 
 ### Desktop Notifications
 - Notify via `notify-send` (Linux), native APIs (macOS/Windows) when a long rip finishes
@@ -291,13 +311,13 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 ```
 v0.6 (stability)
  └─► v0.7 (architecture + CLI)
-      ├─► v0.8 (quality of life)
-      │    └─► v0.9 (DVD)
-      │         ├─► v0.10 (UHD)
-      │         └─► v0.11 (multi-drive + batch)
-      │              └─► v0.12 (intelligence + distro)
-      │                   └─► v1.0 (release)
-      └─────────────────────────────────────────┘
+      └─► v0.8 (macOS support)
+           └─► v0.9 (quality of life)
+                └─► v0.10 (DVD)
+                     ├─► v0.11 (UHD)
+                     └─► v0.12 (multi-drive + batch)
+                          └─► v0.13 (intelligence + distro)
+                               └─► v1.0 (release)
 ```
 
 ## Key Risks

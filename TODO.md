@@ -17,27 +17,37 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 - [x] MountGuard for guaranteed disc unmount on all exit paths
 - [x] Zombie makemkvcon process reaping on exit
 
-## Current: v0.7 — Architecture & CLI Completeness
+## Completed: v0.7 — Architecture & CLI Completeness
 
-- [ ] Workflow extraction (`workflow.rs` with `WorkflowUI` trait) for GUI-readiness
-- [ ] Specials: CLI parity (`--specials`) + TUI batch marking
-- [ ] Headless progress output (line-based for non-TTY)
-- [ ] `--list-playlists` stream info (codec details)
-- [ ] `--check` setup validation
+- [x] Workflow extraction (`workflow.rs` with shared functions) for GUI-readiness
+- [x] Specials: CLI parity (`--specials`) + TUI marking
+- [x] Headless progress output (line-based for non-TTY)
+- [x] `--list-playlists` stream info (codec details with `-v`)
+- [x] `--check` setup validation
+
+## Completed: v0.8 — macOS Support
+
+- [x] Platform-specific disc operations (detect, mount, unmount, eject, volume label, speed control)
+- [x] FFmpeg compatibility (pipe2 → pipe+fcntl, AVStream.side_data gating for FFmpeg 7.0+)
+- [x] Fork-free disc scanning on macOS (ObjC runtime not fork-safe)
+- [x] AACS library discovery with Homebrew .dylib paths + DYLD_LIBRARY_PATH
+- [x] Platform-specific `--check` validation (diskutil on macOS, udisksctl on Linux)
+- [x] macOS CI workflow + release builds (aarch64-apple-darwin)
+- [x] macOS installation guide (`docs/macos-installation.md`)
 
 ## Upcoming Milestones
 
-- **v0.8** — Quality of Life: log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection
-- **v0.9** — DVD Support: disc type abstraction, title enumeration, chapter extraction, CSS errors
-- **v0.10** — UHD Blu-ray: AACS 2.0, HDR metadata verification
-- **v0.11** — Multi-Drive & Automation: parallel ripping, batch mode, disc history
-- **v0.12** — Intelligence & Distribution: TMDb S00 auto-matching, shell completions, man page
+- **v0.9** — Quality of Life: log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection
+- **v0.10** — DVD Support: disc type abstraction, title enumeration, chapter extraction, CSS errors
+- **v0.11** — UHD Blu-ray: AACS 2.0, HDR metadata verification
+- **v0.12** — Multi-Drive & Automation: parallel ripping, batch mode, disc history
+- **v0.13** — Intelligence & Distribution: TMDb S00 auto-matching, shell completions, man page
 - **v1.0** — Final Release: README rewrite, investigation spikes, integration testing
 
 ## Post-1.0
 
 - Resume partial rips (investigate FFmpeg MKV muxer seek support)
-- macOS/Windows support (platform abstraction for udisksctl/lsblk/eject)
+- Windows support (platform abstraction for WMI/PowerShell equivalents)
 - GUI frontend (architecture prepared via v0.7 workflow extraction)
 - Desktop notifications on rip completion
-- native libredrive support
+- Native LibreDrive support
