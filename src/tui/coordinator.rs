@@ -103,7 +103,7 @@ impl Coordinator {
                     } else {
                         "unknown panic".to_string()
                     };
-                    eprintln!("Session thread panicked: {}", msg);
+                    log::error!("Session thread panicked: {}", msg);
                 }
             })
             .expect("failed to spawn session thread");
@@ -601,9 +601,11 @@ impl Coordinator {
                 if let Some(other_sid) = seen.get(ep) {
                     if other_sid != sid {
                         // Overlap detected — log for now
-                        eprintln!(
-                            "Warning: Episode {} of {} S{:02} is assigned in multiple sessions",
-                            ep, show_name, season
+                        log::warn!(
+                            "Episode {} of {} S{:02} is assigned in multiple sessions",
+                            ep,
+                            show_name,
+                            season
                         );
                     }
                 } else {

@@ -36,6 +36,7 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
         }
     }
 
+    log::debug!("Detected {} optical drives", drives.len());
     drives
 }
 
@@ -88,6 +89,7 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
         }
     }
 
+    log::debug!("Detected {} optical drives", drives.len());
     drives
 }
 
@@ -166,17 +168,20 @@ pub fn mount_disc(device: &str) -> Result<String> {
 
     // udisksctl output: "Mounted /dev/sr0 at /run/media/user/LABEL."
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
+    let mount_path = stdout
         .split(" at ")
         .nth(1)
         .map(|s| s.trim().trim_end_matches('.').to_string())
-        .ok_or_else(|| anyhow::anyhow!("Could not parse mount point from udisksctl output"))
+        .ok_or_else(|| anyhow::anyhow!("Could not parse mount point from udisksctl output"))?;
+    log::info!("Disc mounted at {}", mount_path);
+    Ok(mount_path)
 }
 
 #[cfg(target_os = "macos")]
 pub fn mount_disc(device: &str) -> Result<String> {
     // Check if already mounted (macOS auto-mounts optical media)
     if let Some(mount) = get_mount_point(device) {
+        log::info!("Disc mounted at {}", mount);
         return Ok(mount);
     }
 
@@ -190,8 +195,10 @@ pub fn mount_disc(device: &str) -> Result<String> {
 
     // diskutil output: "Volume <LABEL> on <device> mounted"
     // Get the mount point via diskutil info
-    get_mount_point(device)
-        .ok_or_else(|| anyhow::anyhow!("Mounted {} but could not find mount point", device))
+    let mount_path = get_mount_point(device)
+        .ok_or_else(|| anyhow::anyhow!("Mounted {} but could not find mount point", device))?;
+    log::info!("Disc mounted at {}", mount_path);
+    Ok(mount_path)
 }
 
 /// Unmount a disc.
@@ -204,6 +211,7 @@ pub fn unmount_disc(device: &str) -> Result<()> {
     if !output.status.success() {
         bail!("Failed to unmount {}", device);
     }
+    log::debug!("Disc unmounted");
     Ok(())
 }
 
@@ -217,6 +225,7 @@ pub fn unmount_disc(device: &str) -> Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("Failed to unmount {}: {}", device, stderr.trim());
     }
+    log::debug!("Disc unmounted");
     Ok(())
 }
 
@@ -234,7 +243,7 @@ pub fn ensure_mounted(device: &str) -> Result<(String, bool)> {
 
 #[cfg(target_os = "linux")]
 pub fn get_volume_label(device: &str) -> String {
-    Command::new("lsblk")
+    let label = Command::new("lsblk")
         .args(["-no", "LABEL", device])
         .output()
         .ok()
@@ -245,12 +254,16 @@ pub fn get_volume_label(device: &str) -> String {
                 None
             }
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !label.is_empty() {
+        log::info!("Disc detected: {}", label);
+    }
+    label
 }
 
 #[cfg(target_os = "macos")]
 pub fn get_volume_label(device: &str) -> String {
-    Command::new("diskutil")
+    let label = Command::new("diskutil")
         .args(["info", device])
         .output()
         .ok()
@@ -265,7 +278,11 @@ pub fn get_volume_label(device: &str) -> String {
             }
             None
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !label.is_empty() {
+        log::info!("Disc detected: {}", label);
+    }
+    label
 }
 
 pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {

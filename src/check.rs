@@ -326,6 +326,30 @@ pub fn run_check(config: &crate::config::Config, config_path: &std::path::Path) 
         });
     }
 
+    // Log directory
+    let log_dir = config.log_dir();
+    if log_dir.exists() {
+        let log_count = std::fs::read_dir(&log_dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "log"))
+                    .count()
+            })
+            .unwrap_or(0);
+        results.push(CheckResult {
+            label: "Log directory".into(),
+            status: CheckStatus::Pass,
+            detail: format!("{} ({} logs)", log_dir.display(), log_count),
+        });
+    } else {
+        results.push(CheckResult {
+            label: "Log directory".into(),
+            status: CheckStatus::Warn,
+            detail: format!("{} (will be created on first run)", log_dir.display()),
+        });
+    }
+
     print_results(&results);
     if any_required_failed {
         2

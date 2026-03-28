@@ -122,9 +122,8 @@ pub fn preflight(backend: AacsBackend) -> Result<()> {
         AacsBackend::Libaacs => {
             if let Some(path) = find_library("libaacs", LIBAACS_PATHS) {
                 if is_libmmbd(&path) {
-                    eprintln!(
-                        "Warning: system libaacs.so is a symlink to libmmbd. \
-                         Searching for real libaacs..."
+                    log::warn!(
+                        "system libaacs.so is a symlink to libmmbd — searching for real libaacs"
                     );
                     // Try to force real libaacs by name — libbluray's dl_dlopen
                     // appends ".so.{version}", so we pass a library name, not path.
@@ -136,8 +135,8 @@ pub fn preflight(backend: AacsBackend) -> Result<()> {
             }
             let keydb = dirs_keydb_path();
             if !keydb.exists() {
-                eprintln!(
-                    "Warning: KEYDB.cfg not found at {} — AACS decryption may fail.",
+                log::warn!(
+                    "KEYDB.cfg not found at {} — AACS decryption may fail",
                     keydb.display()
                 );
             }
@@ -147,9 +146,8 @@ pub fn preflight(backend: AacsBackend) -> Result<()> {
             // Detect if libmmbd is masquerading as libaacs
             if let Some(path) = find_library("libaacs", LIBAACS_PATHS) {
                 if is_libmmbd(&path) && !command_exists("makemkvcon") {
-                    eprintln!(
-                        "Warning: libmmbd.so is installed as libaacs but makemkvcon was not found. \
-                         AACS initialization may hang. Consider setting aacs_backend = \"libaacs\" in config."
+                    log::warn!(
+                        "libmmbd.so is installed as libaacs but makemkvcon was not found — AACS initialization may hang. Consider setting aacs_backend = \"libaacs\" in config"
                     );
                 }
             }

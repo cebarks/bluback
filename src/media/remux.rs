@@ -152,8 +152,8 @@ fn inject_chapters(
         match octx.add_chapter(i as i64, time_base, start_ms, end_ms, title) {
             Ok(_) => added += 1,
             Err(e) => {
-                eprintln!(
-                    "Warning: could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
+                log::warn!(
+                    "could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
                     i + 1,
                     start_ms,
                     end_ms,
@@ -180,6 +180,12 @@ where
     F: Fn(&RipProgress),
 {
     super::ensure_init();
+
+    log::info!(
+        "Remux started: playlist={}, output={}",
+        options.playlist,
+        options.output.display()
+    );
 
     if options.output.exists() {
         return Err(MediaError::OutputExists(options.output.clone()));
@@ -274,6 +280,7 @@ where
     loop {
         if options.cancel.load(Ordering::Relaxed) {
             let _ = octx.write_trailer();
+            log::warn!("Remux cancelled: {}", options.output.display());
             return Err(MediaError::Cancelled);
         }
 
@@ -281,6 +288,7 @@ where
             Ok(()) => {}
             Err(ffmpeg::Error::Eof) => break,
             Err(e) => {
+                log::warn!("Remux failed: {}: {}", options.output.display(), e);
                 return Err(MediaError::RemuxFailed(format!(
                     "Error reading packet: {}",
                     e
@@ -327,9 +335,10 @@ where
         packet.set_stream(out_stream_idx);
 
         // Write packet (interleaved for proper ordering)
-        packet
-            .write_interleaved(&mut octx)
-            .map_err(|e| MediaError::RemuxFailed(format!("Error writing packet: {}", e)))?;
+        packet.write_interleaved(&mut octx).map_err(|e| {
+            log::warn!("Remux failed: {}: {}", options.output.display(), e);
+            MediaError::RemuxFailed(format!("Error writing packet: {}", e))
+        })?;
 
         // Report progress every ~100ms
         if last_progress.elapsed().as_millis() >= 100 {
@@ -399,6 +408,7 @@ where
         speed,
     });
 
+    log::info!("Remux completed: {}", options.output.display());
     Ok(chapters_added)
 }
 

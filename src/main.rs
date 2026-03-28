@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod disc;
 mod drive_monitor;
+mod logging;
 mod media;
 mod rip;
 mod session;
@@ -15,6 +16,7 @@ mod util;
 mod workflow;
 
 use clap::Parser;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -127,6 +129,18 @@ pub struct Args {
     /// Validate environment and configuration, then exit
     #[arg(long)]
     check: bool,
+
+    /// Stderr log verbosity: error, warn, info, debug, trace [default: warn]
+    #[arg(long, value_parser = ["error", "warn", "info", "debug", "trace"])]
+    log_level: Option<String>,
+
+    /// Disable log file output
+    #[arg(long)]
+    no_log: bool,
+
+    /// Custom log file path (overrides default location)
+    #[arg(long, conflicts_with = "no_log")]
+    log_file: Option<PathBuf>,
 }
 
 impl Args {
@@ -161,7 +175,11 @@ fn run() -> i32 {
     let code = match run_inner() {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("Error: {:#}", e);
+            // Fallback for pre-logging errors (before logging::init runs)
+            if log::max_level() == log::LevelFilter::Off {
+                eprintln!("Error: {:#}", e);
+            }
+            log::error!("{:#}", e);
             classify_exit_code(&e)
         }
     };
@@ -212,15 +230,48 @@ fn run_inner() -> anyhow::Result<i32> {
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);
 
+    // Initialize logging before config validation so warnings are captured
+    let use_tui = !args.no_tui && atty_stdout();
+    let stderr_level = logging::parse_level(
+        args.log_level
+            .as_deref()
+            .unwrap_or_else(|| config.log_level()),
+    );
+    let log_path = logging::init(
+        &config,
+        stderr_level,
+        args.log_file.clone(),
+        args.no_log,
+        use_tui,
+    )?;
+
     if config_path.exists() {
         if let Ok(raw) = std::fs::read_to_string(&config_path) {
             for w in config::validate_raw_toml(&raw) {
-                eprintln!("Warning: {} in {}", w, config_path.display());
+                log::warn!("{} in {}", w, config_path.display());
             }
             for w in config::validate_config(&config) {
-                eprintln!("Warning: {}", w);
+                log::warn!("{}", w);
             }
         }
+    }
+
+    if let Some(ref path) = log_path {
+        let header = logging::session_header(
+            env!("CARGO_PKG_VERSION"),
+            args.device
+                .as_deref()
+                .map(|d| d.to_string_lossy())
+                .as_deref(),
+            &args.output.display().to_string(),
+            &config_path,
+            args.aacs_backend.as_deref().unwrap_or("auto"),
+        );
+        // Write header directly to log file (before log macros, which add timestamps)
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(path) {
+            let _ = f.write_all(header.as_bytes());
+        }
+        log::info!("Log file: {}", path.display());
     }
 
     if args.check {
@@ -260,8 +311,6 @@ fn run_inner() -> anyhow::Result<i32> {
             args.output = PathBuf::from(dir);
         }
     }
-
-    let use_tui = !args.no_tui && atty_stdout();
 
     // Device resolution: in TUI multi-drive auto mode, leave args.device as None
     // so the coordinator's DriveMonitor can detect and manage all drives.

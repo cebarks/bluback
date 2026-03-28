@@ -19,6 +19,7 @@ pub enum OverwriteAction {
 }
 
 pub fn check_overwrite(output: &Path, overwrite: bool) -> std::io::Result<OverwriteAction> {
+    log::debug!("Overwrite check: {}", output.display());
     if !output.exists() {
         return Ok(OverwriteAction::Proceed);
     }
@@ -94,7 +95,7 @@ pub fn build_output_filename(
         || config.movie_format.is_some()
         || config.preset.is_some();
 
-    if let Some((title, year)) = movie_title {
+    let filename = if let Some((title, year)) = movie_title {
         let fmt = if use_custom_format {
             let template = config.resolve_format(true, cli_format, cli_preset);
             Some(template)
@@ -134,7 +135,9 @@ pub fn build_output_filename(
             media_info,
             Some(&extra_vars),
         )
-    }
+    };
+    log::debug!("Output filename: {}", filename);
+    filename
 }
 
 #[cfg(test)]
