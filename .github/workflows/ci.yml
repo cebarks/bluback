@@ -70,7 +70,7 @@ jobs:
 
       - name: Install dependencies (Fedora)
         if: startsWith(matrix.name, 'Fedora')
-        run: dnf install -y ffmpeg-free-devel clang clang-devel pkg-config rust cargo
+        run: dnf install -y ffmpeg-free-devel clang clang-devel pkg-config rust cargo which
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.name, 'macOS')
@@ -88,5 +88,4 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - run: cargo build --locked
       - run: cargo test --locked
