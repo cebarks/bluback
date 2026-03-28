@@ -655,6 +655,14 @@ impl SettingsState {
                 key: "tmdb_api_key".into(),
                 value: config.tmdb_api_key.clone().unwrap_or_default(),
             },
+            SettingItem::Separator {
+                label: Some("Metadata".into()),
+            },
+            SettingItem::Toggle {
+                label: "Embed Metadata Tags".into(),
+                key: "metadata.enabled".into(),
+                value: config.metadata_enabled(),
+            },
             SettingItem::Separator { label: None },
             SettingItem::Action {
                 label: "Save to Config (Ctrl+S)".into(),
@@ -700,6 +708,7 @@ impl SettingsState {
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
+            ("BLUBACK_METADATA", "metadata.enabled"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -804,6 +813,7 @@ impl SettingsState {
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
+            ("BLUBACK_METADATA", "metadata.enabled"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -849,6 +859,10 @@ impl SettingsState {
                     "verbose_libbluray" if *value => config.verbose_libbluray = Some(true),
                     "overwrite" if *value => config.overwrite = Some(true),
                     "log_file" if !*value => config.log_file = Some(false),
+                    "metadata.enabled" if !*value => {
+                        let meta = config.metadata.get_or_insert_with(Default::default);
+                        meta.enabled = Some(false);
+                    }
                     _ => {}
                 },
                 SettingItem::Number { key, value, .. } => match key.as_str() {
@@ -1006,13 +1020,13 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 4 separators + 15 settings + 1 action = 20 items
+        // 5 separators + 18 settings + 1 action = 24 items
         let non_separator_count = state
             .items
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 18); // 17 settings + 1 action
+        assert_eq!(non_separator_count, 19); // 18 settings + 1 action
     }
 
     #[test]

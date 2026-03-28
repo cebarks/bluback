@@ -32,6 +32,7 @@ pub fn check_overwrite(output: &Path, overwrite: bool) -> std::io::Result<Overwr
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn prepare_remux_options(
     device: &str,
     playlist: &Playlist,
@@ -144,6 +145,7 @@ pub fn build_output_filename(
 
 /// Build MKV metadata tags from available context.
 /// Returns `None` if metadata is disabled.
+#[allow(clippy::too_many_arguments)]
 pub fn build_metadata(
     enabled: bool,
     movie_mode: bool,
@@ -151,7 +153,7 @@ pub fn build_metadata(
     season: Option<u32>,
     episodes: &[Episode],
     movie_title: Option<&str>,
-    movie_year: Option<&str>,
+    _movie_year: Option<&str>,
     date_released: Option<&str>,
     custom_tags: &HashMap<String, String>,
 ) -> Option<crate::types::MkvMetadata> {
