@@ -15,6 +15,9 @@ use crate::tui::{settings, tab_bar, wizard, dashboard, InputFocus, Screen};
 use crate::types::*;
 use crate::Args;
 
+/// Maps (show_name, season) to a list of (session_id, episode_numbers) assignments
+type EpisodeAssignmentMap = HashMap<(String, u32), Vec<(SessionId, Vec<u32>)>>;
+
 struct SessionHandle {
     id: SessionId,
     device: PathBuf,
@@ -36,7 +39,7 @@ pub struct Coordinator {
     overlay: Option<Overlay>,
     drive_event_rx: mpsc::Receiver<DriveEvent>,
     /// Track assigned episodes per (show_name, season) across sessions for overlap detection.
-    assigned_episodes: HashMap<(String, u32), Vec<(SessionId, Vec<u32>)>>,
+    assigned_episodes: EpisodeAssignmentMap,
 }
 
 impl Coordinator {
@@ -441,7 +444,8 @@ impl Coordinator {
             // Drain all available messages
             while let Ok(msg) = session.output_rx.try_recv() {
                 match msg {
-                    SessionMessage::Snapshot(snap) => {
+                    SessionMessage::Snapshot(boxed_snap) => {
+                        let snap = *boxed_snap;
                         session.tab_summary = TabSummary {
                             session_id: snap.session_id,
                             device_name: session.tab_summary.device_name.clone(),
@@ -797,5 +801,85 @@ impl Coordinator {
                     .send(SessionCommand::LinkTo { context: ctx });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    fn make_test_coordinator() -> Coordinator {
+        let (_, drive_rx) = mpsc::channel();
+        let args = Args::parse_from(["bluback"]);
+        let config = Config::default();
+        let config_path = PathBuf::from("/tmp/test_config.toml");
+
+        Coordinator {
+            sessions: Vec::new(),
+            active_tab: 0,
+            config,
+            config_path,
+            args,
+            quit: false,
+            overlay: None,
+            drive_event_rx: drive_rx,
+            assigned_episodes: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_no_overlap_different_episodes() {
+        let mut coord = make_test_coordinator();
+        let session1 = SessionId(1);
+        let session2 = SessionId(2);
+
+        coord.validate_episode_overlap(session1, "Breaking Bad", 1, &[1, 2, 3]);
+        coord.validate_episode_overlap(session2, "Breaking Bad", 1, &[4, 5, 6]);
+
+        let key = ("Breaking Bad".to_string(), 1);
+        let entries = coord.assigned_episodes.get(&key).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.contains(&(session1, vec![1, 2, 3])));
+        assert!(entries.contains(&(session2, vec![4, 5, 6])));
+    }
+
+    #[test]
+    fn test_overlap_detected() {
+        let mut coord = make_test_coordinator();
+        let session1 = SessionId(1);
+        let session2 = SessionId(2);
+
+        coord.validate_episode_overlap(session1, "The Wire", 2, &[1, 2, 3]);
+        coord.validate_episode_overlap(session2, "The Wire", 2, &[3, 4, 5]);
+
+        let key = ("The Wire".to_string(), 2);
+        let entries = coord.assigned_episodes.get(&key).unwrap();
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.contains(&(session1, vec![1, 2, 3])));
+        assert!(entries.contains(&(session2, vec![3, 4, 5])));
+    }
+
+    #[test]
+    fn test_different_shows_no_overlap() {
+        let mut coord = make_test_coordinator();
+        let session1 = SessionId(1);
+        let session2 = SessionId(2);
+
+        coord.validate_episode_overlap(session1, "Sopranos", 1, &[1, 2, 3]);
+        coord.validate_episode_overlap(session2, "The Wire", 1, &[1, 2, 3]);
+
+        let key1 = ("Sopranos".to_string(), 1);
+        let key2 = ("The Wire".to_string(), 1);
+
+        let entries1 = coord.assigned_episodes.get(&key1).unwrap();
+        let entries2 = coord.assigned_episodes.get(&key2).unwrap();
+
+        assert_eq!(entries1.len(), 1);
+        assert_eq!(entries2.len(), 1);
+        assert!(entries1.contains(&(session1, vec![1, 2, 3])));
+        assert!(entries2.contains(&(session2, vec![1, 2, 3])));
     }
 }

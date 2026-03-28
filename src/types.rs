@@ -225,7 +225,7 @@ pub enum SessionCommand {
 /// Messages sent from a session thread to the main thread
 pub enum SessionMessage {
     /// Full display state snapshot (on screen transitions, wizard changes)
-    Snapshot(RenderSnapshot),
+    Snapshot(Box<RenderSnapshot>),
     /// Lightweight rip progress update (frequent during remux)
     Progress {
         session_id: SessionId,

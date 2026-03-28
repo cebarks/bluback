@@ -447,7 +447,7 @@ impl DriveSession {
     }
 
     fn emit_snapshot(&self) {
-        let _ = self.output_tx.send(SessionMessage::Snapshot(self.snapshot()));
+        let _ = self.output_tx.send(SessionMessage::Snapshot(Box::new(self.snapshot())));
     }
 
     /// Spawn a background thread to scan this session's device for a disc.
