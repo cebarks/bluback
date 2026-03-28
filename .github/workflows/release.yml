@@ -11,28 +11,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   gate:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install FFmpeg development libraries
-        run: sudo apt-get update && sudo apt-get install -y libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
 
       - name: Validate tag matches Cargo.toml version
         run: |
           tag_version="${GITHUB_REF_NAME#v}"
-          cargo_version=$(cargo metadata --no-deps --format-version=1 | jq -r '.packages[0].version')
+          cargo_version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           if [ "$tag_version" != "$cargo_version" ]; then
             echo "::error::Tag version ($tag_version) does not match Cargo.toml version ($cargo_version)"
             exit 1
           fi
-
-      - run: cargo test --locked
-      - run: cargo clippy --locked -- -D warnings
 
   build-linux:
     needs: gate
