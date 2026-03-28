@@ -511,6 +511,203 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     Rect::new(area.x + x, area.y + y, popup_width, height)
 }
 
+// --- Session variants of dashboard handlers ---
+
+pub fn handle_input_session(session: &mut crate::session::DriveSession, key: KeyEvent) {
+    if session.rip.confirm_abort {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                session
+                    .rip
+                    .cancel
+                    .store(true, Ordering::Relaxed);
+                session.rip.progress_rx = None;
+                // Session doesn't set quit — the coordinator handles lifecycle
+                // Instead, transition to Done so the session reports completion
+                session.screen = Screen::Done;
+                session.status_message = "Rip aborted.".into();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                session.rip.confirm_abort = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    if key.code == KeyCode::Char('q') {
+        session.rip.confirm_abort = true;
+    }
+}
+
+/// Tick the rip engine for a DriveSession. Returns true if state changed.
+pub fn tick_session(session: &mut crate::session::DriveSession) -> bool {
+    if check_all_done_session(session) {
+        return true;
+    }
+
+    if session.rip.progress_rx.is_none() {
+        let started = start_next_job_session(session);
+        return started;
+    }
+
+    poll_active_job_session(session)
+}
+
+fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
+    let all_done = session.rip.jobs.iter().all(|j| {
+        matches!(
+            j.status,
+            PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) | PlaylistStatus::Failed(_)
+        )
+    });
+
+    if all_done && !session.rip.jobs.is_empty() {
+        session.rip.progress_rx = None;
+        session.screen = Screen::Done;
+        if session.disc.did_mount {
+            let _ = crate::disc::unmount_disc(&session.device.to_string_lossy());
+            session.disc.did_mount = false;
+        }
+        // Start scanning for next disc
+        session.start_disc_scan();
+        session.screen = Screen::Done; // Override start_disc_scan's screen change
+        true
+    } else {
+        false
+    }
+}
+
+fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
+    let next_idx = session
+        .rip
+        .jobs
+        .iter()
+        .position(|j| matches!(j.status, PlaylistStatus::Pending));
+
+    let Some(idx) = next_idx else {
+        return false;
+    };
+
+    session.rip.current_rip = idx;
+    let job_playlist = session.rip.jobs[idx].playlist.clone();
+    let device = session.device.to_string_lossy().to_string();
+    let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+    if let Some(parent) = outfile.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            session.rip.jobs[idx].status = PlaylistStatus::Failed(format!(
+                "Failed to create output directory {}: {}",
+                parent.display(),
+                e
+            ));
+            return true;
+        }
+    }
+
+    match crate::workflow::check_overwrite(
+        &outfile,
+        session.config.overwrite() || session.overwrite,
+    ) {
+        Ok(crate::workflow::OverwriteAction::Proceed) => {}
+        Ok(crate::workflow::OverwriteAction::Skip(size)) => {
+            session.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
+            return true;
+        }
+        Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
+        Err(e) => {
+            session.rip.jobs[idx].status =
+                PlaylistStatus::Failed(format!("Overwrite check failed: {}", e));
+            return true;
+        }
+    }
+
+    let stream_selection = session.config.resolve_stream_selection();
+    let cancel = session.rip.cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+
+    let options = crate::workflow::prepare_remux_options(
+        &device,
+        &job_playlist,
+        &outfile,
+        session.disc.mount_point.as_deref(),
+        stream_selection,
+        cancel,
+        session.config.reserve_index_space(),
+    );
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let tx_progress = tx.clone();
+        let result = crate::media::remux::remux(options, |progress| {
+            let _ = tx_progress.send(Ok(progress.clone()));
+        });
+        match result {
+            Ok(_chapters_added) => {} // success — sender drops, receiver sees Disconnected
+            Err(e) => {
+                let _ = tx.send(Err(e));
+            }
+        }
+    });
+
+    session.rip.progress_rx = Some(rx);
+    session.rip.jobs[idx].status =
+        PlaylistStatus::Ripping(crate::types::RipProgress::default());
+    true
+}
+
+fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
+    let rx = match session.rip.progress_rx {
+        Some(ref rx) => rx,
+        None => return false,
+    };
+
+    let mut changed = false;
+    loop {
+        match rx.try_recv() {
+            Ok(Ok(progress)) => {
+                let idx = session.rip.current_rip;
+                session.rip.jobs[idx].status = PlaylistStatus::Ripping(progress);
+                changed = true;
+            }
+            Ok(Err(crate::media::MediaError::Cancelled)) => {
+                let idx = session.rip.current_rip;
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
+                session.rip.progress_rx = None;
+                return true;
+            }
+            Ok(Err(e)) => {
+                let idx = session.rip.current_rip;
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed(e.to_string());
+                session.rip.progress_rx = None;
+                return true;
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                return changed;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let idx = session.rip.current_rip;
+                if matches!(session.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
+                    let outfile =
+                        session.output_dir.join(&session.rip.jobs[idx].filename);
+                    let file_size =
+                        std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
+                    session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+                }
+                session.rip.progress_rx = None;
+                return true;
+            }
+        }
+    }
+}
+
 fn active_rip_stats_view(view: &DashboardView) -> String {
     if let Some(job) = view.jobs.get(view.current_rip) {
         if let PlaylistStatus::Ripping(ref prog) = job.status {

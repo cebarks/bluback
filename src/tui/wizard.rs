@@ -1430,3 +1430,544 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
         _ => {}
     }
 }
+
+// --- Session variants of input handlers ---
+// These are mechanical ports of the App-based handlers above, operating on
+// DriveSession fields instead. The logic is identical.
+
+pub fn handle_tmdb_search_input_session(
+    session: &mut crate::session::DriveSession,
+    key: KeyEvent,
+) {
+    match session.wizard.input_focus {
+        InputFocus::TextInput => {
+            match key.code {
+                KeyCode::Char(c) => session.wizard.input_buffer.push(c),
+                KeyCode::Backspace => {
+                    session.wizard.input_buffer.pop();
+                }
+                KeyCode::Enter => {
+                    let input = session.wizard.input_buffer.trim().to_string();
+                    if input.is_empty() {
+                        return;
+                    }
+
+                    // If no API key yet, treat input as the API key
+                    if session.tmdb_api_key.is_none() {
+                        if let Err(e) = tmdb::save_api_key(&input) {
+                            session.status_message = format!("Failed to save API key: {}", e);
+                            return;
+                        }
+                        session.tmdb_api_key = Some(input);
+                        session.wizard.input_buffer = session.tmdb.search_query.clone();
+                        session.status_message.clear();
+                        return;
+                    }
+
+                    // Spawn TMDb search in background thread
+                    if let Some(ref api_key) = session.tmdb_api_key.clone() {
+                        if session.pending_rx.is_some() {
+                            return;
+                        }
+                        let api_key = api_key.clone();
+                        let query = input;
+                        let (tx, rx) = mpsc::channel();
+                        if session.tmdb.movie_mode {
+                            std::thread::spawn(move || {
+                                let _ = tx.send(BackgroundResult::MovieSearch(
+                                    tmdb::search_movie(&query, &api_key),
+                                ));
+                            });
+                        } else {
+                            std::thread::spawn(move || {
+                                let _ = tx.send(BackgroundResult::ShowSearch(
+                                    tmdb::search_show(&query, &api_key),
+                                ));
+                            });
+                        }
+                        session.pending_rx = Some(rx);
+                        session.status_message = "Searching TMDb...".into();
+                    }
+                }
+                KeyCode::Down => {
+                    let has_results = if session.tmdb.movie_mode {
+                        !session.tmdb.movie_results.is_empty()
+                    } else {
+                        !session.tmdb.search_results.is_empty()
+                    };
+                    if has_results {
+                        session.wizard.input_focus = InputFocus::List;
+                        session.wizard.list_cursor = 0;
+                    }
+                }
+                KeyCode::Tab if session.tmdb_api_key.is_some() => {
+                    session.tmdb.movie_mode = !session.tmdb.movie_mode;
+                }
+                KeyCode::Esc => {
+                    session.wizard.input_focus = InputFocus::List;
+                    session.wizard.list_cursor = 0;
+                    session.screen = Screen::PlaylistManager;
+                }
+                _ => {}
+            }
+        }
+        InputFocus::List => {
+            let result_count = if session.tmdb.movie_mode {
+                session.tmdb.movie_results.len()
+            } else {
+                session.tmdb.search_results.len()
+            };
+
+            match key.code {
+                KeyCode::Up => {
+                    if session.wizard.list_cursor == 0 {
+                        session.wizard.input_focus = InputFocus::TextInput;
+                    } else {
+                        session.wizard.list_cursor -= 1;
+                    }
+                }
+                KeyCode::Down if session.wizard.list_cursor + 1 < result_count => {
+                    session.wizard.list_cursor += 1;
+                }
+                KeyCode::Enter => {
+                    if result_count == 0 {
+                        return;
+                    }
+
+                    if session.tmdb.movie_mode {
+                        session.tmdb.selected_movie = Some(session.wizard.list_cursor);
+                        session.tmdb.show_name =
+                            session.tmdb.movie_results[session.wizard.list_cursor]
+                                .title
+                                .clone();
+                        session.wizard.input_focus = InputFocus::List;
+                        session.wizard.list_cursor = 0;
+                        session.screen = Screen::PlaylistManager;
+                    } else {
+                        session.tmdb.selected_show = Some(session.wizard.list_cursor);
+                        let show =
+                            &session.tmdb.search_results[session.wizard.list_cursor];
+                        session.tmdb.show_name = show.name.clone();
+
+                        // If we already have a season number, fetch episodes in background
+                        if let Some(season) = session.wizard.season_num {
+                            if let Some(ref api_key) = session.tmdb_api_key.clone() {
+                                let api_key = api_key.clone();
+                                let show_id = show.id;
+                                let (tx, rx) = mpsc::channel();
+                                std::thread::spawn(move || {
+                                    let _ = tx.send(BackgroundResult::SeasonFetch(
+                                        tmdb::get_season(show_id, season, &api_key),
+                                    ));
+                                });
+                                session.pending_rx = Some(rx);
+                                session.status_message = "Fetching season...".into();
+                            }
+                        }
+
+                        session.wizard.input_buffer = session
+                            .wizard
+                            .season_num
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
+                        session.wizard.input_focus = InputFocus::TextInput;
+                        session.wizard.list_cursor = 0;
+                        session.screen = Screen::Season;
+                    }
+                }
+                KeyCode::Esc => {
+                    session.tmdb.search_results.clear();
+                    session.tmdb.movie_results.clear();
+                    session.wizard.input_focus = InputFocus::TextInput;
+                }
+                _ => {}
+            }
+        }
+        InputFocus::InlineEdit(_) => {}
+    }
+}
+
+pub fn handle_season_input_session(
+    session: &mut crate::session::DriveSession,
+    key: KeyEvent,
+) {
+    match key.code {
+        KeyCode::Up if session.wizard.list_cursor > 0 => {
+            session.wizard.list_cursor -= 1;
+        }
+        KeyCode::Down => {
+            let max_scroll = session.tmdb.episodes.len();
+            if session.wizard.list_cursor < max_scroll {
+                session.wizard.list_cursor += 1;
+            }
+        }
+        KeyCode::Char(c) if c.is_ascii_digit() => {
+            session.wizard.input_buffer.push(c);
+        }
+        KeyCode::Backspace => {
+            session.wizard.input_buffer.pop();
+        }
+        KeyCode::Enter => {
+            if !session.tmdb.episodes.is_empty() {
+                let current_input: Option<u32> = session.wizard.input_buffer.parse().ok();
+                if current_input != session.wizard.season_num {
+                    let season: u32 = match session.wizard.input_buffer.parse() {
+                        Ok(s) => s,
+                        _ => return,
+                    };
+                    session.wizard.season_num = Some(season);
+                    session.tmdb.episodes.clear();
+
+                    let show_id = session
+                        .tmdb
+                        .selected_show
+                        .and_then(|i| session.tmdb.search_results.get(i))
+                        .map(|s| s.id);
+
+                    if let (Some(show_id), Some(ref api_key)) =
+                        (show_id, session.tmdb_api_key.clone())
+                    {
+                        let api_key = api_key.clone();
+                        let (tx, rx) = mpsc::channel();
+                        std::thread::spawn(move || {
+                            let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
+                                show_id, season, &api_key,
+                            )));
+                        });
+                        session.pending_rx = Some(rx);
+                        session.status_message = "Fetching season...".into();
+                    }
+                } else {
+                    let disc_num = session.disc.label_info.as_ref().map(|l| l.disc);
+                    let guessed =
+                        guess_start_episode(disc_num, session.disc.episodes_pl.len());
+                    let start_ep = session.wizard.start_episode.unwrap_or(guessed);
+                    session.wizard.episode_assignments = assign_episodes(
+                        &session.disc.episodes_pl,
+                        &session.tmdb.episodes,
+                        start_ep,
+                    );
+                    session.wizard.input_focus = InputFocus::List;
+                    session.wizard.input_buffer.clear();
+                    session.wizard.list_cursor = 0;
+                    session.screen = Screen::PlaylistManager;
+                }
+            } else {
+                let season: u32 = match session.wizard.input_buffer.parse() {
+                    Ok(s) => s,
+                    _ => return,
+                };
+                session.wizard.season_num = Some(season);
+
+                let show_id = session
+                    .tmdb
+                    .selected_show
+                    .and_then(|i| session.tmdb.search_results.get(i))
+                    .map(|s| s.id);
+
+                if let (Some(show_id), Some(ref api_key)) =
+                    (show_id, session.tmdb_api_key.clone())
+                {
+                    let api_key = api_key.clone();
+                    let (tx, rx) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
+                            show_id, season, &api_key,
+                        )));
+                    });
+                    session.pending_rx = Some(rx);
+                    session.status_message = "Fetching season...".into();
+                }
+            }
+        }
+        KeyCode::Esc => {
+            session.tmdb.episodes.clear();
+            session.wizard.input_buffer = session.tmdb.search_query.clone();
+            session.wizard.input_focus = InputFocus::TextInput;
+            session.wizard.list_cursor = 0;
+            session.screen = Screen::TmdbSearch;
+        }
+        _ => {}
+    }
+}
+
+pub fn handle_playlist_manager_input_session(
+    session: &mut crate::session::DriveSession,
+    key: KeyEvent,
+) {
+    if let InputFocus::InlineEdit(edit_vis_row) = session.wizard.input_focus {
+        let visible = session.visible_playlists();
+        match key.code {
+            KeyCode::Char(c) if (c.is_ascii_digit() || c == ',' || c == '-') => {
+                session.wizard.input_buffer.push(c);
+            }
+            KeyCode::Backspace => {
+                session.wizard.input_buffer.pop();
+            }
+            KeyCode::Enter => {
+                if let Some(&(real_idx, _)) = visible.get(edit_vis_row) {
+                    let pl_num = session.disc.playlists[real_idx].num.clone();
+                    match parse_episode_input(&session.wizard.input_buffer) {
+                        Some(ep_nums) if ep_nums.is_empty() => {
+                            session.wizard.episode_assignments.remove(&pl_num);
+                        }
+                        Some(ep_nums) => {
+                            let ep_by_num: std::collections::HashMap<
+                                u32,
+                                &crate::types::Episode,
+                            > = session
+                                .tmdb
+                                .episodes
+                                .iter()
+                                .map(|e| (e.episode_number, e))
+                                .collect();
+                            let eps: Vec<crate::types::Episode> = ep_nums
+                                .iter()
+                                .map(|&num| {
+                                    ep_by_num.get(&num).map(|e| (*e).clone()).unwrap_or(
+                                        crate::types::Episode {
+                                            episode_number: num,
+                                            name: String::new(),
+                                            runtime: None,
+                                        },
+                                    )
+                                })
+                                .collect();
+                            session.wizard.episode_assignments.insert(pl_num, eps);
+                        }
+                        None => {
+                            return;
+                        }
+                    }
+                }
+                session.wizard.input_focus = InputFocus::List;
+                session.wizard.input_buffer.clear();
+            }
+            KeyCode::Esc => {
+                session.wizard.input_focus = InputFocus::List;
+                session.wizard.input_buffer.clear();
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    let visible = session.visible_playlists();
+    let vis_len = visible.len();
+
+    match key.code {
+        KeyCode::Up if session.wizard.list_cursor > 0 => {
+            session.wizard.list_cursor -= 1;
+        }
+        KeyCode::Down if session.wizard.list_cursor + 1 < vis_len => {
+            session.wizard.list_cursor += 1;
+        }
+        KeyCode::Char(' ') => {
+            if let Some(&(real_idx, _)) = visible.get(session.wizard.list_cursor) {
+                if let Some(sel) = session.wizard.playlist_selected.get_mut(real_idx) {
+                    *sel = !*sel;
+                }
+            }
+        }
+        KeyCode::Char('e') => {
+            if let Some(&(real_idx, _)) = visible.get(session.wizard.list_cursor) {
+                let pl_num = &session.disc.playlists[real_idx].num;
+                let current = session
+                    .wizard
+                    .episode_assignments
+                    .get(pl_num)
+                    .map(|eps| {
+                        eps.iter()
+                            .map(|e| e.episode_number.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
+                    .unwrap_or_default();
+                session.wizard.input_buffer = current;
+                session.wizard.input_focus =
+                    InputFocus::InlineEdit(session.wizard.list_cursor);
+            }
+        }
+        KeyCode::Char('s') if !session.tmdb.movie_mode => {
+            if let Some(&(real_idx, _)) = visible.get(session.wizard.list_cursor) {
+                let pl_num = session.disc.playlists[real_idx].num.clone();
+                if session.wizard.specials.contains(&pl_num) {
+                    session.wizard.specials.remove(&pl_num);
+                    session.wizard.episode_assignments.remove(&pl_num);
+                } else {
+                    let max_s00_ep = session
+                        .wizard
+                        .specials
+                        .iter()
+                        .filter_map(|snum| {
+                            session
+                                .wizard
+                                .episode_assignments
+                                .get(snum)
+                                .and_then(|eps| eps.first())
+                                .map(|e| e.episode_number)
+                        })
+                        .max()
+                        .unwrap_or(0);
+                    let next_ep = max_s00_ep + 1;
+                    session.wizard.specials.insert(pl_num.clone());
+                    session.wizard.episode_assignments.insert(
+                        pl_num,
+                        vec![crate::types::Episode {
+                            episode_number: next_ep,
+                            name: String::new(),
+                            runtime: None,
+                        }],
+                    );
+                    if let Some(sel) = session.wizard.playlist_selected.get_mut(real_idx) {
+                        *sel = true;
+                    }
+                }
+            }
+        }
+        KeyCode::Char('r') => {
+            if let Some(&(real_idx, _)) = visible.get(session.wizard.list_cursor) {
+                let pl_num = &session.disc.playlists[real_idx].num;
+                session.wizard.episode_assignments.remove(pl_num);
+                session.wizard.specials.remove(pl_num);
+            }
+        }
+        KeyCode::Char('R') => {
+            session.wizard.episode_assignments.clear();
+            session.wizard.specials.clear();
+        }
+        KeyCode::Char('f') => {
+            session.wizard.show_filtered = !session.wizard.show_filtered;
+            let new_visible = session.visible_playlists();
+            if session.wizard.list_cursor >= new_visible.len() {
+                session.wizard.list_cursor = new_visible.len().saturating_sub(1);
+            }
+        }
+        KeyCode::Enter => {
+            let selected_nums: Vec<String> = session
+                .disc
+                .playlists
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    session
+                        .wizard
+                        .playlist_selected
+                        .get(*i)
+                        .copied()
+                        .unwrap_or(false)
+                })
+                .map(|(_, pl)| pl.num.clone())
+                .collect();
+
+            if selected_nums.is_empty() {
+                session.status_message = "No playlists selected.".into();
+                return;
+            }
+
+            if session.pending_rx.is_some() {
+                return;
+            }
+
+            let device = session.device.to_string_lossy().to_string();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let infos: Vec<Option<crate::types::MediaInfo>> = selected_nums
+                    .iter()
+                    .map(|num| crate::disc::probe_media_info(&device, num))
+                    .collect();
+                let _ = tx.send(BackgroundResult::MediaProbe(infos));
+            });
+            session.pending_rx = Some(rx);
+            session.status_message = "Probing media info...".into();
+        }
+        KeyCode::Esc => {
+            session.wizard.list_cursor = 0;
+            if session.tmdb.movie_mode {
+                session.wizard.input_focus = InputFocus::List;
+                session.screen = Screen::TmdbSearch;
+            } else if session.wizard.season_num.is_some()
+                && session.tmdb.selected_show.is_some()
+            {
+                session.wizard.input_focus = InputFocus::TextInput;
+                session.wizard.input_buffer = session
+                    .wizard
+                    .season_num
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                session.screen = Screen::Season;
+            } else {
+                session.wizard.input_focus = InputFocus::TextInput;
+                session.wizard.input_buffer = session.tmdb.search_query.clone();
+                session.screen = Screen::TmdbSearch;
+            }
+        }
+        _ => {}
+    }
+}
+
+pub fn handle_confirm_input_session(
+    session: &mut crate::session::DriveSession,
+    key: KeyEvent,
+) {
+    match key.code {
+        KeyCode::Enter => {
+            // DriveSession doesn't support dry_run — always proceed to rip
+            session.rip.jobs.clear();
+
+            let selected_playlists: Vec<crate::types::Playlist> = session
+                .disc
+                .playlists
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    session
+                        .wizard
+                        .playlist_selected
+                        .get(*i)
+                        .copied()
+                        .unwrap_or(false)
+                })
+                .map(|(_, pl)| pl.clone())
+                .collect();
+
+            for (pl, filename) in selected_playlists
+                .into_iter()
+                .zip(session.wizard.filenames.iter())
+            {
+                let episode = session
+                    .wizard
+                    .episode_assignments
+                    .get(&pl.num)
+                    .cloned()
+                    .unwrap_or_default();
+                session.rip.jobs.push(crate::types::RipJob {
+                    playlist: pl,
+                    episode,
+                    filename: filename.clone(),
+                    status: crate::types::PlaylistStatus::Pending,
+                });
+            }
+
+            session.rip.current_rip = 0;
+            session.screen = Screen::Ripping;
+
+            let device_str = session.device.to_string_lossy().to_string();
+            match crate::disc::ensure_mounted(&device_str) {
+                Ok((mount, did_mount)) => {
+                    session.disc.mount_point = Some(mount);
+                    session.disc.did_mount = did_mount;
+                }
+                Err(_) => {
+                    session.disc.mount_point = None;
+                    session.disc.did_mount = false;
+                }
+            }
+        }
+        KeyCode::Esc => {
+            session.wizard.list_cursor = 0;
+            session.screen = Screen::PlaylistManager;
+        }
+        _ => {}
+    }
+}

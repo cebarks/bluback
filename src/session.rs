@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use crate::config::Config;
-use crate::tui::{DiscState, RipState, Screen, TmdbState, WizardState};
+use crate::tui::{DiscState, InputFocus, RipState, Screen, TmdbState, WizardState};
 use crate::types::*;
 
 static NEXT_SESSION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -382,6 +384,535 @@ impl DriveSession {
             status_message: self.status_message.clone(),
             filenames: self.wizard.filenames.clone(),
         })
+    }
+
+    // --- Session thread entry point and event loop ---
+
+    /// Main entry point for the session thread. Runs the scan/wizard/rip lifecycle.
+    pub fn run(mut self) {
+        self.start_disc_scan();
+        self.emit_snapshot();
+
+        loop {
+            let command = self.input_rx.recv_timeout(std::time::Duration::from_millis(100));
+
+            match command {
+                Ok(SessionCommand::Shutdown) => {
+                    self.rip
+                        .cancel
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    if self.disc.did_mount {
+                        let _ = crate::disc::unmount_disc(&self.device.to_string_lossy());
+                    }
+                    return;
+                }
+                Ok(SessionCommand::KeyEvent(key)) => {
+                    self.handle_key(key);
+                    self.emit_snapshot();
+                }
+                Ok(SessionCommand::LinkTo { context }) => {
+                    self.apply_linked_context(context);
+                    self.emit_snapshot();
+                }
+                Ok(SessionCommand::ConfigChanged(config)) => {
+                    self.config = config;
+                    self.eject = self.config.should_eject(self.cli_eject);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+
+            if self.pending_rx.is_some() {
+                self.spinner_frame = self.spinner_frame.wrapping_add(1);
+            }
+
+            let changed = self.poll_background();
+            if changed {
+                self.emit_snapshot();
+            }
+
+            if self.screen == Screen::Ripping {
+                let rip_changed = self.tick_rip();
+                if rip_changed {
+                    self.emit_snapshot();
+                }
+            }
+
+            if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+                self.rip
+                    .cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn emit_snapshot(&self) {
+        let _ = self.output_tx.send(SessionMessage::Snapshot(self.snapshot()));
+    }
+
+    /// Spawn a background thread to scan this session's device for a disc.
+    pub fn start_disc_scan(&mut self) {
+        let device = self.device.clone();
+        let max_speed = self.config.should_max_speed(self.no_max_speed);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        std::thread::Builder::new()
+            .name(format!("scan-{}", self.device.display()))
+            .spawn(move || {
+                let dev_str = device.to_string_lossy().to_string();
+                let label = crate::disc::get_volume_label(&dev_str);
+                if label.is_empty() {
+                    let msg = format!("{} — no disc", dev_str);
+                    let _ = tx.send(BackgroundResult::WaitingForDisc(msg));
+                    return;
+                }
+                let _ = tx.send(BackgroundResult::DiscFound(dev_str.clone()));
+                if max_speed {
+                    crate::disc::set_max_speed(&dev_str);
+                }
+                let tx_progress = tx.clone();
+                let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>)> {
+                    let playlists = crate::media::scan_playlists_with_progress(
+                        &dev_str,
+                        Some(&move |elapsed, timeout| {
+                            let _ =
+                                tx_progress.send(BackgroundResult::ScanProgress(elapsed, timeout));
+                        }),
+                    )
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    Ok((dev_str, label, playlists))
+                })();
+                let _ = tx.send(BackgroundResult::DiscScan(result));
+            })
+            .expect("failed to spawn scan thread");
+
+        self.pending_rx = Some(rx);
+        self.status_message = "Scanning for disc...".into();
+        self.screen = Screen::Scanning;
+    }
+
+    /// Poll for background task results. Returns true on meaningful state changes
+    /// (screen transitions, TMDb results), false for incremental updates.
+    pub fn poll_background(&mut self) -> bool {
+        let rx = match self.pending_rx {
+            Some(ref rx) => rx,
+            None => return false,
+        };
+
+        let result = match rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::TryRecvError::Empty) => return false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.pending_rx = None;
+                self.status_message = "Background task failed unexpectedly".into();
+                return true;
+            }
+        };
+
+        match result {
+            BackgroundResult::WaitingForDisc(ref msg) => {
+                let device_prefix = msg.split(" — ").next().unwrap_or("");
+                if !self
+                    .disc
+                    .scan_log
+                    .iter()
+                    .any(|l| l.starts_with(device_prefix))
+                {
+                    self.disc.scan_log.push(msg.clone());
+                }
+                self.status_message = "Waiting for disc...".into();
+                return false; // Keep pending_rx alive
+            }
+            BackgroundResult::DiscFound(ref device) => {
+                if self.screen == Screen::Done {
+                    let label = crate::disc::get_volume_label(device);
+                    self.disc_detected_label = Some(if label.is_empty() {
+                        device.clone()
+                    } else {
+                        label
+                    });
+                    return true;
+                }
+                self.disc.scan_log.clear();
+                self.status_message = format!("Scanning {}...", device);
+                return false; // Keep pending_rx alive
+            }
+            BackgroundResult::ScanProgress(elapsed, timeout) => {
+                self.status_message = format!(
+                    "AACS negotiation in progress ({}s / {}s)...",
+                    elapsed, timeout
+                );
+                return false; // Keep pending_rx alive
+            }
+            _ => {}
+        }
+
+        self.pending_rx = None;
+
+        match result {
+            BackgroundResult::WaitingForDisc(_)
+            | BackgroundResult::DiscFound(_)
+            | BackgroundResult::ScanProgress(_, _) => unreachable!(),
+            BackgroundResult::DiscScan(Ok(_)) | BackgroundResult::DiscScan(Err(_))
+                if self.screen == Screen::Done =>
+            {
+                // Ignore full scan results on Done screen
+            }
+            BackgroundResult::DiscScan(Ok((device, label, playlists))) => {
+                self.device = PathBuf::from(device);
+                self.disc.label_info = crate::disc::parse_volume_label(&label);
+                self.disc.label = label;
+                let min_dur = self.config.min_duration(self.min_duration_arg.unwrap_or(900));
+                self.disc.episodes_pl = crate::disc::filter_episodes(&playlists, min_dur)
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                self.disc.playlists = playlists;
+
+                self.tmdb.movie_mode = self.movie_mode_arg
+                    || (self.disc.episodes_pl.len() == 1 && self.season_arg.is_none());
+
+                if let Some(ref info) = self.disc.label_info {
+                    self.tmdb.search_query = info.show.clone();
+                    if !self.tmdb.movie_mode {
+                        self.wizard.season_num = Some(info.season);
+                    }
+                }
+                if let Some(s) = self.season_arg {
+                    self.wizard.season_num = Some(s);
+                }
+                self.wizard.start_episode = self.start_episode_arg;
+                self.wizard.show_filtered = self.config.show_filtered();
+                self.wizard.playlist_selected = self
+                    .disc
+                    .playlists
+                    .iter()
+                    .map(|pl| self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num))
+                    .collect();
+
+                // Extract chapter counts from MPLS files
+                let device_str = self.device.to_string_lossy().to_string();
+                match crate::disc::ensure_mounted(&device_str) {
+                    Ok((mount, did_mount)) => {
+                        let nums: Vec<&str> = self
+                            .disc
+                            .playlists
+                            .iter()
+                            .map(|pl| pl.num.as_str())
+                            .collect();
+                        self.disc.chapter_counts = crate::chapters::count_chapters_for_playlists(
+                            std::path::Path::new(&mount),
+                            &nums,
+                        );
+                        if did_mount {
+                            let _ = crate::disc::unmount_disc(&device_str);
+                        }
+                    }
+                    Err(_) => {
+                        self.disc.chapter_counts.clear();
+                    }
+                }
+
+                self.status_message.clear();
+
+                if self.disc.episodes_pl.is_empty() {
+                    self.status_message = "No episode-length playlists found.".into();
+                    self.screen = Screen::Done;
+                } else {
+                    self.screen = Screen::TmdbSearch;
+                    self.wizard.input_focus = InputFocus::TextInput;
+                    self.wizard.input_buffer = if self.tmdb_api_key.is_none() {
+                        String::new()
+                    } else {
+                        self.tmdb.search_query.clone()
+                    };
+                }
+            }
+            BackgroundResult::DiscScan(Err(e)) => {
+                self.status_message = format!("Scan failed: {}", e);
+                self.screen = Screen::Done;
+            }
+            BackgroundResult::ShowSearch(Ok(results)) => {
+                if results.is_empty() {
+                    self.status_message = "No results found.".into();
+                } else {
+                    self.tmdb.search_results = results;
+                    self.wizard.list_cursor = 0;
+                    self.wizard.input_focus = InputFocus::List;
+                    self.status_message.clear();
+                }
+            }
+            BackgroundResult::ShowSearch(Err(e)) => {
+                self.status_message = format!("TMDb search failed: {}", e);
+            }
+            BackgroundResult::MovieSearch(Ok(results)) => {
+                if results.is_empty() {
+                    self.status_message = "No results found.".into();
+                } else {
+                    self.tmdb.movie_results = results;
+                    self.wizard.list_cursor = 0;
+                    self.wizard.input_focus = InputFocus::List;
+                    self.status_message.clear();
+                }
+            }
+            BackgroundResult::MovieSearch(Err(e)) => {
+                self.status_message = format!("TMDb search failed: {}", e);
+            }
+            BackgroundResult::SeasonFetch(Ok(eps)) => {
+                self.tmdb.episodes = eps;
+                self.wizard.list_cursor = 0;
+                self.status_message.clear();
+            }
+            BackgroundResult::SeasonFetch(Err(e)) => {
+                self.status_message = format!("Failed to fetch season: {}", e);
+                self.tmdb.episodes.clear();
+            }
+            BackgroundResult::MediaProbe(infos) => {
+                let selected_indices: Vec<usize> = self
+                    .disc
+                    .playlists
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| {
+                        self.wizard
+                            .playlist_selected
+                            .get(*i)
+                            .copied()
+                            .unwrap_or(false)
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+
+                let filenames: Vec<String> = infos
+                    .iter()
+                    .zip(selected_indices.iter())
+                    .map(|(info, &idx)| self.playlist_filename(idx, info.as_ref()))
+                    .collect();
+
+                self.wizard.filenames = filenames;
+                self.wizard.media_infos = infos;
+
+                if self.wizard.filenames.is_empty() {
+                    self.status_message = "No playlists selected.".into();
+                } else {
+                    self.wizard.list_cursor = 0;
+                    self.status_message.clear();
+                    self.screen = Screen::Confirm;
+                }
+            }
+        }
+        true
+    }
+
+    /// Route keyboard input to the appropriate screen handler.
+    pub fn handle_key(&mut self, key: KeyEvent) {
+        let input_active = matches!(
+            self.wizard.input_focus,
+            InputFocus::TextInput | InputFocus::InlineEdit(_)
+        );
+
+        // Ctrl+C handled by coordinator — session ignores it
+
+        // Ctrl+E: eject this session's disc (not during ripping or text input)
+        if key.code == KeyCode::Char('e')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && !input_active
+            && self.screen != Screen::Ripping
+        {
+            let device_str = self.device.to_string_lossy().to_string();
+            match crate::disc::eject_disc(&device_str) {
+                Ok(()) => self.status_message = "Disc ejected.".into(),
+                Err(e) => {
+                    self.status_message = format!("Eject failed: {}", e);
+                }
+            }
+            return;
+        }
+
+        // Ctrl+R: rescan this session's disc
+        if key.code == KeyCode::Char('r')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && !self.rip.confirm_rescan
+        {
+            if self.screen == Screen::Ripping {
+                self.rip.confirm_rescan = true;
+            } else {
+                self.reset_for_rescan();
+                self.tmdb_api_key = crate::tmdb::get_api_key(&self.config);
+                self.start_disc_scan();
+            }
+            return;
+        }
+
+        // Handle rescan confirmation (during ripping)
+        if self.rip.confirm_rescan {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.reset_for_rescan();
+                    self.tmdb_api_key = crate::tmdb::get_api_key(&self.config);
+                    self.start_disc_scan();
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.rip.confirm_rescan = false;
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // q is a no-op in session (global quit handled by coordinator)
+        // except during ripping where dashboard handles it for abort confirmation
+
+        match self.screen {
+            Screen::TmdbSearch => {
+                crate::tui::wizard::handle_tmdb_search_input_session(self, key);
+            }
+            Screen::Season => {
+                crate::tui::wizard::handle_season_input_session(self, key);
+            }
+            Screen::PlaylistManager => {
+                crate::tui::wizard::handle_playlist_manager_input_session(self, key);
+            }
+            Screen::Confirm => {
+                crate::tui::wizard::handle_confirm_input_session(self, key);
+            }
+            Screen::Ripping => {
+                crate::tui::dashboard::handle_input_session(self, key);
+            }
+            Screen::Done => {
+                if self.disc_detected_label.is_some() {
+                    if key.code == KeyCode::Enter {
+                        self.disc_detected_label = None;
+                        self.reset_for_rescan();
+                        self.tmdb_api_key = crate::tmdb::get_api_key(&self.config);
+                        self.start_disc_scan();
+                    }
+                    // Other keys in Done with detected disc: no-op for session
+                    // (the coordinator decides whether to quit)
+                } else if key.code == KeyCode::Enter {
+                    self.reset_for_rescan();
+                    self.tmdb_api_key = crate::tmdb::get_api_key(&self.config);
+                    self.start_disc_scan();
+                }
+                // Other keys on Done: no-op for session
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_linked_context(&mut self, context: SharedContext) {
+        self.tmdb.show_name = context.show_name;
+        if let Some(show) = context.tmdb_show {
+            self.tmdb.search_results = vec![show];
+            self.tmdb.selected_show = Some(0);
+        }
+        self.tmdb.movie_mode = context.movie_mode;
+        self.tmdb.episodes = context.episodes;
+        self.wizard.season_num = Some(context.season_num);
+        self.wizard.start_episode = Some(context.next_episode);
+        self.screen = Screen::PlaylistManager;
+        self.wizard.input_focus = InputFocus::default();
+        self.status_message.clear();
+    }
+
+    /// Tick the rip engine. Returns true if state changed.
+    fn tick_rip(&mut self) -> bool {
+        crate::tui::dashboard::tick_session(self)
+    }
+
+    /// Compute the output filename for a playlist at the given index.
+    pub fn playlist_filename(
+        &self,
+        playlist_index: usize,
+        media_info: Option<&MediaInfo>,
+    ) -> String {
+        let pl = &self.disc.playlists[playlist_index];
+        let is_special = self.wizard.specials.contains(&pl.num);
+
+        let show_name = if !self.tmdb.show_name.is_empty() {
+            self.tmdb.show_name.clone()
+        } else {
+            self.disc
+                .label_info
+                .as_ref()
+                .map(|l| l.show.clone())
+                .unwrap_or_else(|| "Unknown".to_string())
+        };
+
+        let movie_title = if self.tmdb.movie_mode {
+            let movie = self
+                .tmdb
+                .selected_movie
+                .and_then(|i| self.tmdb.movie_results.get(i));
+            let title = movie.map(|m| m.title.as_str()).unwrap_or("movie");
+            let year = movie
+                .and_then(|m| m.release_date.as_deref())
+                .and_then(|d| d.get(..4))
+                .unwrap_or("");
+            Some((title.to_string(), year.to_string()))
+        } else {
+            None
+        };
+
+        let part = if self.tmdb.movie_mode {
+            let selected_count = self.wizard.playlist_selected.iter().filter(|&&s| s).count();
+            if selected_count > 1 {
+                self.disc
+                    .playlists
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| {
+                        self.wizard
+                            .playlist_selected
+                            .get(*i)
+                            .copied()
+                            .unwrap_or(false)
+                    })
+                    .position(|(i, _)| i == playlist_index)
+                    .map(|p| p as u32 + 1)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let episodes = self
+            .wizard
+            .episode_assignments
+            .get(&pl.num)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+
+        crate::workflow::build_output_filename(
+            pl,
+            episodes,
+            self.wizard.season_num.unwrap_or(0),
+            self.tmdb.movie_mode,
+            is_special,
+            movie_title.as_ref().map(|(t, y)| (t.as_str(), y.as_str())),
+            &show_name,
+            &self.disc.label,
+            self.disc.label_info.as_ref(),
+            &self.config,
+            self.format.as_deref(),
+            self.format_preset.as_deref(),
+            media_info,
+            part,
+        )
+    }
+
+    /// Get visible playlists (respecting show_filtered setting).
+    pub fn visible_playlists(&self) -> Vec<(usize, &Playlist)> {
+        self.disc
+            .playlists
+            .iter()
+            .enumerate()
+            .filter(|(_, pl)| {
+                self.wizard.show_filtered
+                    || self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
+            })
+            .collect()
     }
 }
 
