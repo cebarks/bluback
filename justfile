@@ -128,7 +128,7 @@ deps:
 bump version:
     #!/usr/bin/env bash
     set -euo pipefail
-    sed -i'' -e 's/^version = ".*"/version = "{{version}}"/' Cargo.toml
+    sed -i '' 's/^version = ".*"/version = "{{version}}"/' Cargo.toml
     cargo check
     git add Cargo.toml Cargo.lock
     git commit -m "chore: bump version to {{version}}"
