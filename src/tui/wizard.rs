@@ -375,10 +375,8 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
                         app.wizard.list_cursor = 0;
                     }
                 }
-                KeyCode::Tab => {
-                    if app.tmdb.api_key.is_some() {
-                        app.tmdb.movie_mode = !app.tmdb.movie_mode;
-                    }
+                KeyCode::Tab if app.tmdb.api_key.is_some() => {
+                    app.tmdb.movie_mode = !app.tmdb.movie_mode;
                 }
                 KeyCode::Esc => {
                     app.wizard.input_focus = InputFocus::List;
@@ -403,10 +401,8 @@ pub fn handle_tmdb_search_input(app: &mut App, key: KeyEvent) {
                         app.wizard.list_cursor -= 1;
                     }
                 }
-                KeyCode::Down => {
-                    if app.wizard.list_cursor + 1 < result_count {
-                        app.wizard.list_cursor += 1;
-                    }
+                KeyCode::Down if app.wizard.list_cursor + 1 < result_count => {
+                    app.wizard.list_cursor += 1;
                 }
                 KeyCode::Enter => {
                     if result_count == 0 {
@@ -574,10 +570,8 @@ pub fn render_season(f: &mut Frame, app: &App) {
 
 pub fn handle_season_input(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Up => {
-            if app.wizard.list_cursor > 0 {
-                app.wizard.list_cursor -= 1;
-            }
+        KeyCode::Up if app.wizard.list_cursor > 0 => {
+            app.wizard.list_cursor -= 1;
         }
         KeyCode::Down => {
             let max_scroll = app.tmdb.episodes.len();
@@ -585,10 +579,8 @@ pub fn handle_season_input(app: &mut App, key: KeyEvent) {
                 app.wizard.list_cursor += 1;
             }
         }
-        KeyCode::Char(c) => {
-            if c.is_ascii_digit() {
-                app.wizard.input_buffer.push(c);
-            }
+        KeyCode::Char(c) if c.is_ascii_digit() => {
+            app.wizard.input_buffer.push(c);
         }
         KeyCode::Backspace => {
             app.wizard.input_buffer.pop();
@@ -929,10 +921,8 @@ pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
     if let InputFocus::InlineEdit(edit_vis_row) = app.wizard.input_focus {
         let visible = visible_playlists(app);
         match key.code {
-            KeyCode::Char(c) => {
-                if c.is_ascii_digit() || c == ',' || c == '-' {
-                    app.wizard.input_buffer.push(c);
-                }
+            KeyCode::Char(c) if (c.is_ascii_digit() || c == ',' || c == '-') => {
+                app.wizard.input_buffer.push(c);
             }
             KeyCode::Backspace => {
                 app.wizard.input_buffer.pop();
@@ -986,15 +976,11 @@ pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
     let vis_len = visible.len();
 
     match key.code {
-        KeyCode::Up => {
-            if app.wizard.list_cursor > 0 {
-                app.wizard.list_cursor -= 1;
-            }
+        KeyCode::Up if app.wizard.list_cursor > 0 => {
+            app.wizard.list_cursor -= 1;
         }
-        KeyCode::Down => {
-            if app.wizard.list_cursor + 1 < vis_len {
-                app.wizard.list_cursor += 1;
-            }
+        KeyCode::Down if app.wizard.list_cursor + 1 < vis_len => {
+            app.wizard.list_cursor += 1;
         }
         KeyCode::Char(' ') => {
             if let Some(&(real_idx, _)) = visible.get(app.wizard.list_cursor) {
