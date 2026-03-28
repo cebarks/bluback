@@ -247,6 +247,8 @@ where
         }
 
         stream_map[in_idx] = out_idx;
+        // TODO: Per-stream metadata titles (e.g. "English - DTS-HD MA 5.1")
+        // to be implemented alongside per-stream track selection in v0.10
     }
 
     // Get total duration from input context (in AV_TIME_BASE units, i.e. microseconds)
@@ -261,6 +263,16 @@ where
 
     // Inject chapters before writing header
     let chapters_added = inject_chapters(&mut octx, &options.chapters, total_duration_secs)?;
+
+    // Inject MKV metadata tags before writing header
+    if let Some(ref meta) = options.metadata {
+        let mut dict = Dictionary::new();
+        for (k, v) in &meta.tags {
+            dict.set(k, v);
+        }
+        octx.set_metadata(dict);
+        log::debug!("Injected {} metadata tag(s)", meta.tags.len());
+    }
 
     // Write output header, reserving void space for the seek index (Cues)
     // so they can be written at the front of the file for faster seeking.

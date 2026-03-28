@@ -141,6 +141,83 @@ pub fn build_output_filename(
     filename
 }
 
+/// Build MKV metadata tags from available context.
+/// Returns `None` if metadata is disabled.
+pub fn build_metadata(
+    enabled: bool,
+    movie_mode: bool,
+    show_name: Option<&str>,
+    season: Option<u32>,
+    episodes: &[Episode],
+    movie_title: Option<&str>,
+    movie_year: Option<&str>,
+    date_released: Option<&str>,
+    custom_tags: &HashMap<String, String>,
+) -> Option<crate::types::MkvMetadata> {
+    if !enabled {
+        return None;
+    }
+
+    let mut tags = HashMap::new();
+
+    let encoder = format!("bluback v{}", env!("CARGO_PKG_VERSION"));
+    tags.insert("ENCODER".into(), encoder);
+
+    if movie_mode {
+        if let Some(title) = movie_title {
+            if !title.is_empty() {
+                tags.insert("TITLE".into(), title.to_string());
+            }
+        }
+    } else {
+        // TV mode: episode name(s) as TITLE, fall back to show name
+        let title = if episodes.len() > 1 {
+            let names: Vec<&str> = episodes
+                .iter()
+                .map(|e| e.name.as_str())
+                .filter(|n| !n.is_empty())
+                .collect();
+            if names.is_empty() { None } else { Some(names.join(" / ")) }
+        } else if let Some(ep) = episodes.first() {
+            if ep.name.is_empty() { None } else { Some(ep.name.clone()) }
+        } else {
+            None
+        };
+
+        let title = title.or_else(|| show_name.filter(|s| !s.is_empty()).map(String::from));
+        if let Some(t) = title {
+            tags.insert("TITLE".into(), t);
+        }
+
+        if let Some(name) = show_name {
+            if !name.is_empty() {
+                tags.insert("SHOW".into(), name.to_string());
+            }
+        }
+        if let Some(s) = season {
+            tags.insert("SEASON_NUMBER".into(), s.to_string());
+        }
+        if let Some(ep) = episodes.first() {
+            tags.insert("EPISODE_SORT".into(), ep.episode_number.to_string());
+        }
+    }
+
+    if let Some(date) = date_released {
+        if !date.is_empty() {
+            tags.insert("DATE_RELEASED".into(), date.to_string());
+        }
+    }
+
+    // Custom tags override auto-generated ones
+    for (k, v) in custom_tags {
+        if !v.is_empty() {
+            tags.insert(k.clone(), v.clone());
+        }
+    }
+
+    Some(crate::types::MkvMetadata { tags })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,5 +437,117 @@ mod tests {
             None,
         );
         assert_eq!(result, "Show/S01E01 - Pilot.mkv");
+    }
+
+    #[test]
+    fn test_build_metadata_tv_full() {
+        let meta = build_metadata(
+            true, false,
+            Some("Game of Thrones"), Some(3),
+            &[crate::types::Episode { episode_number: 9, name: "The Rains of Castamere".into(), runtime: None }],
+            None, None, Some("2013-06-02"),
+            &HashMap::new(),
+        );
+        let meta = meta.unwrap();
+        assert_eq!(meta.tags["TITLE"], "The Rains of Castamere");
+        assert_eq!(meta.tags["SHOW"], "Game of Thrones");
+        assert_eq!(meta.tags["SEASON_NUMBER"], "3");
+        assert_eq!(meta.tags["EPISODE_SORT"], "9");
+        assert_eq!(meta.tags["DATE_RELEASED"], "2013-06-02");
+        assert!(meta.tags["ENCODER"].starts_with("bluback v"));
+    }
+
+    #[test]
+    fn test_build_metadata_tv_multi_episode() {
+        let meta = build_metadata(
+            true, false, Some("Show"), Some(1),
+            &[
+                crate::types::Episode { episode_number: 3, name: "Ep Three".into(), runtime: None },
+                crate::types::Episode { episode_number: 4, name: "Ep Four".into(), runtime: None },
+            ],
+            None, None, None, &HashMap::new(),
+        );
+        let meta = meta.unwrap();
+        assert_eq!(meta.tags["TITLE"], "Ep Three / Ep Four");
+        assert_eq!(meta.tags["EPISODE_SORT"], "3");
+    }
+
+    #[test]
+    fn test_build_metadata_movie() {
+        let meta = build_metadata(
+            true, true, None, None, &[],
+            Some("Blade Runner 2049"), Some("2017"), Some("2017-10-06"),
+            &HashMap::new(),
+        );
+        let meta = meta.unwrap();
+        assert_eq!(meta.tags["TITLE"], "Blade Runner 2049");
+        assert_eq!(meta.tags["DATE_RELEASED"], "2017-10-06");
+        assert!(meta.tags["ENCODER"].starts_with("bluback v"));
+        assert!(!meta.tags.contains_key("SHOW"));
+        assert!(!meta.tags.contains_key("SEASON_NUMBER"));
+    }
+
+    #[test]
+    fn test_build_metadata_tmdb_skipped() {
+        let meta = build_metadata(
+            true, false, Some("Manual Title"), None, &[],
+            None, None, None, &HashMap::new(),
+        );
+        let meta = meta.unwrap();
+        assert_eq!(meta.tags["TITLE"], "Manual Title");
+        assert_eq!(meta.tags["SHOW"], "Manual Title");
+        assert!(meta.tags["ENCODER"].starts_with("bluback v"));
+        assert!(!meta.tags.contains_key("DATE_RELEASED"));
+    }
+
+    #[test]
+    fn test_build_metadata_custom_tags() {
+        let mut custom = HashMap::new();
+        custom.insert("STUDIO".into(), "HBO".into());
+        let meta = build_metadata(
+            true, false, Some("Show"), Some(1),
+            &[crate::types::Episode { episode_number: 1, name: "Pilot".into(), runtime: None }],
+            None, None, None, &custom,
+        );
+        let meta = meta.unwrap();
+        assert_eq!(meta.tags["STUDIO"], "HBO");
+        assert_eq!(meta.tags["TITLE"], "Pilot");
+    }
+
+    #[test]
+    fn test_build_metadata_custom_overrides_auto() {
+        let mut custom = HashMap::new();
+        custom.insert("TITLE".into(), "Custom Title".into());
+        let meta = build_metadata(
+            true, false, Some("Show"), Some(1),
+            &[crate::types::Episode { episode_number: 1, name: "Auto Title".into(), runtime: None }],
+            None, None, None, &custom,
+        );
+        let meta = meta.unwrap();
+        assert_eq!(meta.tags["TITLE"], "Custom Title");
+    }
+
+    #[test]
+    fn test_build_metadata_disabled() {
+        let meta = build_metadata(
+            false, false, Some("Show"), Some(1),
+            &[crate::types::Episode { episode_number: 1, name: "Pilot".into(), runtime: None }],
+            None, None, None, &HashMap::new(),
+        );
+        assert!(meta.is_none());
+    }
+
+    #[test]
+    fn test_build_metadata_no_empty_strings() {
+        let meta = build_metadata(
+            true, false, Some("Show"), Some(1),
+            &[crate::types::Episode { episode_number: 1, name: String::new(), runtime: None }],
+            None, None, None, &HashMap::new(),
+        );
+        let meta = meta.unwrap();
+        assert_eq!(meta.tags["TITLE"], "Show");
+        for (k, v) in &meta.tags {
+            assert!(!v.is_empty(), "Tag {} has empty value", k);
+        }
     }
 }
