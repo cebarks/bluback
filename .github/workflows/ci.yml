@@ -32,8 +32,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked -- -D warnings
 
-  build-and-test:
-    name: Build & Test (${{ matrix.name }})
+  test:
+    name: Test (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container || '' }}
     strategy:
