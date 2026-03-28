@@ -31,6 +31,8 @@ pub struct RemuxOptions {
     pub cancel: Arc<AtomicBool>,
     /// KB of void space to reserve after the MKV header for the seek index.
     pub reserve_index_space_kb: u32,
+    /// MKV metadata tags to embed in the output file.
+    pub metadata: Option<crate::types::MkvMetadata>,
 }
 
 /// Determine which input stream indices to include in the output.

@@ -74,6 +74,12 @@ pub struct ChapterMark {
     pub start_secs: f64,
 }
 
+/// Resolved MKV metadata tags ready to write to the output container.
+#[derive(Debug, Clone, Default)]
+pub struct MkvMetadata {
+    pub tags: HashMap<String, String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RipProgress {
     pub frame: u64,

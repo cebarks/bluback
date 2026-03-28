@@ -55,6 +55,7 @@ pub fn prepare_remux_options(
         stream_selection,
         cancel,
         reserve_index_space_kb,
+        metadata: None,
     }
 }
 
