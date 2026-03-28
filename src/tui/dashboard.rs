@@ -417,6 +417,47 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
     let cancel = session.rip.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
 
+    let metadata = {
+        let metadata_enabled = session.config.metadata_enabled() && !session.no_metadata;
+        let custom_tags = session.config.metadata_tags();
+        let episodes = &session.rip.jobs[idx].episode;
+        let date = if session.tmdb.movie_mode {
+            session.tmdb.movie_results
+                .get(session.tmdb.selected_movie.unwrap_or(0))
+                .and_then(|m| m.release_date.as_deref())
+        } else {
+            session.tmdb.search_results
+                .get(session.tmdb.selected_show.unwrap_or(0))
+                .and_then(|s| s.first_air_date.as_deref())
+        };
+        let movie_title = if session.tmdb.movie_mode {
+            session.tmdb.movie_results
+                .get(session.tmdb.selected_movie.unwrap_or(0))
+                .map(|m| m.title.as_str())
+        } else {
+            None
+        };
+        let movie_year = if session.tmdb.movie_mode {
+            session.tmdb.movie_results
+                .get(session.tmdb.selected_movie.unwrap_or(0))
+                .and_then(|m| m.release_date.as_deref())
+                .map(|d| if d.len() >= 4 { &d[..4] } else { d })
+        } else {
+            None
+        };
+        crate::workflow::build_metadata(
+            metadata_enabled,
+            session.tmdb.movie_mode,
+            Some(&session.tmdb.show_name).filter(|s| !s.is_empty()).map(|s| s.as_str()),
+            session.wizard.season_num,
+            episodes,
+            movie_title,
+            movie_year,
+            date,
+            &custom_tags,
+        )
+    };
+
     let options = crate::workflow::prepare_remux_options(
         &device,
         &job_playlist,
@@ -425,7 +466,7 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         stream_selection,
         cancel,
         session.config.reserve_index_space(),
-        None,
+        metadata,
     );
 
     let (tx, rx) = mpsc::channel();

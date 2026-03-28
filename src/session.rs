@@ -44,6 +44,7 @@ pub struct DriveSession {
     pub format: Option<String>,
     pub format_preset: Option<String>,
     pub overwrite: bool,
+    pub no_metadata: bool,
 }
 
 impl DriveSession {
@@ -86,6 +87,7 @@ impl DriveSession {
             format: None,
             format_preset: None,
             overwrite: false,
+            no_metadata: false,
         }
     }
 

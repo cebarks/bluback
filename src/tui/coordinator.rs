@@ -82,6 +82,7 @@ impl Coordinator {
         session.format = self.args.format.clone();
         session.format_preset = self.args.format_preset.clone();
         session.overwrite = self.args.overwrite;
+        session.no_metadata = self.args.no_metadata;
 
         let session_id = session.id;
         let device_name = device
