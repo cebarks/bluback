@@ -2,3 +2,4 @@
 *.mkv
 .superpowers
 .worktrees
+.DS_Store
