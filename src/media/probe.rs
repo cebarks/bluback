@@ -30,11 +30,12 @@ fn open_bluray(
         Some(num) => {
             let mut opts = ffmpeg_the_third::Dictionary::new();
             opts.set("playlist", num);
-            ffmpeg_the_third::format::input_with_dictionary(&url, opts)
-                .map_err(|e| match super::error::classify_aacs_error(&e) {
+            ffmpeg_the_third::format::input_with_dictionary(&url, opts).map_err(|e| {
+                match super::error::classify_aacs_error(&e) {
                     Some(me) => me,
                     None => MediaError::Ffmpeg(e),
-                })
+                }
+            })
         }
         None => ffmpeg_the_third::format::input(&url).map_err(|e| {
             match super::error::classify_aacs_error(&e) {
@@ -63,8 +64,7 @@ pub fn scan_playlists_with_progress(
 ) -> Result<Vec<Playlist>, MediaError> {
     ensure_init();
 
-    let playlist_re =
-        Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").expect("valid regex");
+    let playlist_re = Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").expect("valid regex");
 
     // Capture log lines and parse playlists. Platform-specific isolation:
     // - Linux: fork subprocess to prevent kernel D-state hangs from SCSI ioctls
@@ -95,9 +95,7 @@ fn scan_with_log_capture(
 ) -> Result<(Vec<String>, Option<String>), MediaError> {
     let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     {
-        let mut guard = LOG_CAPTURE_LINES
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut guard = LOG_CAPTURE_LINES.lock().unwrap_or_else(|p| p.into_inner());
         *guard = Some(std::sync::Arc::clone(&captured));
     }
     ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
@@ -152,9 +150,7 @@ fn scan_with_log_capture(
 
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         {
-            let mut guard = LOG_CAPTURE_LINES
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
+            let mut guard = LOG_CAPTURE_LINES.lock().unwrap_or_else(|p| p.into_inner());
             *guard = Some(std::sync::Arc::clone(&captured));
         }
         ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
@@ -180,7 +176,11 @@ fn scan_with_log_capture(
 
         let bytes = buf.as_bytes();
         unsafe {
-            libc::write(pipe_write, bytes.as_ptr() as *const libc::c_void, bytes.len());
+            libc::write(
+                pipe_write,
+                bytes.as_ptr() as *const libc::c_void,
+                bytes.len(),
+            );
             libc::close(pipe_write);
             libc::_exit(0);
         }
@@ -261,7 +261,11 @@ fn parse_child_output(data: &str) -> (&str, u8, Option<String>) {
         (&data[..pos], 1, error_msg)
     } else {
         // No status byte — child was likely killed
-        (data, 1, Some("Child process terminated unexpectedly".into()))
+        (
+            data,
+            1,
+            Some("Child process terminated unexpectedly".into()),
+        )
     }
 }
 
@@ -434,8 +438,7 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Result<MediaInfo, M
 
             // Frame rate from stream r_frame_rate
             let rate = stream.rate();
-            info.framerate =
-                format_framerate((rate.numerator(), rate.denominator()));
+            info.framerate = format_framerate((rate.numerator(), rate.denominator()));
 
             // Bit depth
             let bits_raw = params.bits_per_raw_sample();
@@ -457,10 +460,7 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Result<MediaInfo, M
 
             // HDR detection from color transfer characteristic
             let color_trc = params.color_transfer_characteristic();
-            let color_transfer_str = color_trc
-                .name()
-                .unwrap_or("")
-                .to_string();
+            let color_transfer_str = color_trc.name().unwrap_or("").to_string();
 
             // Side data for Dolby Vision / HDR10+ detection
             // FFmpeg 8.0 moved side data off streams, so we check via codec params
@@ -578,9 +578,9 @@ pub fn classify_hdr(color_transfer: &str, side_data_types: &[&str]) -> String {
         .iter()
         .any(|s| s.contains("DOVI") || s.contains("Dolby Vision"));
 
-    let has_hdr10plus = side_data_types.iter().any(|s| {
-        s.contains("HDR Dynamic Metadata SMPTE2094-40") || s.contains("SMPTE2094")
-    });
+    let has_hdr10plus = side_data_types
+        .iter()
+        .any(|s| s.contains("HDR Dynamic Metadata SMPTE2094-40") || s.contains("SMPTE2094"));
 
     if color_transfer == "smpte2084" {
         if has_dovi {
@@ -733,19 +733,13 @@ mod tests {
             classify_hdr("smpte2084", &["DOVI configuration record"]),
             "DV"
         );
-        assert_eq!(
-            classify_hdr("smpte2084", &["Dolby Vision metadata"]),
-            "DV"
-        );
+        assert_eq!(classify_hdr("smpte2084", &["Dolby Vision metadata"]), "DV");
     }
 
     #[test]
     fn test_classify_hdr_hdr10plus() {
         assert_eq!(
-            classify_hdr(
-                "smpte2084",
-                &["HDR Dynamic Metadata SMPTE2094-40"]
-            ),
+            classify_hdr("smpte2084", &["HDR Dynamic Metadata SMPTE2094-40"]),
             "HDR10+"
         );
     }

@@ -50,8 +50,10 @@ pub fn render_template(template: &str, vars: &HashMap<&str, String>) -> String {
         LazyLock::new(|| Regex::new(r"\{([a-z_]+)\}").expect("valid regex"));
     static EMPTY_BRACKET_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\[[^\[\]]*\]").expect("valid regex"));
-    static MULTI_SPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" {2,}").expect("valid regex"));
-    static SPACE_BEFORE_DOT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" +\.").expect("valid regex"));
+    static MULTI_SPACE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r" {2,}").expect("valid regex"));
+    static SPACE_BEFORE_DOT_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r" +\.").expect("valid regex"));
 
     // 1. Substitute placeholders; wrap non-empty values with zero-width space markers
     let result = PLACEHOLDER_RE.replace_all(template, |caps: &regex::Captures| {
@@ -907,16 +909,34 @@ mod tests {
     fn test_assign_double_episode() {
         // Three normal playlists + one double-length
         let playlists = vec![
-            Playlist { num: "00001".into(), duration: "0:43:00".into(), seconds: 2580 },
-            Playlist { num: "00002".into(), duration: "0:44:00".into(), seconds: 2640 },
-            Playlist { num: "00003".into(), duration: "0:45:00".into(), seconds: 2700 },
-            Playlist { num: "00004".into(), duration: "1:30:00".into(), seconds: 5400 },
+            Playlist {
+                num: "00001".into(),
+                duration: "0:43:00".into(),
+                seconds: 2580,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+            },
+            Playlist {
+                num: "00003".into(),
+                duration: "0:45:00".into(),
+                seconds: 2700,
+            },
+            Playlist {
+                num: "00004".into(),
+                duration: "1:30:00".into(),
+                seconds: 5400,
+            },
         ];
-        let episodes: Vec<Episode> = (1..=5).map(|n| Episode {
-            episode_number: n,
-            name: format!("Episode {}", n),
-            runtime: Some(44),
-        }).collect();
+        let episodes: Vec<Episode> = (1..=5)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
         let result = assign_episodes(&playlists, &episodes, 1);
         // First three get one episode each
         assert_eq!(result["00001"].len(), 1);
@@ -932,14 +952,24 @@ mod tests {
     #[test]
     fn test_assign_all_same_length_no_doubles() {
         let playlists = vec![
-            Playlist { num: "00001".into(), duration: "0:43:00".into(), seconds: 2580 },
-            Playlist { num: "00002".into(), duration: "0:44:00".into(), seconds: 2640 },
+            Playlist {
+                num: "00001".into(),
+                duration: "0:43:00".into(),
+                seconds: 2580,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+            },
         ];
-        let episodes: Vec<Episode> = (1..=2).map(|n| Episode {
-            episode_number: n,
-            name: format!("Episode {}", n),
-            runtime: Some(44),
-        }).collect();
+        let episodes: Vec<Episode> = (1..=2)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
         let result = assign_episodes(&playlists, &episodes, 1);
         assert_eq!(result["00001"].len(), 1);
         assert_eq!(result["00002"].len(), 1);
@@ -947,14 +977,18 @@ mod tests {
 
     #[test]
     fn test_assign_single_playlist_no_double_detect() {
-        let playlists = vec![
-            Playlist { num: "00001".into(), duration: "1:30:00".into(), seconds: 5400 },
-        ];
-        let episodes: Vec<Episode> = (1..=2).map(|n| Episode {
-            episode_number: n,
-            name: format!("Episode {}", n),
-            runtime: Some(44),
-        }).collect();
+        let playlists = vec![Playlist {
+            num: "00001".into(),
+            duration: "1:30:00".into(),
+            seconds: 5400,
+        }];
+        let episodes: Vec<Episode> = (1..=2)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
         let result = assign_episodes(&playlists, &episodes, 1);
         // Single playlist — can't detect doubles, gets 1 episode
         assert_eq!(result["00001"].len(), 1);
@@ -964,14 +998,24 @@ mod tests {
     #[test]
     fn test_assign_double_episode_exhausts_episodes() {
         let playlists = vec![
-            Playlist { num: "00001".into(), duration: "0:44:00".into(), seconds: 2640 },
-            Playlist { num: "00002".into(), duration: "1:30:00".into(), seconds: 5400 },
+            Playlist {
+                num: "00001".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "1:30:00".into(),
+                seconds: 5400,
+            },
         ];
-        let episodes: Vec<Episode> = (1..=2).map(|n| Episode {
-            episode_number: n,
-            name: format!("Episode {}", n),
-            runtime: Some(44),
-        }).collect();
+        let episodes: Vec<Episode> = (1..=2)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
         let result = assign_episodes(&playlists, &episodes, 1);
         assert_eq!(result["00001"][0].episode_number, 1);
         // Double wants 2 episodes but only 1 remains

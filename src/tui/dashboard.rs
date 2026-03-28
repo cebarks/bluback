@@ -5,16 +5,21 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
 use super::{App, Screen};
+use crate::rip;
 use crate::types::PlaylistStatus;
 use crate::util::format_size;
-use crate::rip;
 
 pub fn render(f: &mut Frame, app: &App) {
     let done_count = app
         .rip
         .jobs
         .iter()
-        .filter(|j| matches!(j.status, PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_)))
+        .filter(|j| {
+            matches!(
+                j.status,
+                PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_)
+            )
+        })
         .count();
     let total = app.rip.jobs.len();
 
@@ -42,8 +47,11 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     // Job table
-    let header = Row::new(["#", "Playlist", "Episode", "File", "Status", "Size", "ETA"])
-        .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD));
+    let header = Row::new(["#", "Playlist", "Episode", "File", "Status", "Size", "ETA"]).style(
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let rows: Vec<Row> = app
         .rip
@@ -54,11 +62,17 @@ pub fn render(f: &mut Frame, app: &App) {
             let ep_name = if job.episode.is_empty() {
                 String::new()
             } else if job.episode.len() == 1 {
-                format!("E{:02} {}", job.episode[0].episode_number, job.episode[0].name)
+                format!(
+                    "E{:02} {}",
+                    job.episode[0].episode_number, job.episode[0].name
+                )
             } else {
                 let first = &job.episode[0];
                 let last = &job.episode[job.episode.len() - 1];
-                format!("E{:02}-E{:02} {}", first.episode_number, last.episode_number, first.name)
+                format!(
+                    "E{:02}-E{:02} {}",
+                    first.episode_number, last.episode_number, first.name
+                )
             };
 
             let (status, size, eta) = match &job.status {
@@ -77,8 +91,14 @@ pub fn render(f: &mut Frame, app: &App) {
                         .unwrap_or_default();
                     (format!("{} {}%", bar, pct), size_str, eta_str)
                 }
-                PlaylistStatus::Done(sz) => ("Completed".to_string(), format_size(*sz), String::new()),
-                PlaylistStatus::Skipped(sz) => (format!("Skipped ({})", format_size(*sz)), String::new(), String::new()),
+                PlaylistStatus::Done(sz) => {
+                    ("Completed".to_string(), format_size(*sz), String::new())
+                }
+                PlaylistStatus::Skipped(sz) => (
+                    format!("Skipped ({})", format_size(*sz)),
+                    String::new(),
+                    String::new(),
+                ),
                 PlaylistStatus::Failed(msg) => {
                     (format!("Failed: {}", msg), String::new(), String::new())
                 }
@@ -98,15 +118,11 @@ pub fn render(f: &mut Frame, app: &App) {
                 eta,
             ]);
             match &job.status {
-                PlaylistStatus::Ripping(_) => {
-                    row.style(Style::default().fg(Color::Cyan))
-                }
+                PlaylistStatus::Ripping(_) => row.style(Style::default().fg(Color::Cyan)),
                 PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) => {
                     row.style(Style::default().fg(Color::DarkGray))
                 }
-                PlaylistStatus::Failed(_) => {
-                    row.style(Style::default().fg(Color::Red))
-                }
+                PlaylistStatus::Failed(_) => row.style(Style::default().fg(Color::Red)),
                 _ => row,
             }
         })
@@ -138,7 +154,8 @@ pub fn render(f: &mut Frame, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )
     } else {
-        Paragraph::new("[q] Abort  [Ctrl+R] Rescan  [Ctrl+S] Settings").style(Style::default().fg(Color::DarkGray))
+        Paragraph::new("[q] Abort  [Ctrl+R] Rescan  [Ctrl+S] Settings")
+            .style(Style::default().fg(Color::DarkGray))
     };
     f.render_widget(hint, chunks[2]);
 }
@@ -217,8 +234,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
     if error_in_body {
         lines.push(
-            Line::from(format!("  {}", app.status_message))
-                .style(Style::default().fg(Color::Red)),
+            Line::from(format!("  {}", app.status_message)).style(Style::default().fg(Color::Red)),
         );
     } else if app.rip.jobs.is_empty() && !app.wizard.filenames.is_empty() {
         // Dry run: show what would have been ripped
@@ -250,8 +266,10 @@ pub fn render_done(f: &mut Frame, app: &App) {
         .wrap(Wrap { trim: false });
     f.render_widget(body, chunks[1]);
 
-    let hint = Paragraph::new("[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [Ctrl+S] Settings  [any other key] Exit")
-        .style(Style::default().fg(Color::DarkGray));
+    let hint = Paragraph::new(
+        "[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [Ctrl+S] Settings  [any other key] Exit",
+    )
+    .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 
     if let Some(ref label) = app.disc_detected_label {
@@ -342,9 +360,11 @@ fn start_next_job(app: &mut App) {
     let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
     if let Some(parent) = outfile.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            app.rip.jobs[idx].status = PlaylistStatus::Failed(
-                format!("Failed to create output directory {}: {}", parent.display(), e),
-            );
+            app.rip.jobs[idx].status = PlaylistStatus::Failed(format!(
+                "Failed to create output directory {}: {}",
+                parent.display(),
+                e
+            ));
             return;
         }
     }
@@ -357,7 +377,8 @@ fn start_next_job(app: &mut App) {
         }
         Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
         Err(e) => {
-            app.rip.jobs[idx].status = PlaylistStatus::Failed(format!("Overwrite check failed: {}", e));
+            app.rip.jobs[idx].status =
+                PlaylistStatus::Failed(format!("Overwrite check failed: {}", e));
             return;
         }
     }
@@ -384,7 +405,9 @@ fn start_next_job(app: &mut App) {
         });
         match result {
             Ok(_chapters_added) => {} // success — sender drops, receiver sees Disconnected
-            Err(e) => { let _ = tx.send(Err(e)); }
+            Err(e) => {
+                let _ = tx.send(Err(e));
+            }
         }
     });
 
@@ -469,14 +492,12 @@ fn active_rip_stats(app: &App) -> String {
     if let Some(job) = app.rip.jobs.get(app.rip.current_rip) {
         if let PlaylistStatus::Ripping(ref prog) = job.status {
             let time_str = rip::format_eta(prog.out_time_secs);
-            let bitrate_str = if prog.bitrate.is_empty()
-                || prog.bitrate == "N/A"
-                || prog.bitrate == "0"
-            {
-                "-".to_string()
-            } else {
-                prog.bitrate.clone()
-            };
+            let bitrate_str =
+                if prog.bitrate.is_empty() || prog.bitrate == "N/A" || prog.bitrate == "0" {
+                    "-".to_string()
+                } else {
+                    prog.bitrate.clone()
+                };
             let speed_str = if prog.speed > 0.0 {
                 format!("{:.2}x", prog.speed)
             } else {

@@ -129,9 +129,7 @@ pub struct Args {
 
 impl Args {
     pub fn device(&self) -> &std::path::Path {
-        self.device
-            .as_deref()
-            .expect("device resolved before use")
+        self.device.as_deref().expect("device resolved before use")
     }
 
     pub fn cli_eject(&self) -> Option<bool> {
@@ -182,8 +180,9 @@ fn classify_exit_code(err: &anyhow::Error) -> i32 {
     }
     if let Some(me) = err.downcast_ref::<crate::media::MediaError>() {
         return match me {
-            crate::media::MediaError::DeviceNotFound(_)
-            | crate::media::MediaError::NoDisc => EXIT_NO_DEVICE,
+            crate::media::MediaError::DeviceNotFound(_) | crate::media::MediaError::NoDisc => {
+                EXIT_NO_DEVICE
+            }
             crate::media::MediaError::Cancelled => EXIT_CANCELLED,
             _ => EXIT_RUNTIME_ERROR,
         };
@@ -226,7 +225,8 @@ fn run_inner() -> anyhow::Result<i32> {
         return Ok(check::run_check(&config, &config_path));
     }
 
-    let aacs_backend = args.aacs_backend
+    let aacs_backend = args
+        .aacs_backend
         .as_deref()
         .map(|s| match s {
             "libaacs" => config::AacsBackend::Libaacs,

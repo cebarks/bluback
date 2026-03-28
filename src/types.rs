@@ -237,7 +237,10 @@ impl SettingsState {
         Self::from_config_with_drives(config, &[])
     }
 
-    pub fn from_config_with_drives(config: &crate::config::Config, detected_drives: &[String]) -> Self {
+    pub fn from_config_with_drives(
+        config: &crate::config::Config,
+        detected_drives: &[String],
+    ) -> Self {
         use crate::config::*;
 
         // Build device options: auto-detect, detected drives, Custom...
@@ -250,7 +253,10 @@ impl SettingsState {
         }
         device_options.push("Custom...".to_string());
 
-        let configured_device = config.device.clone().unwrap_or_else(|| DEFAULT_DEVICE.into());
+        let configured_device = config
+            .device
+            .clone()
+            .unwrap_or_else(|| DEFAULT_DEVICE.into());
         let (device_selected, device_custom) = if configured_device == DEFAULT_DEVICE {
             (0, None)
         } else if let Some(pos) = device_options.iter().position(|o| o == &configured_device) {
@@ -261,11 +267,16 @@ impl SettingsState {
         };
 
         let items = vec![
-            SettingItem::Separator { label: Some("General".into()) },
+            SettingItem::Separator {
+                label: Some("General".into()),
+            },
             SettingItem::Text {
                 label: "Output Directory".into(),
                 key: "output_dir".into(),
-                value: config.output_dir.clone().unwrap_or_else(|| DEFAULT_OUTPUT_DIR.into()),
+                value: config
+                    .output_dir
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_OUTPUT_DIR.into()),
             },
             SettingItem::Choice {
                 label: "Device".into(),
@@ -313,13 +324,22 @@ impl SettingsState {
             SettingItem::Number {
                 label: "Index Reserve Space (KB)".into(),
                 key: "reserve_index_space".into(),
-                value: config.reserve_index_space.unwrap_or(DEFAULT_RESERVE_INDEX_SPACE),
+                value: config
+                    .reserve_index_space
+                    .unwrap_or(DEFAULT_RESERVE_INDEX_SPACE),
             },
-            SettingItem::Separator { label: Some("Naming".into()) },
+            SettingItem::Separator {
+                label: Some("Naming".into()),
+            },
             SettingItem::Choice {
                 label: "Preset".into(),
                 key: "preset".into(),
-                options: vec!["(none)".into(), "default".into(), "plex".into(), "jellyfin".into()],
+                options: vec![
+                    "(none)".into(),
+                    "default".into(),
+                    "plex".into(),
+                    "jellyfin".into(),
+                ],
                 selected: match config.preset.as_deref() {
                     Some("default") => 1,
                     Some("plex") => 2,
@@ -331,24 +351,35 @@ impl SettingsState {
             SettingItem::Text {
                 label: "TV Format".into(),
                 key: "tv_format".into(),
-                value: config.tv_format.clone().unwrap_or_else(|| DEFAULT_TV_FORMAT.into()),
+                value: config
+                    .tv_format
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_TV_FORMAT.into()),
             },
             SettingItem::Text {
                 label: "Movie Format".into(),
                 key: "movie_format".into(),
-                value: config.movie_format.clone().unwrap_or_else(|| DEFAULT_MOVIE_FORMAT.into()),
+                value: config
+                    .movie_format
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_MOVIE_FORMAT.into()),
             },
             SettingItem::Text {
                 label: "Special Format".into(),
                 key: "special_format".into(),
-                value: config.special_format.clone().unwrap_or_else(|| DEFAULT_SPECIAL_FORMAT.into()),
+                value: config
+                    .special_format
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_SPECIAL_FORMAT.into()),
             },
             SettingItem::Toggle {
                 label: "Show Filtered".into(),
                 key: "show_filtered".into(),
                 value: config.show_filtered.unwrap_or(false),
             },
-            SettingItem::Separator { label: Some("TMDb".into()) },
+            SettingItem::Separator {
+                label: Some("TMDb".into()),
+            },
             SettingItem::Text {
                 label: "API Key".into(),
                 key: "tmdb_api_key".into(),
@@ -360,7 +391,10 @@ impl SettingsState {
             },
         ];
 
-        let cursor = items.iter().position(|i| !matches!(i, SettingItem::Separator { .. })).unwrap_or(0);
+        let cursor = items
+            .iter()
+            .position(|i| !matches!(i, SettingItem::Separator { .. }))
+            .unwrap_or(0);
 
         SettingsState {
             cursor,
@@ -432,8 +466,14 @@ impl SettingsState {
                 }
                 SettingItem::Toggle { key: k, value, .. } if k == key => {
                     match val.to_lowercase().as_str() {
-                        "true" | "1" | "yes" => { *value = true; return true; }
-                        "false" | "0" | "no" => { *value = false; return true; }
+                        "true" | "1" | "yes" => {
+                            *value = true;
+                            return true;
+                        }
+                        "false" | "0" | "no" => {
+                            *value = false;
+                            return true;
+                        }
                         _ => return false,
                     }
                 }
@@ -446,7 +486,13 @@ impl SettingsState {
                     }
                     return false;
                 }
-                SettingItem::Choice { key: k, options, selected, custom_value, .. } if k == key => {
+                SettingItem::Choice {
+                    key: k,
+                    options,
+                    selected,
+                    custom_value,
+                    ..
+                } if k == key => {
                     if key == "device" {
                         // Check if the value matches a known option
                         if let Some(pos) = options.iter().position(|o| o == val) {
@@ -509,11 +555,21 @@ impl SettingsState {
         for item in &self.items {
             match item {
                 SettingItem::Text { key, value, .. } => match key.as_str() {
-                    "output_dir" if value != DEFAULT_OUTPUT_DIR => config.output_dir = Some(value.clone()),
-                    "tv_format" if value != DEFAULT_TV_FORMAT => config.tv_format = Some(value.clone()),
-                    "movie_format" if value != DEFAULT_MOVIE_FORMAT => config.movie_format = Some(value.clone()),
-                    "special_format" if value != DEFAULT_SPECIAL_FORMAT => config.special_format = Some(value.clone()),
-                    "tmdb_api_key" if !value.is_empty() => config.tmdb_api_key = Some(value.clone()),
+                    "output_dir" if value != DEFAULT_OUTPUT_DIR => {
+                        config.output_dir = Some(value.clone())
+                    }
+                    "tv_format" if value != DEFAULT_TV_FORMAT => {
+                        config.tv_format = Some(value.clone())
+                    }
+                    "movie_format" if value != DEFAULT_MOVIE_FORMAT => {
+                        config.movie_format = Some(value.clone())
+                    }
+                    "special_format" if value != DEFAULT_SPECIAL_FORMAT => {
+                        config.special_format = Some(value.clone())
+                    }
+                    "tmdb_api_key" if !value.is_empty() => {
+                        config.tmdb_api_key = Some(value.clone())
+                    }
                     _ => {}
                 },
                 SettingItem::Toggle { key, value, .. } => match key.as_str() {
@@ -525,11 +581,21 @@ impl SettingsState {
                     _ => {}
                 },
                 SettingItem::Number { key, value, .. } => match key.as_str() {
-                    "min_duration" if *value != DEFAULT_MIN_DURATION => config.min_duration = Some(*value),
-                    "reserve_index_space" if *value != DEFAULT_RESERVE_INDEX_SPACE => config.reserve_index_space = Some(*value),
+                    "min_duration" if *value != DEFAULT_MIN_DURATION => {
+                        config.min_duration = Some(*value)
+                    }
+                    "reserve_index_space" if *value != DEFAULT_RESERVE_INDEX_SPACE => {
+                        config.reserve_index_space = Some(*value)
+                    }
                     _ => {}
                 },
-                SettingItem::Choice { key, options, selected, custom_value, .. } => match key.as_str() {
+                SettingItem::Choice {
+                    key,
+                    options,
+                    selected,
+                    custom_value,
+                    ..
+                } => match key.as_str() {
                     "preset" => {
                         let val = &options[*selected];
                         if val != "(none)" {
@@ -664,7 +730,11 @@ mod tests {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
         // 4 separators + 15 settings + 1 action = 20 items
-        let non_separator_count = state.items.iter().filter(|i| !matches!(i, SettingItem::Separator { .. })).count();
+        let non_separator_count = state
+            .items
+            .iter()
+            .filter(|i| !matches!(i, SettingItem::Separator { .. }))
+            .count();
         assert_eq!(non_separator_count, 16); // 15 settings + 1 action
     }
 
@@ -676,10 +746,22 @@ mod tests {
             ..Default::default()
         };
         let state = SettingsState::from_config(&config);
-        let eject = state.items.iter().find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "eject"));
-        assert!(matches!(eject, Some(SettingItem::Toggle { value: true, .. })));
-        let min_dur = state.items.iter().find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"));
-        assert!(matches!(min_dur, Some(SettingItem::Number { value: 600, .. })));
+        let eject = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "eject"));
+        assert!(matches!(
+            eject,
+            Some(SettingItem::Toggle { value: true, .. })
+        ));
+        let min_dur = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"));
+        assert!(matches!(
+            min_dur,
+            Some(SettingItem::Number { value: 600, .. })
+        ));
     }
 
     #[test]
@@ -687,8 +769,15 @@ mod tests {
         let config = crate::config::Config::default();
         let drives = vec!["/dev/sr0".to_string(), "/dev/sr1".to_string()];
         let state = SettingsState::from_config_with_drives(&config, &drives);
-        let device = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
-        if let SettingItem::Choice { options, selected, .. } = device {
+        let device = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device"))
+            .unwrap();
+        if let SettingItem::Choice {
+            options, selected, ..
+        } = device
+        {
             assert_eq!(options[0], "auto-detect");
             assert!(options.contains(&"/dev/sr0".to_string()));
             assert!(options.contains(&"/dev/sr1".to_string()));
@@ -705,8 +794,15 @@ mod tests {
         };
         let drives = vec!["/dev/sr0".to_string(), "/dev/sr1".to_string()];
         let state = SettingsState::from_config_with_drives(&config, &drives);
-        let device = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
-        if let SettingItem::Choice { options, selected, .. } = device {
+        let device = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device"))
+            .unwrap();
+        if let SettingItem::Choice {
+            options, selected, ..
+        } = device
+        {
             assert_eq!(options[*selected], "/dev/sr1");
         }
     }
@@ -719,8 +815,18 @@ mod tests {
         };
         let drives = vec!["/dev/sr0".to_string()];
         let state = SettingsState::from_config_with_drives(&config, &drives);
-        let device = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
-        if let SettingItem::Choice { options, selected, custom_value, .. } = device {
+        let device = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device"))
+            .unwrap();
+        if let SettingItem::Choice {
+            options,
+            selected,
+            custom_value,
+            ..
+        } = device
+        {
             assert_eq!(options[*selected], "Custom...");
             assert_eq!(custom_value.as_deref(), Some("/dev/custom0"));
         }
@@ -732,7 +838,11 @@ mod tests {
         let drives = vec!["/dev/sr0".to_string()];
         let mut state = SettingsState::from_config_with_drives(&config, &drives);
         // Select /dev/sr0
-        let device_idx = state.items.iter().position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device")).unwrap();
+        let device_idx = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "device"))
+            .unwrap();
         if let SettingItem::Choice { selected, .. } = &mut state.items[device_idx] {
             *selected = 1; // /dev/sr0
         }
@@ -758,16 +868,27 @@ mod tests {
         let mut state = SettingsState::from_config(&config);
         // Simulate BLUBACK_EJECT=true
         assert!(state.apply_env_value("eject", "true"));
-        let eject = state.items.iter().find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "eject")).unwrap();
+        let eject = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "eject"))
+            .unwrap();
         assert!(matches!(eject, SettingItem::Toggle { value: true, .. }));
     }
 
     #[test]
     fn test_env_override_toggle_false() {
-        let config = crate::config::Config { max_speed: Some(true), ..Default::default() };
+        let config = crate::config::Config {
+            max_speed: Some(true),
+            ..Default::default()
+        };
         let mut state = SettingsState::from_config(&config);
         assert!(state.apply_env_value("max_speed", "false"));
-        let ms = state.items.iter().find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "max_speed")).unwrap();
+        let ms = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "max_speed"))
+            .unwrap();
         assert!(matches!(ms, SettingItem::Toggle { value: false, .. }));
     }
 
@@ -776,7 +897,11 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::from_config(&config);
         assert!(state.apply_env_value("min_duration", "600"));
-        let md = state.items.iter().find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration")).unwrap();
+        let md = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"))
+            .unwrap();
         assert!(matches!(md, SettingItem::Number { value: 600, .. }));
     }
 
@@ -793,7 +918,11 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::from_config(&config);
         assert!(state.apply_env_value("output_dir", "/tmp/rips"));
-        let od = state.items.iter().find(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir")).unwrap();
+        let od = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Text { key, .. } if key == "output_dir"))
+            .unwrap();
         assert!(matches!(od, SettingItem::Text { value, .. } if value == "/tmp/rips"));
     }
 
@@ -802,7 +931,11 @@ mod tests {
         let config = crate::config::Config::default();
         let mut state = SettingsState::from_config(&config);
         assert!(state.apply_env_value("preset", "plex"));
-        let preset = state.items.iter().find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset")).unwrap();
+        let preset = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset"))
+            .unwrap();
         assert!(matches!(preset, SettingItem::Choice { selected: 2, .. })); // plex is index 2
     }
 
@@ -825,7 +958,13 @@ mod tests {
         let mut state = SettingsState::from_config(&crate::config::Config::default());
         // Move to the last item before a separator, then down should skip it
         // Find "Index Reserve Space" (last in General group), next is Separator(Naming)
-        let reserve_idx = state.items.iter().position(|i| matches!(i, SettingItem::Number { key, .. } if key == "reserve_index_space")).unwrap();
+        let reserve_idx = state
+            .items
+            .iter()
+            .position(
+                |i| matches!(i, SettingItem::Number { key, .. } if key == "reserve_index_space"),
+            )
+            .unwrap();
         state.cursor = reserve_idx;
         state.move_cursor_down();
         // Should have skipped the Naming separator
@@ -837,7 +976,11 @@ mod tests {
     fn test_settings_cursor_move_up_skips_separator() {
         let mut state = SettingsState::from_config(&crate::config::Config::default());
         // Find "Preset" (first in Naming group), going up should skip the Separator
-        let preset_idx = state.items.iter().position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset")).unwrap();
+        let preset_idx = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SettingItem::Choice { key, .. } if key == "preset"))
+            .unwrap();
         state.cursor = preset_idx;
         state.move_cursor_up();
         assert!(!state.is_separator(state.cursor));
@@ -848,7 +991,11 @@ mod tests {
     fn test_settings_cursor_stays_at_bounds() {
         let mut state = SettingsState::from_config(&crate::config::Config::default());
         // Move to first non-separator
-        let first = state.items.iter().position(|i| !matches!(i, SettingItem::Separator { .. })).unwrap();
+        let first = state
+            .items
+            .iter()
+            .position(|i| !matches!(i, SettingItem::Separator { .. }))
+            .unwrap();
         state.cursor = first;
         state.move_cursor_up();
         // Should not go past the first non-separator

@@ -7,7 +7,8 @@ use crate::types::{LabelInfo, MediaInfo, Playlist};
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     [
-        Regex::new(r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)").expect("valid regex"),
+        Regex::new(r"(?i)^(?P<show>.+?)_?SEASON(?P<season>\d+)_?DISC(?P<disc>\d+)")
+            .expect("valid regex"),
         Regex::new(r"(?i)^(?P<show>.+?)_S(?P<season>\d+)_?D(?P<disc>\d+)").expect("valid regex"),
     ]
 });
@@ -130,9 +131,7 @@ pub fn mount_disc(device: &str) -> Result<String> {
     }
 
     // Try to mount it manually
-    let output = Command::new("diskutil")
-        .args(["mount", device])
-        .output()?;
+    let output = Command::new("diskutil").args(["mount", device]).output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -226,8 +225,12 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
     for re in LABEL_PATTERNS.iter() {
         if let Some(caps) = re.captures(label) {
             let show = caps["show"].trim_matches('_').replace('_', " ");
-            let season: u32 = caps["season"].parse().expect("regex guarantees numeric capture");
-            let disc: u32 = caps["disc"].parse().expect("regex guarantees numeric capture");
+            let season: u32 = caps["season"]
+                .parse()
+                .expect("regex guarantees numeric capture");
+            let disc: u32 = caps["disc"]
+                .parse()
+                .expect("regex guarantees numeric capture");
             return Some(LabelInfo { show, season, disc });
         }
     }
@@ -294,12 +297,13 @@ pub fn eject_disc(device: &str) -> anyhow::Result<()> {
 
 #[cfg(target_os = "macos")]
 pub fn eject_disc(device: &str) -> anyhow::Result<()> {
-    let status = Command::new("diskutil")
-        .args(["eject", device])
-        .status()?;
+    let status = Command::new("diskutil").args(["eject", device]).status()?;
 
     if !status.success() {
-        bail!("diskutil eject exited with code {}", status.code().unwrap_or(-1));
+        bail!(
+            "diskutil eject exited with code {}",
+            status.code().unwrap_or(-1)
+        );
     }
     Ok(())
 }
@@ -379,5 +383,4 @@ mod tests {
         assert_eq!(result[0].num, "00002");
         assert_eq!(result[1].num, "00003");
     }
-
 }

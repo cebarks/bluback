@@ -3,7 +3,8 @@ pub mod probe;
 pub mod remux;
 
 pub use error::MediaError;
-#[allow(unused_imports)] // probe_streams is part of the public API for future direct consumption
+#[allow(unused_imports)]
+// probe_streams is part of the public API for future direct consumption
 pub use probe::{probe_media_info, probe_streams, scan_playlists_with_progress};
 pub use remux::{RemuxOptions, StreamSelection};
 

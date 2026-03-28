@@ -109,16 +109,36 @@ impl Config {
         emit_str(&mut out, "device", &self.device, DEFAULT_DEVICE);
         emit_bool(&mut out, "eject", self.eject, false);
         emit_bool(&mut out, "max_speed", self.max_speed, true);
-        emit_u32(&mut out, "min_duration", self.min_duration, DEFAULT_MIN_DURATION);
+        emit_u32(
+            &mut out,
+            "min_duration",
+            self.min_duration,
+            DEFAULT_MIN_DURATION,
+        );
         out.push('\n');
         emit_str(&mut out, "preset", &self.preset, "");
         emit_str(&mut out, "tv_format", &self.tv_format, DEFAULT_TV_FORMAT);
-        emit_str(&mut out, "movie_format", &self.movie_format, DEFAULT_MOVIE_FORMAT);
-        emit_str(&mut out, "special_format", &self.special_format, DEFAULT_SPECIAL_FORMAT);
+        emit_str(
+            &mut out,
+            "movie_format",
+            &self.movie_format,
+            DEFAULT_MOVIE_FORMAT,
+        );
+        emit_str(
+            &mut out,
+            "special_format",
+            &self.special_format,
+            DEFAULT_SPECIAL_FORMAT,
+        );
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
         emit_bool(&mut out, "overwrite", self.overwrite, false);
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
-        emit_u32(&mut out, "reserve_index_space", self.reserve_index_space, DEFAULT_RESERVE_INDEX_SPACE);
+        emit_u32(
+            &mut out,
+            "reserve_index_space",
+            self.reserve_index_space,
+            DEFAULT_RESERVE_INDEX_SPACE,
+        );
         emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
         emit_str(&mut out, "aacs_backend", &self.aacs_backend, "auto");
         out.push('\n');
@@ -220,7 +240,8 @@ impl Config {
     }
 
     pub fn reserve_index_space(&self) -> u32 {
-        self.reserve_index_space.unwrap_or(DEFAULT_RESERVE_INDEX_SPACE)
+        self.reserve_index_space
+            .unwrap_or(DEFAULT_RESERVE_INDEX_SPACE)
     }
 
     pub fn aacs_backend(&self) -> AacsBackend {
@@ -251,10 +272,22 @@ fn preset_format(name: &str, is_movie: bool) -> String {
 }
 
 const KNOWN_KEYS: &[&str] = &[
-    "tmdb_api_key", "preset", "tv_format", "movie_format", "special_format",
-    "eject", "max_speed", "min_duration", "show_filtered", "output_dir",
-    "device", "stream_selection", "verbose_libbluray", "reserve_index_space",
-    "overwrite", "aacs_backend",
+    "tmdb_api_key",
+    "preset",
+    "tv_format",
+    "movie_format",
+    "special_format",
+    "eject",
+    "max_speed",
+    "min_duration",
+    "show_filtered",
+    "output_dir",
+    "device",
+    "stream_selection",
+    "verbose_libbluray",
+    "reserve_index_space",
+    "overwrite",
+    "aacs_backend",
 ];
 
 pub fn validate_raw_toml(raw: &str) -> Vec<String> {
@@ -279,7 +312,8 @@ pub fn validate_config(config: &Config) -> Vec<String> {
     if let Some(r) = config.reserve_index_space {
         if r > 10000 {
             warnings.push(format!(
-                "reserve_index_space = {} KB seems too large (max recommended: 10000 KB)", r
+                "reserve_index_space = {} KB seems too large (max recommended: 10000 KB)",
+                r
             ));
         }
     }
@@ -493,8 +527,12 @@ mod tests {
 
     #[test]
     fn test_parse_special_format() {
-        let config: Config = toml::from_str(r#"special_format = "{show} S{season}SP{episode}.mkv""#).unwrap();
-        assert_eq!(config.special_format.unwrap(), "{show} S{season}SP{episode}.mkv");
+        let config: Config =
+            toml::from_str(r#"special_format = "{show} S{season}SP{episode}.mkv""#).unwrap();
+        assert_eq!(
+            config.special_format.unwrap(),
+            "{show} S{season}SP{episode}.mkv"
+        );
     }
 
     #[test]
@@ -524,10 +562,7 @@ mod tests {
     #[test]
     fn test_resolve_special_format_default() {
         let config = Config::default();
-        assert_eq!(
-            config.resolve_special_format(None),
-            DEFAULT_SPECIAL_FORMAT
-        );
+        assert_eq!(config.resolve_special_format(None), DEFAULT_SPECIAL_FORMAT);
     }
 
     #[test]
@@ -639,7 +674,10 @@ mod tests {
                 assert!(!line.starts_with('#'), "eject should not be commented");
             }
             if line.contains("min_duration = 600") {
-                assert!(!line.starts_with('#'), "min_duration should not be commented");
+                assert!(
+                    !line.starts_with('#'),
+                    "min_duration should not be commented"
+                );
             }
         }
         assert!(output.contains("# max_speed = true"));
@@ -680,7 +718,9 @@ mod tests {
     #[test]
     fn test_resolve_config_path_default() {
         let path = resolve_config_path(None);
-        assert!(path.to_string_lossy().ends_with(".config/bluback/config.toml"));
+        assert!(path
+            .to_string_lossy()
+            .ends_with(".config/bluback/config.toml"));
     }
 
     #[test]
@@ -709,9 +749,15 @@ mod tests {
 
     #[test]
     fn test_aacs_backend_accessor() {
-        let config = Config { aacs_backend: Some("libmmbd".into()), ..Default::default() };
+        let config = Config {
+            aacs_backend: Some("libmmbd".into()),
+            ..Default::default()
+        };
         assert!(matches!(config.aacs_backend(), AacsBackend::Libmmbd));
-        let config = Config { aacs_backend: Some("libaacs".into()), ..Default::default() };
+        let config = Config {
+            aacs_backend: Some("libaacs".into()),
+            ..Default::default()
+        };
         assert!(matches!(config.aacs_backend(), AacsBackend::Libaacs));
         let config = Config::default();
         assert!(matches!(config.aacs_backend(), AacsBackend::Auto));
@@ -719,7 +765,10 @@ mod tests {
 
     #[test]
     fn test_aacs_backend_serialization_roundtrip() {
-        let config = Config { aacs_backend: Some("libmmbd".into()), ..Default::default() };
+        let config = Config {
+            aacs_backend: Some("libmmbd".into()),
+            ..Default::default()
+        };
         let toml_str = config.to_toml_string();
         assert!(toml_str.contains(r#"aacs_backend = "libmmbd""#));
         let reparsed: Config = toml::from_str(&toml_str).unwrap();
@@ -762,21 +811,30 @@ also_unknown = 42"#;
 
     #[test]
     fn test_validate_min_duration_zero_warns() {
-        let config = Config { min_duration: Some(0), ..Default::default() };
+        let config = Config {
+            min_duration: Some(0),
+            ..Default::default()
+        };
         let warnings = validate_config(&config);
         assert!(warnings.iter().any(|w| w.contains("min_duration")));
     }
 
     #[test]
     fn test_validate_reserve_index_space_too_large_warns() {
-        let config = Config { reserve_index_space: Some(50000), ..Default::default() };
+        let config = Config {
+            reserve_index_space: Some(50000),
+            ..Default::default()
+        };
         let warnings = validate_config(&config);
         assert!(warnings.iter().any(|w| w.contains("reserve_index_space")));
     }
 
     #[test]
     fn test_validate_unmatched_braces_warns() {
-        let config = Config { tv_format: Some("{show/{title}.mkv".into()), ..Default::default() };
+        let config = Config {
+            tv_format: Some("{show/{title}.mkv".into()),
+            ..Default::default()
+        };
         let warnings = validate_config(&config);
         assert!(warnings.iter().any(|w| w.contains("tv_format")));
     }
@@ -795,7 +853,10 @@ also_unknown = 42"#;
 
     #[test]
     fn test_overwrite_config_true() {
-        let config = Config { overwrite: Some(true), ..Default::default() };
+        let config = Config {
+            overwrite: Some(true),
+            ..Default::default()
+        };
         assert!(config.overwrite());
     }
 }

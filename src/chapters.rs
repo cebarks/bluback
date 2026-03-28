@@ -63,10 +63,7 @@ mod tests {
 
     #[test]
     fn test_extract_chapters_missing_path() {
-        let result = extract_chapters(
-            std::path::Path::new("/nonexistent/path"),
-            "00001",
-        );
+        let result = extract_chapters(std::path::Path::new("/nonexistent/path"), "00001");
         assert!(result.is_none());
     }
 

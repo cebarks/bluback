@@ -52,8 +52,7 @@ pub fn select_streams(
 
             // We don't know which indices are video/subtitle from StreamInfo alone,
             // so include every index that isn't accounted for by audio_streams.
-            let audio_indices: Vec<usize> =
-                info.audio_streams.iter().map(|s| s.index).collect();
+            let audio_indices: Vec<usize> = info.audio_streams.iter().map(|s| s.index).collect();
 
             // Add all non-audio streams (video, subtitle, data, etc.)
             for i in 0..total_streams {
@@ -63,10 +62,7 @@ pub fn select_streams(
             }
 
             // Add surround audio streams
-            let surround_idx = info
-                .audio_streams
-                .iter()
-                .position(|s| s.is_surround());
+            let surround_idx = info.audio_streams.iter().position(|s| s.is_surround());
             let stereo_idx = info.audio_streams.iter().position(|s| s.channels == 2);
 
             if let Some(idx) = surround_idx {
@@ -111,8 +107,7 @@ fn compute_chapter_ends(chapters: &[ChapterMark], total_duration_secs: f64) -> V
         .enumerate()
         .map(|(i, _)| {
             if i + 1 < chapters.len() {
-                let next_start_ms =
-                    (chapters[i + 1].start_secs * 1000.0).round() as i64;
+                let next_start_ms = (chapters[i + 1].start_secs * 1000.0).round() as i64;
                 // End 1ms before the next chapter starts
                 (next_start_ms - 1).max(0)
             } else {
@@ -159,7 +154,11 @@ fn inject_chapters(
             Err(e) => {
                 eprintln!(
                     "Warning: could not add chapter {} (start={}ms end={}ms duration={:.1}s): {}",
-                    i + 1, start_ms, end_ms, total_duration_secs, e
+                    i + 1,
+                    start_ms,
+                    end_ms,
+                    total_duration_secs,
+                    e
                 );
             }
         }
@@ -346,7 +345,10 @@ where
                 0.0
             };
             let bitrate = if elapsed > 0.0 {
-                format!("{:.1}kbits/s", (total_bytes as f64 * 8.0) / elapsed / 1000.0)
+                format!(
+                    "{:.1}kbits/s",
+                    (total_bytes as f64 * 8.0) / elapsed / 1000.0
+                )
             } else {
                 "0kbits/s".into()
             };
@@ -380,7 +382,10 @@ where
         0.0
     };
     let bitrate = if elapsed > 0.0 {
-        format!("{:.1}kbits/s", (total_bytes as f64 * 8.0) / elapsed / 1000.0)
+        format!(
+            "{:.1}kbits/s",
+            (total_bytes as f64 * 8.0) / elapsed / 1000.0
+        )
     } else {
         "0kbits/s".into()
     };
@@ -418,10 +423,7 @@ fn build_stream_info(ictx: &format::context::Input) -> StreamInfo {
 
                 let codec_id = params.id();
                 let codec_name = codec_id.name();
-                let lang = stream
-                    .metadata()
-                    .get("language")
-                    .map(String::from);
+                let lang = stream.metadata().get("language").map(String::from);
 
                 audio_streams.push(AudioStream {
                     index: stream.index(),

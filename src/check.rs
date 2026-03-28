@@ -264,10 +264,7 @@ pub fn run_check(config: &crate::config::Config, config_path: &std::path::Path) 
         results.push(CheckResult {
             label: "Output directory".into(),
             status: CheckStatus::Warn,
-            detail: format!(
-                "{} — does not exist (will be created on rip)",
-                output_dir
-            ),
+            detail: format!("{} — does not exist (will be created on rip)", output_dir),
         });
     } else {
         results.push(CheckResult {

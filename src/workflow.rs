@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use crate::config::Config;
 use crate::media::{RemuxOptions, StreamSelection};
@@ -78,9 +78,7 @@ pub fn build_output_filename(
     extra_vars.insert("show", show_name.to_string());
     extra_vars.insert(
         "disc",
-        label_info
-            .map(|l| l.disc.to_string())
-            .unwrap_or_default(),
+        label_info.map(|l| l.disc.to_string()).unwrap_or_default(),
     );
     extra_vars.insert("label", label.to_string());
     extra_vars.insert("playlist", playlist.num.clone());
@@ -142,10 +140,10 @@ pub fn build_output_filename(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
     use crate::media::StreamSelection;
+    use std::io::Write;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
 
     #[test]
     fn test_check_overwrite_file_not_exists() {
@@ -223,39 +221,78 @@ mod tests {
 
     #[test]
     fn test_build_output_filename_tv_default() {
-        let pl = crate::types::Playlist { num: "00001".into(), duration: "0:45:00".into(), seconds: 2700 };
-        let eps = vec![crate::types::Episode { episode_number: 3, name: "Test Episode".into(), runtime: None }];
+        let pl = crate::types::Playlist {
+            num: "00001".into(),
+            duration: "0:45:00".into(),
+            seconds: 2700,
+        };
+        let eps = vec![crate::types::Episode {
+            episode_number: 3,
+            name: "Test Episode".into(),
+            runtime: None,
+        }];
         let config = Config::default();
         let result = build_output_filename(
-            &pl, &eps, 2, false, false, None,
-            "Show Name", "LABEL", None,
-            &config, None, None, None, None,
+            &pl,
+            &eps,
+            2,
+            false,
+            false,
+            None,
+            "Show Name",
+            "LABEL",
+            None,
+            &config,
+            None,
+            None,
+            None,
+            None,
         );
         assert_eq!(result, "S02E03_Test_Episode.mkv");
     }
 
     #[test]
     fn test_build_output_filename_movie() {
-        let pl = crate::types::Playlist { num: "00001".into(), duration: "2:00:00".into(), seconds: 7200 };
+        let pl = crate::types::Playlist {
+            num: "00001".into(),
+            duration: "2:00:00".into(),
+            seconds: 7200,
+        };
         let config = Config::default();
         let result = build_output_filename(
-            &pl, &[], 0, true, false,
+            &pl,
+            &[],
+            0,
+            true,
+            false,
             Some(("My Movie", "2024")),
-            "", "LABEL", None,
-            &config, None, None, None, None,
+            "",
+            "LABEL",
+            None,
+            &config,
+            None,
+            None,
+            None,
+            None,
         );
         assert_eq!(result, "My_Movie_(2024).mkv");
     }
 
     #[test]
     fn test_build_output_filename_special() {
-        let pl = crate::types::Playlist { num: "00006".into(), duration: "0:30:00".into(), seconds: 1800 };
-        let eps = vec![crate::types::Episode { episode_number: 1, name: String::new(), runtime: None }];
+        let pl = crate::types::Playlist {
+            num: "00006".into(),
+            duration: "0:30:00".into(),
+            seconds: 1800,
+        };
+        let eps = vec![crate::types::Episode {
+            episode_number: 1,
+            name: String::new(),
+            runtime: None,
+        }];
         let config = Config::default();
         let result = build_output_filename(
-            &pl, &eps, 2, false, true, None,
-            "Show", "LABEL", None,
-            &config, None, None, None, None,
+            &pl, &eps, 2, false, true, None, "Show", "LABEL", None, &config, None, None, None, None,
         );
         // DEFAULT_SPECIAL_FORMAT = "{show} S{season}SP{episode} {title}.mkv"
         assert!(result.contains("S02SP01"));
@@ -264,28 +301,59 @@ mod tests {
 
     #[test]
     fn test_build_output_filename_movie_multipart() {
-        let pl = crate::types::Playlist { num: "00001".into(), duration: "1:00:00".into(), seconds: 3600 };
+        let pl = crate::types::Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+        };
         let config = Config::default();
         let result = build_output_filename(
-            &pl, &[], 0, true, false,
+            &pl,
+            &[],
+            0,
+            true,
+            false,
             Some(("Movie", "2024")),
-            "", "", None,
-            &config, None, None, None, Some(2),
+            "",
+            "",
+            None,
+            &config,
+            None,
+            None,
+            None,
+            Some(2),
         );
         assert_eq!(result, "Movie_(2024)_pt2.mkv");
     }
 
     #[test]
     fn test_build_output_filename_custom_format() {
-        let pl = crate::types::Playlist { num: "00001".into(), duration: "0:45:00".into(), seconds: 2700 };
-        let eps = vec![crate::types::Episode { episode_number: 1, name: "Pilot".into(), runtime: None }];
+        let pl = crate::types::Playlist {
+            num: "00001".into(),
+            duration: "0:45:00".into(),
+            seconds: 2700,
+        };
+        let eps = vec![crate::types::Episode {
+            episode_number: 1,
+            name: "Pilot".into(),
+            runtime: None,
+        }];
         let config = Config::default();
         let result = build_output_filename(
-            &pl, &eps, 1, false, false, None,
-            "Show", "LABEL", None,
+            &pl,
+            &eps,
+            1,
+            false,
+            false,
+            None,
+            "Show",
+            "LABEL",
+            None,
             &config,
             Some("{show}/S{season}E{episode} - {title}.mkv"),
-            None, None, None,
+            None,
+            None,
+            None,
         );
         assert_eq!(result, "Show/S01E01 - Pilot.mkv");
     }

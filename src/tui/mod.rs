@@ -1,6 +1,6 @@
 pub mod dashboard;
-pub mod wizard;
 pub mod settings;
+pub mod wizard;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -20,9 +20,9 @@ use crate::Args;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
     Scanning,
-    TmdbSearch,       // merged: search input + inline results
-    Season,           // simplified: just season number (was SeasonEpisode)
-    PlaylistManager,  // merged: playlist select + episode mapping
+    TmdbSearch,      // merged: search input + inline results
+    Season,          // simplified: just season number (was SeasonEpisode)
+    PlaylistManager, // merged: playlist select + episode mapping
     Confirm,
     Ripping,
     Done,
@@ -81,7 +81,8 @@ pub struct RipState {
     pub jobs: Vec<RipJob>,
     pub current_rip: usize,
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    pub progress_rx: Option<mpsc::Receiver<Result<crate::types::RipProgress, crate::media::MediaError>>>,
+    pub progress_rx:
+        Option<mpsc::Receiver<Result<crate::types::RipProgress, crate::media::MediaError>>>,
     pub confirm_abort: bool,
     pub confirm_rescan: bool,
 }
@@ -197,7 +198,9 @@ impl App {
 
     pub fn reset_for_rescan(&mut self) {
         // Cancel any active rip
-        self.rip.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.rip
+            .cancel
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.rip.progress_rx = None;
 
         if self.disc.did_mount {
@@ -243,12 +246,18 @@ fn terminal_title(app: &App) -> String {
             }
         }
         Screen::Ripping => {
-            let done = app.rip.jobs.iter().filter(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_))).count();
+            let done = app
+                .rip
+                .jobs
+                .iter()
+                .filter(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_)))
+                .count();
             let total = app.rip.jobs.len();
             if let Some(job) = app.rip.jobs.get(app.rip.current_rip) {
                 if let crate::types::PlaylistStatus::Ripping(ref prog) = job.status {
                     let pct = if job.playlist.seconds > 0 {
-                        (prog.out_time_secs as f64 / job.playlist.seconds as f64 * 100.0).min(100.0) as u32
+                        (prog.out_time_secs as f64 / job.playlist.seconds as f64 * 100.0).min(100.0)
+                            as u32
                     } else {
                         0
                     };
@@ -261,7 +270,11 @@ fn terminal_title(app: &App) -> String {
     }
 }
 
-pub fn run(args: &Args, config: &crate::config::Config, config_path: std::path::PathBuf) -> Result<()> {
+pub fn run(
+    args: &Args,
+    config: &crate::config::Config,
+    config_path: std::path::PathBuf,
+) -> Result<()> {
     enable_raw_mode()?;
     // Save terminal title, enter alternate screen
     io::stdout().execute(crossterm::terminal::SetTitle("bluback"))?;
@@ -335,7 +348,10 @@ pub fn run_settings(config: &crate::config::Config, config_path: std::path::Path
                                     let msg = if warnings.is_empty() {
                                         "Saved!".to_string()
                                     } else {
-                                        format!("Saved! (env vars override: {})", warnings.join(", "))
+                                        format!(
+                                            "Saved! (env vars override: {})",
+                                            warnings.join(", ")
+                                        )
                                     };
                                     state.save_message = Some(msg);
                                     state.save_message_at = Some(std::time::Instant::now());
@@ -414,7 +430,9 @@ fn run_app(
         let _ = io::stdout().execute(SetTitle(terminal_title(&app)));
 
         if app.quit {
-            app.rip.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            app.rip
+                .cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             break;
         }
 
@@ -464,9 +482,7 @@ fn run_app(
                 }
 
                 // Global quit (not during ripping -- dashboard handles its own q)
-                if key.code == KeyCode::Char('q')
-                    && !input_active
-                    && app.screen != Screen::Ripping
+                if key.code == KeyCode::Char('q') && !input_active && app.screen != Screen::Ripping
                 {
                     app.quit = true;
                     continue;
@@ -549,7 +565,11 @@ fn run_app(
                                 start_disc_scan(&mut app);
                             } else {
                                 let all_succeeded = app.rip.jobs.iter().all(|j| {
-                                    matches!(j.status, crate::types::PlaylistStatus::Done(_) | crate::types::PlaylistStatus::Skipped(_))
+                                    matches!(
+                                        j.status,
+                                        crate::types::PlaylistStatus::Done(_)
+                                            | crate::types::PlaylistStatus::Skipped(_)
+                                    )
                                 });
                                 if app.eject && !app.rip.jobs.is_empty() && all_succeeded {
                                     let device = app.args.device().to_string_lossy().to_string();
@@ -562,11 +582,13 @@ fn run_app(
                             app.tmdb.api_key = crate::tmdb::get_api_key(config);
                             start_disc_scan(&mut app);
                         } else {
-                            let all_succeeded = app
-                                .rip
-                                .jobs
-                                .iter()
-                                .all(|j| matches!(j.status, crate::types::PlaylistStatus::Done(_) | crate::types::PlaylistStatus::Skipped(_)));
+                            let all_succeeded = app.rip.jobs.iter().all(|j| {
+                                matches!(
+                                    j.status,
+                                    crate::types::PlaylistStatus::Done(_)
+                                        | crate::types::PlaylistStatus::Skipped(_)
+                                )
+                            });
                             if app.eject && !app.rip.jobs.is_empty() && all_succeeded {
                                 let device = app.args.device().to_string_lossy().to_string();
                                 let _ = crate::disc::eject_disc(&device);
@@ -599,7 +621,9 @@ fn run_app(
 
         // Propagate process-level cancel signal to rip cancel flag
         if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
-            app.rip.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            app.rip
+                .cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
 
         // If ripping, check for progress updates
@@ -631,7 +655,12 @@ fn poll_background(app: &mut App) {
         BackgroundResult::WaitingForDisc(ref msg) => {
             // Append log entry for each new device tried
             let device_prefix = msg.split(" — ").next().unwrap_or("");
-            if !app.disc.scan_log.iter().any(|l| l.starts_with(device_prefix)) {
+            if !app
+                .disc
+                .scan_log
+                .iter()
+                .any(|l| l.starts_with(device_prefix))
+            {
                 app.disc.scan_log.push(msg.clone());
             }
             app.status_message = "Waiting for disc...".into();
@@ -698,16 +727,23 @@ fn poll_background(app: &mut App) {
             }
             app.wizard.start_episode = app.args.start_episode;
             app.wizard.show_filtered = app.config.show_filtered();
-            app.wizard.playlist_selected = app.disc.playlists.iter().map(|pl| {
-                app.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
-            }).collect();
+            app.wizard.playlist_selected = app
+                .disc
+                .playlists
+                .iter()
+                .map(|pl| app.disc.episodes_pl.iter().any(|ep| ep.num == pl.num))
+                .collect();
 
             // Extract chapter counts from MPLS files
             let device_str = app.args.device().to_string_lossy().to_string();
             match crate::disc::ensure_mounted(&device_str) {
                 Ok((mount, did_mount)) => {
-                    let nums: Vec<&str> =
-                        app.disc.playlists.iter().map(|pl| pl.num.as_str()).collect();
+                    let nums: Vec<&str> = app
+                        .disc
+                        .playlists
+                        .iter()
+                        .map(|pl| pl.num.as_str())
+                        .collect();
                     app.disc.chapter_counts = crate::chapters::count_chapters_for_playlists(
                         std::path::Path::new(&mount),
                         &nums,
@@ -781,7 +817,13 @@ fn poll_background(app: &mut App) {
                 .playlists
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
+                .filter(|(i, _)| {
+                    app.wizard
+                        .playlist_selected
+                        .get(*i)
+                        .copied()
+                        .unwrap_or(false)
+                })
                 .map(|(i, _)| i)
                 .collect();
 

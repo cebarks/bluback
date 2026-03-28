@@ -33,7 +33,10 @@ pub fn playlist_filename(
     };
 
     let movie_title = if app.tmdb.movie_mode {
-        let movie = app.tmdb.selected_movie.and_then(|i| app.tmdb.movie_results.get(i));
+        let movie = app
+            .tmdb
+            .selected_movie
+            .and_then(|i| app.tmdb.movie_results.get(i));
         let title = movie.map(|m| m.title.as_str()).unwrap_or("movie");
         let year = movie
             .and_then(|m| m.release_date.as_deref())
@@ -47,8 +50,17 @@ pub fn playlist_filename(
     let part = if app.tmdb.movie_mode {
         let selected_count = app.wizard.playlist_selected.iter().filter(|&&s| s).count();
         if selected_count > 1 {
-            app.disc.playlists.iter().enumerate()
-                .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
+            app.disc
+                .playlists
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| {
+                    app.wizard
+                        .playlist_selected
+                        .get(*i)
+                        .copied()
+                        .unwrap_or(false)
+                })
                 .position(|(i, _)| i == playlist_index)
                 .map(|p| p as u32 + 1)
         } else {
@@ -127,11 +139,8 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
         };
         lines.push(Line::from(status));
     }
-    let body = Paragraph::new(lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Scanning"),
-    );
+    let body =
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Scanning"));
     f.render_widget(body, chunks[1]);
 
     let hints = Paragraph::new("q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")
@@ -142,7 +151,11 @@ pub fn render_scanning(f: &mut Frame, app: &App) {
 pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     let chunks = standard_layout(f.area());
 
-    let mode_label = if app.tmdb.movie_mode { "Movie" } else { "TV Show" };
+    let mode_label = if app.tmdb.movie_mode {
+        "Movie"
+    } else {
+        "TV Show"
+    };
     let step_title = format!("Step 1: TMDb Search ({})", mode_label);
     let disc_text = disc_label_text(app);
     let header_text = if disc_text.is_empty() {
@@ -150,8 +163,8 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
     } else {
         format!("{}  |  {} playlists", disc_text, app.disc.episodes_pl.len())
     };
-    let title = Paragraph::new(header_text)
-        .block(Block::default().borders(Borders::ALL).title(step_title));
+    let title =
+        Paragraph::new(header_text).block(Block::default().borders(Borders::ALL).title(step_title));
     f.render_widget(title, chunks[0]);
 
     if app.tmdb.api_key.is_none() {
@@ -172,9 +185,10 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
             .block(Block::default().borders(Borders::ALL).title("TMDb API Key"));
         f.render_widget(input, content_chunks[1]);
 
-        let hints =
-            Paragraph::new("Enter: Save key | Esc: Skip TMDb | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")
-                .style(Style::default().fg(Color::DarkGray));
+        let hints = Paragraph::new(
+            "Enter: Save key | Esc: Skip TMDb | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings",
+        )
+        .style(Style::default().fg(Color::DarkGray));
         f.render_widget(hints, chunks[2]);
     } else {
         // Search input + inline results
@@ -186,10 +200,7 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
 
         let content_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Min(1),
-            ])
+            .constraints([Constraint::Length(3), Constraint::Min(1)])
             .split(chunks[1]);
 
         // Search input field
@@ -198,7 +209,11 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
         } else {
             Style::default()
         };
-        let cursor = if app.wizard.input_focus == InputFocus::TextInput { "|" } else { "" };
+        let cursor = if app.wizard.input_focus == InputFocus::TextInput {
+            "|"
+        } else {
+            ""
+        };
         let mut lines = vec![Line::from(format!("{}{}", app.wizard.input_buffer, cursor))];
         if !app.status_message.is_empty() {
             let status = if app.pending_rx.is_some() {
@@ -206,12 +221,14 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
             } else {
                 app.status_message.clone()
             };
-            lines.push(
-                Line::from(status).style(Style::default().fg(Color::Yellow)),
-            );
+            lines.push(Line::from(status).style(Style::default().fg(Color::Yellow)));
         }
-        let input = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Search query").border_style(input_style));
+        let input = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Search query")
+                .border_style(input_style),
+        );
         f.render_widget(input, content_chunks[0]);
 
         // Results list (when results exist)
@@ -228,7 +245,13 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
                             .unwrap_or("")
                             .get(..4)
                             .unwrap_or("");
-                        let marker = if app.wizard.input_focus == InputFocus::List && i == app.wizard.list_cursor { "> " } else { "  " };
+                        let marker = if app.wizard.input_focus == InputFocus::List
+                            && i == app.wizard.list_cursor
+                        {
+                            "> "
+                        } else {
+                            "  "
+                        };
                         ListItem::new(format!("{}{} ({})", marker, movie.title, year))
                     })
                     .collect()
@@ -244,7 +267,13 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
                             .unwrap_or("")
                             .get(..4)
                             .unwrap_or("");
-                        let marker = if app.wizard.input_focus == InputFocus::List && i == app.wizard.list_cursor { "> " } else { "  " };
+                        let marker = if app.wizard.input_focus == InputFocus::List
+                            && i == app.wizard.list_cursor
+                        {
+                            "> "
+                        } else {
+                            "  "
+                        };
                         ListItem::new(format!("{}{} ({})", marker, show.name, year))
                     })
                     .collect()
@@ -256,12 +285,21 @@ pub fn render_tmdb_search(f: &mut Frame, app: &App) {
                 Style::default()
             };
             let list = List::new(items)
-                .block(Block::default().borders(Borders::ALL).title("Results").border_style(list_style))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Results")
+                        .border_style(list_style),
+                )
                 .highlight_style(Style::default().fg(Color::Yellow));
             f.render_widget(list, content_chunks[1]);
         }
 
-        let toggle = if app.tmdb.movie_mode { "TV Show" } else { "Movie" };
+        let toggle = if app.tmdb.movie_mode {
+            "TV Show"
+        } else {
+            "Movie"
+        };
         let hints_text = if app.wizard.input_focus == InputFocus::List {
             "Up/Down: Navigate | Enter: Select | Esc: Back to search | Ctrl+R: Rescan | Ctrl+S: Settings".to_string()
         } else {
@@ -451,10 +489,7 @@ pub fn render_season(f: &mut Frame, app: &App) {
 
     let content_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(1),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(1)])
         .split(chunks[1]);
 
     // Season number input
@@ -462,7 +497,10 @@ pub fn render_season(f: &mut Frame, app: &App) {
     let season_display = if input_active {
         format!("{}|", app.wizard.input_buffer)
     } else {
-        app.wizard.season_num.map(|s| s.to_string()).unwrap_or_default()
+        app.wizard
+            .season_num
+            .map(|s| s.to_string())
+            .unwrap_or_default()
     };
     let season_style = Style::default().fg(Color::Yellow);
     let season_input = Paragraph::new(season_display).block(
@@ -527,8 +565,10 @@ pub fn render_season(f: &mut Frame, app: &App) {
         f.render_widget(empty, content_chunks[1]);
     }
 
-    let hints = Paragraph::new("Enter: Confirm/Fetch | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")
-        .style(Style::default().fg(Color::DarkGray));
+    let hints = Paragraph::new(
+        "Enter: Confirm/Fetch | Esc: Back | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings",
+    )
+    .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
 }
 
@@ -572,7 +612,8 @@ pub fn handle_season_input(app: &mut App, key: KeyEvent) {
                         .and_then(|i| app.tmdb.search_results.get(i))
                         .map(|s| s.id);
 
-                    if let (Some(show_id), Some(ref api_key)) = (show_id, app.tmdb.api_key.clone()) {
+                    if let (Some(show_id), Some(ref api_key)) = (show_id, app.tmdb.api_key.clone())
+                    {
                         let api_key = api_key.clone();
                         let (tx, rx) = mpsc::channel();
                         std::thread::spawn(move || {
@@ -684,8 +725,11 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
         }
     };
 
-    let title = Paragraph::new(header_text)
-        .block(Block::default().borders(Borders::ALL).title("Playlist Manager"));
+    let title = Paragraph::new(header_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Playlist Manager"),
+    );
     f.render_widget(title, chunks[0]);
 
     let has_ch = !app.disc.chapter_counts.is_empty();
@@ -705,7 +749,13 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
         .iter()
         .enumerate()
         .map(|(vis_idx, &(real_idx, pl))| {
-            let checked = if app.wizard.playlist_selected.get(real_idx).copied().unwrap_or(false) {
+            let checked = if app
+                .wizard
+                .playlist_selected
+                .get(real_idx)
+                .copied()
+                .unwrap_or(false)
+            {
                 "[x]"
             } else {
                 "[ ]"
@@ -719,7 +769,8 @@ pub fn render_playlist_manager(f: &mut Frame, app: &App) {
 
             let is_episode_pl = app.disc.episodes_pl.iter().any(|ep| ep.num == pl.num);
             let is_special = app.wizard.specials.contains(&pl.num);
-            let is_editing = matches!(app.wizard.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
+            let is_editing =
+                matches!(app.wizard.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
 
             // Episode column
             let ep_str = if is_editing {
@@ -895,18 +946,21 @@ pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
                         }
                         Some(ep_nums) => {
                             let ep_by_num: std::collections::HashMap<u32, &crate::types::Episode> =
-                                app.tmdb.episodes.iter().map(|e| (e.episode_number, e)).collect();
+                                app.tmdb
+                                    .episodes
+                                    .iter()
+                                    .map(|e| (e.episode_number, e))
+                                    .collect();
                             let eps: Vec<crate::types::Episode> = ep_nums
                                 .iter()
                                 .map(|&num| {
-                                    ep_by_num
-                                        .get(&num)
-                                        .map(|e| (*e).clone())
-                                        .unwrap_or(crate::types::Episode {
+                                    ep_by_num.get(&num).map(|e| (*e).clone()).unwrap_or(
+                                        crate::types::Episode {
                                             episode_number: num,
                                             name: String::new(),
                                             runtime: None,
-                                        })
+                                        },
+                                    )
                                 })
                                 .collect();
                             app.wizard.episode_assignments.insert(pl_num, eps);
@@ -1033,7 +1087,13 @@ pub fn handle_playlist_manager_input(app: &mut App, key: KeyEvent) {
                 .playlists
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
+                .filter(|(i, _)| {
+                    app.wizard
+                        .playlist_selected
+                        .get(*i)
+                        .copied()
+                        .unwrap_or(false)
+                })
                 .map(|(_, pl)| pl.num.clone())
                 .collect();
 
@@ -1100,15 +1160,13 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         )
     };
 
-    let title = Paragraph::new(header_text).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(if app.tmdb.movie_mode {
-                "Step 4: Confirm"
-            } else {
-                "Step 6: Confirm"
-            }),
-    );
+    let title = Paragraph::new(header_text).block(Block::default().borders(Borders::ALL).title(
+        if app.tmdb.movie_mode {
+            "Step 4: Confirm"
+        } else {
+            "Step 6: Confirm"
+        },
+    ));
     f.render_widget(title, chunks[0]);
 
     let header = Row::new(vec!["Playlist", "Duration", "~Size", "Output File"])
@@ -1119,7 +1177,13 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         .playlists
         .iter()
         .enumerate()
-        .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
+        .filter(|(i, _)| {
+            app.wizard
+                .playlist_selected
+                .get(*i)
+                .copied()
+                .unwrap_or(false)
+        })
         .map(|(_, pl)| pl)
         .collect();
 
@@ -1205,12 +1269,26 @@ pub fn handle_confirm_input(app: &mut App, key: KeyEvent) {
                 .playlists
                 .iter()
                 .enumerate()
-                .filter(|(i, _)| app.wizard.playlist_selected.get(*i).copied().unwrap_or(false))
+                .filter(|(i, _)| {
+                    app.wizard
+                        .playlist_selected
+                        .get(*i)
+                        .copied()
+                        .unwrap_or(false)
+                })
                 .map(|(_, pl)| pl.clone())
                 .collect();
 
-            for (pl, filename) in selected_playlists.into_iter().zip(app.wizard.filenames.iter()) {
-                let episode = app.wizard.episode_assignments.get(&pl.num).cloned().unwrap_or_default();
+            for (pl, filename) in selected_playlists
+                .into_iter()
+                .zip(app.wizard.filenames.iter())
+            {
+                let episode = app
+                    .wizard
+                    .episode_assignments
+                    .get(&pl.num)
+                    .cloned()
+                    .unwrap_or_default();
                 app.rip.jobs.push(crate::types::RipJob {
                     playlist: pl,
                     episode,

@@ -69,7 +69,10 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     let playlists = crate::media::scan_playlists_with_progress(
         &device,
         Some(&|elapsed, timeout| {
-            eprint!("\rScanning disc at {} (AACS negotiation {}s/{}s)...", device, elapsed, timeout);
+            eprint!(
+                "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
+                device, elapsed, timeout
+            );
         }),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -139,7 +142,9 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         );
         println!(
             "  {:<4}  {:<10}  {:<10}{}  {:<18}  -----  ---",
-            "---", "--------", "--------",
+            "---",
+            "--------",
+            "--------",
             if has_ch { "  --" } else { "" },
             "------------------"
         );
@@ -150,7 +155,9 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         );
         println!(
             "  {:<4}  {:<10}  {:<10}{}  ---",
-            "---", "--------", "--------",
+            "---",
+            "--------",
+            "--------",
             if has_ch { "  --" } else { "" },
         );
     }
@@ -176,7 +183,10 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
 
         if args.verbose {
             let (video_str, audio_str) = if let Some((ref media, ref streams)) = verbose_info[i] {
-                (format_video_column(media), format_audio_column(&streams.audio_streams))
+                (
+                    format_video_column(media),
+                    format_audio_column(&streams.audio_streams),
+                )
             } else {
                 ("".to_string(), "".to_string())
             };
@@ -240,7 +250,14 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         }
     };
 
-    let tmdb_ctx = lookup_tmdb(args, config, &label_info, &episodes_pl, movie_mode, headless)?;
+    let tmdb_ctx = lookup_tmdb(
+        args,
+        config,
+        &label_info,
+        &episodes_pl,
+        movie_mode,
+        headless,
+    )?;
 
     let selected = display_and_select(
         &episodes_pl,
@@ -255,7 +272,8 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
     let specials_set: std::collections::HashSet<String> = if let Some(ref sel_str) = args.specials {
         match parse_selection(sel_str, episodes_pl.len()) {
             Some(indices) => {
-                let selected_set: std::collections::HashSet<usize> = selected.iter().copied().collect();
+                let selected_set: std::collections::HashSet<usize> =
+                    selected.iter().copied().collect();
                 let mut specials = std::collections::HashSet::new();
                 for idx in indices {
                     if selected_set.contains(&idx) {
@@ -322,7 +340,10 @@ fn scan_disc(
     let playlists = crate::media::scan_playlists_with_progress(
         &device,
         Some(&|elapsed, timeout| {
-            eprint!("\rScanning disc at {} (AACS negotiation {}s/{}s)...", device, elapsed, timeout);
+            eprint!(
+                "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
+                device, elapsed, timeout
+            );
         }),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -403,8 +424,7 @@ fn lookup_tmdb(
 
             // Extra synthetic episodes for multi-episode detection in assign_episodes
             let synthetic_count = episodes_pl.len() * 2;
-            let synthetic_episodes: Vec<Episode> = (start_ep
-                ..start_ep + synthetic_count as u32)
+            let synthetic_episodes: Vec<Episode> = (start_ep..start_ep + synthetic_count as u32)
                 .map(|n| Episode {
                     episode_number: n,
                     name: String::new(),
@@ -412,8 +432,7 @@ fn lookup_tmdb(
                 })
                 .collect();
 
-            ctx.episode_assignments =
-                assign_episodes(episodes_pl, &synthetic_episodes, start_ep);
+            ctx.episode_assignments = assign_episodes(episodes_pl, &synthetic_episodes, start_ep);
             return Ok(ctx);
         }
     }
@@ -476,26 +495,25 @@ fn lookup_tmdb(
                     loop {
                         println!("\n  Episode Mappings:");
                         for pl in episodes_pl.iter() {
-                            let ep_str =
-                                if let Some(eps) = ctx.episode_assignments.get(&pl.num) {
-                                    eps.iter()
-                                        .map(|e| {
-                                            if e.name.is_empty() {
-                                                format!("E{:02}", e.episode_number)
-                                            } else {
-                                                format!(
-                                                    "S{:02}E{:02} - {}",
-                                                    ctx.season_num.unwrap_or(0),
-                                                    e.episode_number,
-                                                    e.name
-                                                )
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                } else {
-                                    "(none)".to_string()
-                                };
+                            let ep_str = if let Some(eps) = ctx.episode_assignments.get(&pl.num) {
+                                eps.iter()
+                                    .map(|e| {
+                                        if e.name.is_empty() {
+                                            format!("E{:02}", e.episode_number)
+                                        } else {
+                                            format!(
+                                                "S{:02}E{:02} - {}",
+                                                ctx.season_num.unwrap_or(0),
+                                                e.episode_number,
+                                                e.name
+                                            )
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            } else {
+                                "(none)".to_string()
+                            };
                             println!("    {} ({})  ->  {}", pl.num, pl.duration, ep_str);
                         }
 
@@ -514,14 +532,12 @@ fn lookup_tmdb(
                                 assign_episodes(episodes_pl, &lookup.episodes, new_start);
                             continue;
                         } else if response.eq_ignore_ascii_case("manual") {
-                            let ep_by_num: std::collections::HashMap<
-                                u32,
-                                &crate::types::Episode,
-                            > = lookup
-                                .episodes
-                                .iter()
-                                .map(|e| (e.episode_number, e))
-                                .collect();
+                            let ep_by_num: std::collections::HashMap<u32, &crate::types::Episode> =
+                                lookup
+                                    .episodes
+                                    .iter()
+                                    .map(|e| (e.episode_number, e))
+                                    .collect();
                             for pl in episodes_pl.iter() {
                                 let current = ctx
                                     .episode_assignments
@@ -562,14 +578,11 @@ fn lookup_tmdb(
                                                         })
                                                 })
                                                 .collect();
-                                            ctx.episode_assignments
-                                                .insert(pl.num.clone(), eps);
+                                            ctx.episode_assignments.insert(pl.num.clone(), eps);
                                             break;
                                         }
                                         None => {
-                                            println!(
-                                                "  Invalid input. Use: 3, 3-4, or 3,5"
-                                            );
+                                            println!("  Invalid input. Use: 3, 3-4, or 3,5");
                                         }
                                     }
                                 }
@@ -806,7 +819,10 @@ fn build_filenames(
                 tmdb_ctx.season_num.unwrap_or(0),
                 movie_mode,
                 is_special,
-                tmdb_ctx.movie_title.as_ref().map(|(t, y)| (t.as_str(), y.as_str())),
+                tmdb_ctx
+                    .movie_title
+                    .as_ref()
+                    .map(|(t, y)| (t.as_str(), y.as_str())),
                 &show_name_str,
                 label,
                 label_info.as_ref(),
@@ -872,7 +888,10 @@ fn rip_selected(
                 "  {} ({}) -> {}",
                 pl.num,
                 pl.duration,
-                outfiles[i].file_name().expect("output path has filename").to_string_lossy()
+                outfiles[i]
+                    .file_name()
+                    .expect("output path has filename")
+                    .to_string_lossy()
             );
         }
         return Ok(());
@@ -880,10 +899,7 @@ fn rip_selected(
 
     // Always mount for chapter extraction (MountGuard ensures unmount on exit)
     let (mount_point, mut _mount_guard) = match disc::ensure_mounted(device) {
-        Ok((mount, did_mount)) => (
-            Some(mount),
-            Some(disc::MountGuard::new(device, did_mount)),
-        ),
+        Ok((mount, did_mount)) => (Some(mount), Some(disc::MountGuard::new(device, did_mount))),
         Err(e) => {
             println!(
                 "Warning: could not mount disc for chapter extraction: {}",
@@ -911,14 +927,19 @@ fn rip_selected(
 
         let pl = &episodes_pl[idx];
         let outfile = &outfiles[i];
-        let filename = outfile.file_name().expect("output path has filename").to_string_lossy();
+        let filename = outfile
+            .file_name()
+            .expect("output path has filename")
+            .to_string_lossy();
 
         match crate::workflow::check_overwrite(outfile, args.overwrite || config.overwrite())? {
             crate::workflow::OverwriteAction::Proceed => {}
             crate::workflow::OverwriteAction::Skip(size) => {
                 println!(
                     "\nSkipping playlist {} -> {} (already exists, {})",
-                    pl.num, filename, format_size(size)
+                    pl.num,
+                    filename,
+                    format_size(size)
                 );
                 continue;
             }
@@ -1325,9 +1346,7 @@ fn headless_tmdb_tv(
     let season_num = match cli_season {
         Some(s) => s,
         None => {
-            anyhow::bail!(
-                "Cannot determine season number in headless mode. Use --season <NUM>."
-            );
+            anyhow::bail!("Cannot determine season number in headless mode. Use --season <NUM>.");
         }
     };
 
