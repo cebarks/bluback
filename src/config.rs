@@ -46,6 +46,7 @@ pub struct Config {
     pub reserve_index_space: Option<u32>,
     pub overwrite: Option<bool>,
     pub aacs_backend: Option<String>,
+    pub multi_drive: Option<String>,
 }
 
 fn config_dir() -> PathBuf {
@@ -141,6 +142,7 @@ impl Config {
         );
         emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
         emit_str(&mut out, "aacs_backend", &self.aacs_backend, "auto");
+        emit_str(&mut out, "multi_drive", &self.multi_drive, "auto");
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
 
@@ -252,6 +254,10 @@ impl Config {
         }
     }
 
+    pub fn multi_drive_mode(&self) -> &str {
+        self.multi_drive.as_deref().unwrap_or("auto")
+    }
+
     pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
         match self.stream_selection.as_deref() {
             Some("prefer_surround") => crate::media::StreamSelection::PreferSurround,
@@ -288,6 +294,7 @@ const KNOWN_KEYS: &[&str] = &[
     "reserve_index_space",
     "overwrite",
     "aacs_backend",
+    "multi_drive",
 ];
 
 pub fn validate_raw_toml(raw: &str) -> Vec<String> {
@@ -328,6 +335,14 @@ pub fn validate_config(config: &Config) -> Vec<String> {
             if opens != closes {
                 warnings.push(format!("{} has unmatched braces", name));
             }
+        }
+    }
+    if let Some(ref md) = config.multi_drive {
+        if md != "auto" && md != "manual" {
+            warnings.push(format!(
+                "multi_drive must be \"auto\" or \"manual\", got \"{}\"",
+                md
+            ));
         }
     }
     warnings
@@ -858,5 +873,27 @@ also_unknown = 42"#;
             ..Default::default()
         };
         assert!(config.overwrite());
+    }
+
+    #[test]
+    fn test_multi_drive_config_parsing() {
+        let toml_str = r#"multi_drive = "manual""#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.multi_drive.as_deref(), Some("manual"));
+    }
+
+    #[test]
+    fn test_multi_drive_config_default() {
+        let config = Config::default();
+        assert_eq!(config.multi_drive, None); // None means "auto" (the default)
+    }
+
+    #[test]
+    fn test_multi_drive_config_validation() {
+        let warnings = validate_config(&Config {
+            multi_drive: Some("invalid".into()),
+            ..Default::default()
+        });
+        assert!(warnings.iter().any(|w| w.contains("multi_drive")));
     }
 }
