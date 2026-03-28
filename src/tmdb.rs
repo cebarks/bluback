@@ -51,7 +51,10 @@ fn tmdb_get(path: &str, api_key: &str, extra_params: &[(&str, &str)]) -> Result<
     if extra_params.is_empty() {
         log::debug!("TMDb request: {}", path);
     } else {
-        let params: Vec<String> = extra_params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+        let params: Vec<String> = extra_params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
         log::debug!("TMDb request: {}?{}", path, params.join("&"));
     }
 

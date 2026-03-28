@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 
+// TODO: Future enhancement — capture raw libbluray BD_DEBUG_MASK output at trace
+// level via stderr fd redirection (dup2 to pipe + reader thread). Currently only
+// libbluray messages flowing through FFmpeg's av_log callback are captured.
+
 pub fn parse_level(s: &str) -> LevelFilter {
     match s {
         "error" => LevelFilter::Error,
@@ -122,18 +126,18 @@ pub fn init(
     if !is_tui && stderr_level != LevelFilter::Off {
         let stderr_dispatch = fern::Dispatch::new()
             .level(stderr_level)
-            .format(|out, message, record| {
-                match record.level() {
-                    log::Level::Error => out.finish(format_args!("Error: {message}")),
-                    log::Level::Warn => out.finish(format_args!("Warning: {message}")),
-                    _ => out.finish(format_args!("{message}")),
-                }
+            .format(|out, message, record| match record.level() {
+                log::Level::Error => out.finish(format_args!("Error: {message}")),
+                log::Level::Warn => out.finish(format_args!("Warning: {message}")),
+                _ => out.finish(format_args!("{message}")),
             })
             .chain(std::io::stderr());
         dispatch = dispatch.chain(stderr_dispatch);
     }
 
-    dispatch.apply().map_err(|e| anyhow::anyhow!("failed to initialize logging: {e}"))?;
+    dispatch
+        .apply()
+        .map_err(|e| anyhow::anyhow!("failed to initialize logging: {e}"))?;
 
     Ok(resolved_path)
 }
@@ -244,13 +248,8 @@ mod tests {
         assert!(header.contains("Timestamp:"));
 
         // Test with no device
-        let header_no_dev = session_header(
-            "0.9.2",
-            None,
-            ".",
-            Path::new("/tmp/config.toml"),
-            "auto",
-        );
+        let header_no_dev =
+            session_header("0.9.2", None, ".", Path::new("/tmp/config.toml"), "auto");
         assert!(header_no_dev.contains("auto-detect"));
     }
 }

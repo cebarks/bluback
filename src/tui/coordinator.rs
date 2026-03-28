@@ -603,7 +603,9 @@ impl Coordinator {
                         // Overlap detected — log for now
                         log::warn!(
                             "Episode {} of {} S{:02} is assigned in multiple sessions",
-                            ep, show_name, season
+                            ep,
+                            show_name,
+                            season
                         );
                     }
                 } else {

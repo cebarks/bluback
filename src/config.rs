@@ -282,7 +282,10 @@ impl Config {
         let home = std::env::var("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"));
-        home.join(".local").join("share").join("bluback").join("logs")
+        home.join(".local")
+            .join("share")
+            .join("bluback")
+            .join("logs")
     }
 
     pub fn max_log_files(&self) -> u32 {

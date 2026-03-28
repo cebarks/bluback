@@ -615,6 +615,33 @@ impl SettingsState {
                 value: config.show_filtered.unwrap_or(false),
             },
             SettingItem::Separator {
+                label: Some("Logging".into()),
+            },
+            SettingItem::Toggle {
+                label: "Log to File".into(),
+                key: "log_file".into(),
+                value: config.log_file.unwrap_or(true),
+            },
+            SettingItem::Choice {
+                label: "Stderr Log Level".into(),
+                key: "log_level".into(),
+                options: vec![
+                    "error".into(),
+                    "warn".into(),
+                    "info".into(),
+                    "debug".into(),
+                    "trace".into(),
+                ],
+                selected: match config.log_level.as_deref() {
+                    Some("error") => 0,
+                    Some("info") => 2,
+                    Some("debug") => 3,
+                    Some("trace") => 4,
+                    _ => 1, // warn is default
+                },
+                custom_value: None,
+            },
+            SettingItem::Separator {
                 label: Some("TMDb".into()),
             },
             SettingItem::Text {
@@ -815,6 +842,7 @@ impl SettingsState {
                     "show_filtered" if *value => config.show_filtered = Some(true),
                     "verbose_libbluray" if *value => config.verbose_libbluray = Some(true),
                     "overwrite" if *value => config.overwrite = Some(true),
+                    "log_file" if !*value => config.log_file = Some(false),
                     _ => {}
                 },
                 SettingItem::Number { key, value, .. } => match key.as_str() {
@@ -855,6 +883,12 @@ impl SettingsState {
                         let val = &options[*selected];
                         if val != "auto" {
                             config.aacs_backend = Some(val.clone());
+                        }
+                    }
+                    "log_level" => {
+                        let val = &options[*selected];
+                        if val != "warn" {
+                            config.log_level = Some(val.clone());
                         }
                     }
                     _ => {}
@@ -972,7 +1006,7 @@ mod tests {
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 16); // 15 settings + 1 action
+        assert_eq!(non_separator_count, 18); // 17 settings + 1 action
     }
 
     #[test]

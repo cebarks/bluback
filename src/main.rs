@@ -244,8 +244,9 @@ fn run_inner() -> anyhow::Result<i32> {
     // Initialize logging
     let use_tui = !args.no_tui && atty_stdout();
     let stderr_level = logging::parse_level(
-        args.log_level.as_deref()
-            .unwrap_or_else(|| config.log_level())
+        args.log_level
+            .as_deref()
+            .unwrap_or_else(|| config.log_level()),
     );
     let log_path = logging::init(
         &config,
@@ -258,7 +259,8 @@ fn run_inner() -> anyhow::Result<i32> {
     if let Some(ref path) = log_path {
         let header = logging::session_header(
             env!("CARGO_PKG_VERSION"),
-            args.device.as_deref()
+            args.device
+                .as_deref()
                 .map(|d| d.to_string_lossy())
                 .as_deref(),
             &args.output.display().to_string(),

@@ -181,7 +181,11 @@ where
 {
     super::ensure_init();
 
-    log::info!("Remux started: playlist={}, output={}", options.playlist, options.output.display());
+    log::info!(
+        "Remux started: playlist={}, output={}",
+        options.playlist,
+        options.output.display()
+    );
 
     if options.output.exists() {
         return Err(MediaError::OutputExists(options.output.clone()));
