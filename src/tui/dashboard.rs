@@ -9,12 +9,7 @@ use crate::rip;
 use crate::types::{DashboardView, DoneView, PlaylistStatus};
 use crate::util::format_size;
 
-pub fn render_dashboard_view(
-    f: &mut Frame,
-    view: &DashboardView,
-    _status: &str,
-    area: Rect,
-) {
+pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str, area: Rect) {
     let done_count = view
         .jobs
         .iter()
@@ -202,9 +197,8 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
 
     // When showing an error with no rip jobs, put a short summary in the title
     // and the full message in the results body where it can wrap.
-    let error_in_body = !view.status_message.is_empty()
-        && view.jobs.is_empty()
-        && view.filenames.is_empty();
+    let error_in_body =
+        !view.status_message.is_empty() && view.jobs.is_empty() && view.filenames.is_empty();
 
     let summary = if error_in_body {
         view.status_message
@@ -318,10 +312,7 @@ pub fn handle_input_session(session: &mut crate::session::DriveSession, key: Key
     if session.rip.confirm_abort {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                session
-                    .rip
-                    .cancel
-                    .store(true, Ordering::Relaxed);
+                session.rip.cancel.store(true, Ordering::Relaxed);
                 session.rip.progress_rx = None;
                 // Session doesn't set quit — the coordinator handles lifecycle
                 // Instead, transition to Done so the session reports completion
@@ -451,8 +442,7 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
     });
 
     session.rip.progress_rx = Some(rx);
-    session.rip.jobs[idx].status =
-        PlaylistStatus::Ripping(crate::types::RipProgress::default());
+    session.rip.jobs[idx].status = PlaylistStatus::Ripping(crate::types::RipProgress::default());
     true
 }
 
@@ -496,10 +486,8 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
             Err(mpsc::TryRecvError::Disconnected) => {
                 let idx = session.rip.current_rip;
                 if matches!(session.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
-                    let outfile =
-                        session.output_dir.join(&session.rip.jobs[idx].filename);
-                    let file_size =
-                        std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
+                    let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                    let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
                     session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
                 }
                 session.rip.progress_rx = None;
@@ -536,4 +524,3 @@ fn active_rip_stats_view(view: &DashboardView) -> String {
     }
     String::new()
 }
-

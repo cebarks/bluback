@@ -52,7 +52,8 @@ pub struct DiscState {
 
 #[derive(Default)]
 pub struct TmdbState {
-    #[allow(dead_code)] // Legacy field from single-session App; sessions use DriveSession.tmdb_api_key
+    #[allow(dead_code)]
+    // Legacy field from single-session App; sessions use DriveSession.tmdb_api_key
     pub api_key: Option<String>,
     pub search_query: String,
     pub movie_mode: bool,
@@ -263,11 +264,6 @@ fn run_app(
     config: &crate::config::Config,
     config_path: std::path::PathBuf,
 ) -> Result<()> {
-    let mut coord = coordinator::Coordinator::new(
-        args.clone(),
-        config.clone(),
-        config_path,
-    );
+    let mut coord = coordinator::Coordinator::new(args.clone(), config.clone(), config_path);
     coord.run(terminal)
 }
-

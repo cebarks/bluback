@@ -1,7 +1,7 @@
 use ratatui::prelude::*;
 use ratatui::widgets::Tabs;
 
-use crate::types::{TabSummary, TabState};
+use crate::types::{TabState, TabSummary};
 
 /// Render the tab bar at the top of the screen.
 /// Returns the remaining area below the tab bar for content.
@@ -12,10 +12,7 @@ pub fn render(f: &mut Frame, tabs: &[TabSummary], active_index: usize, area: Rec
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(0),
-        ])
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
         .split(area);
 
     let titles: Vec<Line> = tabs
@@ -43,7 +40,10 @@ fn format_tab_label(tab: &TabSummary) -> String {
         TabState::Wizard => format!("{}: Setup", tab.device_name),
         TabState::Ripping => {
             if let Some((current, total, pct)) = tab.rip_progress {
-                format!("{}: Ripping {}/{} {}%", tab.device_name, current, total, pct)
+                format!(
+                    "{}: Ripping {}/{} {}%",
+                    tab.device_name, current, total, pct
+                )
             } else {
                 format!("{}: Ripping", tab.device_name)
             }

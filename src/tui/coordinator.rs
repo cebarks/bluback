@@ -11,7 +11,7 @@ use ratatui::prelude::*;
 use crate::config::Config;
 use crate::drive_monitor::DriveMonitor;
 use crate::session::DriveSession;
-use crate::tui::{settings, tab_bar, wizard, dashboard, InputFocus, Screen};
+use crate::tui::{dashboard, settings, tab_bar, wizard, InputFocus, Screen};
 use crate::types::*;
 use crate::Args;
 
@@ -171,10 +171,7 @@ impl Coordinator {
         Ok(())
     }
 
-    fn render(
-        &self,
-        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    ) -> Result<()> {
+    fn render(&self, terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) -> Result<()> {
         terminal.draw(|f| {
             let area = f.area();
 
@@ -199,29 +196,33 @@ impl Coordinator {
                         Screen::Scanning => {
                             if let Some(ref view) = snap.scanning {
                                 wizard::render_scanning_view(
-                                    f, view, status, spinner, content_area,
+                                    f,
+                                    view,
+                                    status,
+                                    spinner,
+                                    content_area,
                                 );
                             }
                         }
                         Screen::TmdbSearch => {
                             if let Some(ref view) = snap.tmdb {
                                 wizard::render_tmdb_search_view(
-                                    f, view, status, spinner, content_area,
+                                    f,
+                                    view,
+                                    status,
+                                    spinner,
+                                    content_area,
                                 );
                             }
                         }
                         Screen::Season => {
                             if let Some(ref view) = snap.season {
-                                wizard::render_season_view(
-                                    f, view, status, spinner, content_area,
-                                );
+                                wizard::render_season_view(f, view, status, spinner, content_area);
                             }
                         }
                         Screen::PlaylistManager => {
                             if let Some(ref view) = snap.playlist_mgr {
-                                wizard::render_playlist_manager_view(
-                                    f, view, status, content_area,
-                                );
+                                wizard::render_playlist_manager_view(f, view, status, content_area);
                             }
                         }
                         Screen::Confirm => {
@@ -391,10 +392,7 @@ impl Coordinator {
     #[allow(dead_code)] // Will be used for session-specific operations (e.g., direct state mutation)
     fn active_session_mut(&mut self) -> Option<&mut SessionHandle> {
         let tab = self.active_tab;
-        self.sessions
-            .iter_mut()
-            .filter(|s| !s.dead)
-            .nth(tab)
+        self.sessions.iter_mut().filter(|s| !s.dead).nth(tab)
     }
 
     fn live_session_count(&self) -> usize {
@@ -416,8 +414,7 @@ impl Coordinator {
                         if &session.device == device && !session.dead {
                             let _ = session.input_tx.send(SessionCommand::Shutdown);
                             session.tab_summary.state = TabState::Error;
-                            session.tab_summary.error =
-                                Some("drive disconnected".to_string());
+                            session.tab_summary.error = Some("drive disconnected".to_string());
                         }
                     }
                 }
@@ -476,17 +473,13 @@ impl Coordinator {
                                     let done_count = d
                                         .jobs
                                         .iter()
-                                        .filter(|j| {
-                                            matches!(j.status, PlaylistStatus::Done(_))
-                                        })
+                                        .filter(|j| matches!(j.status, PlaylistStatus::Done(_)))
                                         .count();
                                     let current_pct = d
                                         .jobs
                                         .get(d.current_rip)
                                         .and_then(|job| {
-                                            if let PlaylistStatus::Ripping(ref prog) =
-                                                job.status
-                                            {
+                                            if let PlaylistStatus::Ripping(ref prog) = job.status {
                                                 if job.playlist.seconds > 0 {
                                                     Some(
                                                         (prog.out_time_secs as f64
@@ -560,11 +553,7 @@ impl Coordinator {
                 session_id,
                 tab_summary,
             } => {
-                if let Some(session) = self
-                    .sessions
-                    .iter_mut()
-                    .find(|s| s.id == session_id)
-                {
+                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == session_id) {
                     session.tab_summary = tab_summary;
                 }
             }
@@ -671,8 +660,7 @@ impl Coordinator {
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect();
-        let mut state =
-            SettingsState::from_config_with_drives(&self.config, &drives);
+        let mut state = SettingsState::from_config_with_drives(&self.config, &drives);
         state.apply_env_overrides();
         self.overlay = Some(Overlay::Settings(state));
     }

@@ -159,8 +159,8 @@ fn scan_with_log_capture(
 
         let result = open_bluray(device, None);
 
-        let lines: Vec<String> = THREAD_LOG_BUFFER
-            .with(|buf| buf.borrow_mut().take().unwrap_or_default());
+        let lines: Vec<String> =
+            THREAD_LOG_BUFFER.with(|buf| buf.borrow_mut().take().unwrap_or_default());
         let mut buf = String::new();
         for line in lines.iter() {
             buf.push_str(line);

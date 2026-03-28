@@ -177,8 +177,7 @@ impl DriveSession {
                                 Some(
                                     (prog.out_time_secs as f64 / job.playlist.seconds as f64
                                         * 100.0)
-                                        .min(100.0)
-                                        as u8,
+                                        .min(100.0) as u8,
                                 )
                             } else {
                                 Some(0)
@@ -196,10 +195,7 @@ impl DriveSession {
                     0
                 };
 
-                (
-                    TabState::Ripping,
-                    Some((done_count + 1, total, overall)),
-                )
+                (TabState::Ripping, Some((done_count + 1, total, overall)))
             }
             Screen::Done => (TabState::Done, None),
         };
@@ -395,7 +391,9 @@ impl DriveSession {
         self.emit_snapshot();
 
         loop {
-            let command = self.input_rx.recv_timeout(std::time::Duration::from_millis(100));
+            let command = self
+                .input_rx
+                .recv_timeout(std::time::Duration::from_millis(100));
 
             match command {
                 Ok(SessionCommand::Shutdown) => {
@@ -448,7 +446,9 @@ impl DriveSession {
     }
 
     fn emit_snapshot(&self) {
-        let _ = self.output_tx.send(SessionMessage::Snapshot(Box::new(self.snapshot())));
+        let _ = self
+            .output_tx
+            .send(SessionMessage::Snapshot(Box::new(self.snapshot())));
     }
 
     /// Spawn a background thread to scan this session's device for a disc.
@@ -571,7 +571,9 @@ impl DriveSession {
                 self.device = PathBuf::from(device);
                 self.disc.label_info = crate::disc::parse_volume_label(&label);
                 self.disc.label = label;
-                let min_dur = self.config.min_duration(self.min_duration_arg.unwrap_or(900));
+                let min_dur = self
+                    .config
+                    .min_duration(self.min_duration_arg.unwrap_or(900));
                 self.disc.episodes_pl = crate::disc::filter_episodes(&playlists, min_dur)
                     .into_iter()
                     .cloned()
@@ -918,8 +920,7 @@ impl DriveSession {
             .iter()
             .enumerate()
             .filter(|(_, pl)| {
-                self.wizard.show_filtered
-                    || self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
+                self.wizard.show_filtered || self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
             })
             .collect()
     }

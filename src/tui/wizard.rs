@@ -156,13 +156,12 @@ pub fn render_tmdb_search_view(
                             .unwrap_or("")
                             .get(..4)
                             .unwrap_or("");
-                        let marker = if view.input_focus == InputFocus::List
-                            && i == view.list_cursor
-                        {
-                            "> "
-                        } else {
-                            "  "
-                        };
+                        let marker =
+                            if view.input_focus == InputFocus::List && i == view.list_cursor {
+                                "> "
+                            } else {
+                                "  "
+                            };
                         ListItem::new(format!("{}{} ({})", marker, movie.title, year))
                     })
                     .collect()
@@ -177,13 +176,12 @@ pub fn render_tmdb_search_view(
                             .unwrap_or("")
                             .get(..4)
                             .unwrap_or("");
-                        let marker = if view.input_focus == InputFocus::List
-                            && i == view.list_cursor
-                        {
-                            "> "
-                        } else {
-                            "  "
-                        };
+                        let marker =
+                            if view.input_focus == InputFocus::List && i == view.list_cursor {
+                                "> "
+                            } else {
+                                "  "
+                            };
                         ListItem::new(format!("{}{} ({})", marker, show.name, year))
                     })
                     .collect()
@@ -205,11 +203,7 @@ pub fn render_tmdb_search_view(
             f.render_widget(list, content_chunks[1]);
         }
 
-        let toggle = if view.movie_mode {
-            "TV Show"
-        } else {
-            "Movie"
-        };
+        let toggle = if view.movie_mode { "TV Show" } else { "Movie" };
         let hints_text = if view.input_focus == InputFocus::List {
             "Up/Down: Navigate | Enter: Select | Esc: Back to search | Ctrl+R: Rescan | Ctrl+S: Settings".to_string()
         } else {
@@ -256,9 +250,7 @@ pub fn render_season_view(
     let season_display = if input_active {
         format!("{}|", view.input_buffer)
     } else {
-        view.season_num
-            .map(|s| s.to_string())
-            .unwrap_or_default()
+        view.season_num.map(|s| s.to_string()).unwrap_or_default()
     };
     let season_style = Style::default().fg(Color::Yellow);
     let season_input = Paragraph::new(season_display).block(
@@ -328,18 +320,11 @@ fn visible_playlists_view(view: &PlaylistView) -> Vec<(usize, &crate::types::Pla
     view.playlists
         .iter()
         .enumerate()
-        .filter(|(_, pl)| {
-            view.show_filtered || view.episodes_pl.iter().any(|ep| ep.num == pl.num)
-        })
+        .filter(|(_, pl)| view.show_filtered || view.episodes_pl.iter().any(|ep| ep.num == pl.num))
         .collect()
 }
 
-pub fn render_playlist_manager_view(
-    f: &mut Frame,
-    view: &PlaylistView,
-    status: &str,
-    area: Rect,
-) {
+pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: &str, area: Rect) {
     let chunks = standard_layout(area);
 
     let disc_text = label_text(&view.label);
@@ -414,8 +399,7 @@ pub fn render_playlist_manager_view(
 
             let is_episode_pl = view.episodes_pl.iter().any(|ep| ep.num == pl.num);
             let is_special = view.specials.contains(&pl.num);
-            let is_editing =
-                matches!(view.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
+            let is_editing = matches!(view.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
 
             // Episode column
             let ep_str = if is_editing {
@@ -491,11 +475,7 @@ pub fn render_playlist_manager_view(
             let special_marker = if is_special { " [SP]" } else { "" };
             let ep_display = format!("{}{}", ep_str, special_marker);
 
-            let filename = view
-                .filenames
-                .get(&pl.num)
-                .cloned()
-                .unwrap_or_default();
+            let filename = view.filenames.get(&pl.num).cloned().unwrap_or_default();
             let ch_str = view
                 .chapter_counts
                 .get(&pl.num)
@@ -573,12 +553,7 @@ pub fn render_playlist_manager_view(
     f.render_widget(hints, chunks[2]);
 }
 
-pub fn render_confirm_view(
-    f: &mut Frame,
-    view: &ConfirmView,
-    _status: &str,
-    area: Rect,
-) {
+pub fn render_confirm_view(f: &mut Frame, view: &ConfirmView, _status: &str, area: Rect) {
     let chunks = standard_layout(area);
 
     let disc_text = label_text(&view.label);
@@ -674,10 +649,7 @@ pub fn render_confirm_view(
 // These are mechanical ports of the App-based handlers above, operating on
 // DriveSession fields instead. The logic is identical.
 
-pub fn handle_tmdb_search_input_session(
-    session: &mut crate::session::DriveSession,
-    key: KeyEvent,
-) {
+pub fn handle_tmdb_search_input_session(session: &mut crate::session::DriveSession, key: KeyEvent) {
     match session.wizard.input_focus {
         InputFocus::TextInput => {
             match key.code {
@@ -713,15 +685,15 @@ pub fn handle_tmdb_search_input_session(
                         let (tx, rx) = mpsc::channel();
                         if session.tmdb.movie_mode {
                             std::thread::spawn(move || {
-                                let _ = tx.send(BackgroundResult::MovieSearch(
-                                    tmdb::search_movie(&query, &api_key),
-                                ));
+                                let _ = tx.send(BackgroundResult::MovieSearch(tmdb::search_movie(
+                                    &query, &api_key,
+                                )));
                             });
                         } else {
                             std::thread::spawn(move || {
-                                let _ = tx.send(BackgroundResult::ShowSearch(
-                                    tmdb::search_show(&query, &api_key),
-                                ));
+                                let _ = tx.send(BackgroundResult::ShowSearch(tmdb::search_show(
+                                    &query, &api_key,
+                                )));
                             });
                         }
                         session.pending_rx = Some(rx);
@@ -775,17 +747,16 @@ pub fn handle_tmdb_search_input_session(
 
                     if session.tmdb.movie_mode {
                         session.tmdb.selected_movie = Some(session.wizard.list_cursor);
-                        session.tmdb.show_name =
-                            session.tmdb.movie_results[session.wizard.list_cursor]
-                                .title
-                                .clone();
+                        session.tmdb.show_name = session.tmdb.movie_results
+                            [session.wizard.list_cursor]
+                            .title
+                            .clone();
                         session.wizard.input_focus = InputFocus::List;
                         session.wizard.list_cursor = 0;
                         session.screen = Screen::PlaylistManager;
                     } else {
                         session.tmdb.selected_show = Some(session.wizard.list_cursor);
-                        let show =
-                            &session.tmdb.search_results[session.wizard.list_cursor];
+                        let show = &session.tmdb.search_results[session.wizard.list_cursor];
                         session.tmdb.show_name = show.name.clone();
 
                         // If we already have a season number, fetch episodes in background
@@ -826,10 +797,7 @@ pub fn handle_tmdb_search_input_session(
     }
 }
 
-pub fn handle_season_input_session(
-    session: &mut crate::session::DriveSession,
-    key: KeyEvent,
-) {
+pub fn handle_season_input_session(session: &mut crate::session::DriveSession, key: KeyEvent) {
     match key.code {
         KeyCode::Up if session.wizard.list_cursor > 0 => {
             session.wizard.list_cursor -= 1;
@@ -878,8 +846,7 @@ pub fn handle_season_input_session(
                     }
                 } else {
                     let disc_num = session.disc.label_info.as_ref().map(|l| l.disc);
-                    let guessed =
-                        guess_start_episode(disc_num, session.disc.episodes_pl.len());
+                    let guessed = guess_start_episode(disc_num, session.disc.episodes_pl.len());
                     let start_ep = session.wizard.start_episode.unwrap_or(guessed);
                     session.wizard.episode_assignments = assign_episodes(
                         &session.disc.episodes_pl,
@@ -904,8 +871,7 @@ pub fn handle_season_input_session(
                     .and_then(|i| session.tmdb.search_results.get(i))
                     .map(|s| s.id);
 
-                if let (Some(show_id), Some(ref api_key)) =
-                    (show_id, session.tmdb_api_key.clone())
+                if let (Some(show_id), Some(ref api_key)) = (show_id, session.tmdb_api_key.clone())
                 {
                     let api_key = api_key.clone();
                     let (tx, rx) = mpsc::channel();
@@ -951,15 +917,13 @@ pub fn handle_playlist_manager_input_session(
                             session.wizard.episode_assignments.remove(&pl_num);
                         }
                         Some(ep_nums) => {
-                            let ep_by_num: std::collections::HashMap<
-                                u32,
-                                &crate::types::Episode,
-                            > = session
-                                .tmdb
-                                .episodes
-                                .iter()
-                                .map(|e| (e.episode_number, e))
-                                .collect();
+                            let ep_by_num: std::collections::HashMap<u32, &crate::types::Episode> =
+                                session
+                                    .tmdb
+                                    .episodes
+                                    .iter()
+                                    .map(|e| (e.episode_number, e))
+                                    .collect();
                             let eps: Vec<crate::types::Episode> = ep_nums
                                 .iter()
                                 .map(|&num| {
@@ -1023,8 +987,7 @@ pub fn handle_playlist_manager_input_session(
                     })
                     .unwrap_or_default();
                 session.wizard.input_buffer = current;
-                session.wizard.input_focus =
-                    InputFocus::InlineEdit(session.wizard.list_cursor);
+                session.wizard.input_focus = InputFocus::InlineEdit(session.wizard.list_cursor);
             }
         }
         KeyCode::Char('s') if !session.tmdb.movie_mode => {
@@ -1125,9 +1088,7 @@ pub fn handle_playlist_manager_input_session(
             if session.tmdb.movie_mode {
                 session.wizard.input_focus = InputFocus::List;
                 session.screen = Screen::TmdbSearch;
-            } else if session.wizard.season_num.is_some()
-                && session.tmdb.selected_show.is_some()
-            {
+            } else if session.wizard.season_num.is_some() && session.tmdb.selected_show.is_some() {
                 session.wizard.input_focus = InputFocus::TextInput;
                 session.wizard.input_buffer = session
                     .wizard
@@ -1145,10 +1106,7 @@ pub fn handle_playlist_manager_input_session(
     }
 }
 
-pub fn handle_confirm_input_session(
-    session: &mut crate::session::DriveSession,
-    key: KeyEvent,
-) {
+pub fn handle_confirm_input_session(session: &mut crate::session::DriveSession, key: KeyEvent) {
     match key.code {
         KeyCode::Enter => {
             // DriveSession doesn't support dry_run — always proceed to rip
