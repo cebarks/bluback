@@ -4,6 +4,7 @@ mod check;
 mod cli;
 mod config;
 mod disc;
+mod drive_monitor;
 mod media;
 mod rip;
 mod tmdb;
