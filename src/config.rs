@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -23,6 +24,12 @@ pub enum AacsBackend {
     Auto,
     Libaacs,
     Libmmbd,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MetadataConfig {
+    pub enabled: Option<bool>,
+    pub tags: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -51,6 +58,7 @@ pub struct Config {
     pub log_level: Option<String>,
     pub log_dir: Option<String>,
     pub max_log_files: Option<u32>,
+    pub metadata: Option<MetadataConfig>,
 }
 
 fn config_dir() -> PathBuf {
@@ -152,6 +160,26 @@ impl Config {
         emit_str(&mut out, "log_level", &self.log_level, "warn");
         emit_str(&mut out, "log_dir", &self.log_dir, "");
         emit_u32(&mut out, "max_log_files", self.max_log_files, 10);
+
+        out.push('\n');
+        out.push_str("[metadata]\n");
+        let meta_enabled = self.metadata.as_ref().and_then(|m| m.enabled);
+        emit_bool(&mut out, "enabled", meta_enabled, true);
+        if let Some(ref meta) = self.metadata {
+            if let Some(ref tags) = meta.tags {
+                if !tags.is_empty() {
+                    let pairs: Vec<String> = tags
+                        .iter()
+                        .map(|(k, v)| format!("{} = {:?}", k, v))
+                        .collect();
+                    out.push_str(&format!("tags = {{ {} }}\n", pairs.join(", ")));
+                }
+            }
+        }
+        if self.metadata.as_ref().and_then(|m| m.tags.as_ref()).map_or(true, |t| t.is_empty()) {
+            out.push_str("# tags = { }\n");
+        }
+
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
 
@@ -298,6 +326,20 @@ impl Config {
             _ => crate::media::StreamSelection::All,
         }
     }
+
+    pub fn metadata_enabled(&self) -> bool {
+        self.metadata
+            .as_ref()
+            .and_then(|m| m.enabled)
+            .unwrap_or(true)
+    }
+
+    pub fn metadata_tags(&self) -> HashMap<String, String> {
+        self.metadata
+            .as_ref()
+            .and_then(|m| m.tags.clone())
+            .unwrap_or_default()
+    }
 }
 
 fn preset_format(name: &str, is_movie: bool) -> String {
@@ -333,6 +375,9 @@ const KNOWN_KEYS: &[&str] = &[
     "log_level",
     "log_dir",
     "max_log_files",
+    "metadata",
+    "metadata.enabled",
+    "metadata.tags",
 ];
 
 pub fn validate_raw_toml(raw: &str) -> Vec<String> {
@@ -713,8 +758,8 @@ mod tests {
         for line in output.lines() {
             let trimmed = line.trim();
             assert!(
-                trimmed.is_empty() || trimmed.starts_with('#'),
-                "Expected comment or blank, got: {}",
+                trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('['),
+                "Expected comment, blank, or section header, got: {}",
                 line
             );
         }
@@ -1008,5 +1053,43 @@ also_unknown = 42"#;
         assert_eq!(reparsed.log_file, Some(false));
         assert_eq!(reparsed.log_level.as_deref(), Some("debug"));
         assert_eq!(reparsed.max_log_files, Some(5));
+    }
+
+    #[test]
+    fn test_parse_metadata_section() {
+        let toml_str = r#"
+            [metadata]
+            enabled = false
+            tags = { STUDIO = "HBO", COLLECTION = "My Blu-rays" }
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let meta = config.metadata.unwrap();
+        assert_eq!(meta.enabled, Some(false));
+        assert_eq!(meta.tags.as_ref().unwrap()["STUDIO"], "HBO");
+        assert_eq!(meta.tags.as_ref().unwrap()["COLLECTION"], "My Blu-rays");
+    }
+
+    #[test]
+    fn test_parse_missing_metadata_defaults() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.metadata.is_none());
+        assert!(config.metadata_enabled());
+        assert!(config.metadata_tags().is_empty());
+    }
+
+    #[test]
+    fn test_metadata_config_roundtrip() {
+        let toml_str = r#"
+            [metadata]
+            enabled = false
+            tags = { STUDIO = "HBO" }
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let output = config.to_toml_string();
+        assert!(output.contains("[metadata]"));
+        assert!(output.contains("enabled = false"));
+        let reparsed: Config = toml::from_str(&output).unwrap();
+        let meta = reparsed.metadata.unwrap();
+        assert_eq!(meta.enabled, Some(false));
     }
 }

@@ -138,6 +138,10 @@ pub struct Args {
     #[arg(long)]
     no_log: bool,
 
+    /// Don't embed metadata tags in output MKV files
+    #[arg(long)]
+    no_metadata: bool,
+
     /// Custom log file path (overrides default location)
     #[arg(long, conflicts_with = "no_log")]
     log_file: Option<PathBuf>,
