@@ -6,12 +6,16 @@ use std::sync::mpsc;
 
 use super::{App, Screen};
 use crate::rip;
-use crate::types::PlaylistStatus;
+use crate::types::{DashboardView, DoneView, PlaylistStatus};
 use crate::util::format_size;
 
-pub fn render(f: &mut Frame, app: &App) {
-    let done_count = app
-        .rip
+pub fn render_dashboard_view(
+    f: &mut Frame,
+    view: &DashboardView,
+    _status: &str,
+    area: Rect,
+) {
+    let done_count = view
         .jobs
         .iter()
         .filter(|j| {
@@ -21,7 +25,7 @@ pub fn render(f: &mut Frame, app: &App) {
             )
         })
         .count();
-    let total = app.rip.jobs.len();
+    let total = view.jobs.len();
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -30,10 +34,10 @@ pub fn render(f: &mut Frame, app: &App) {
             Constraint::Min(4),    // job table
             Constraint::Length(1), // key hints
         ])
-        .split(f.area());
+        .split(area);
 
     // Title with stats
-    let stats_text = active_rip_stats(app);
+    let stats_text = active_rip_stats_view(view);
     let title_text = if stats_text.is_empty() {
         format!("Ripping: {}/{} complete", done_count, total)
     } else {
@@ -53,8 +57,7 @@ pub fn render(f: &mut Frame, app: &App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    let rows: Vec<Row> = app
-        .rip
+    let rows: Vec<Row> = view
         .jobs
         .iter()
         .enumerate()
@@ -144,10 +147,10 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(table, chunks[1]);
 
     // Key hints / confirmation prompts
-    let hint = if app.rip.confirm_abort {
+    let hint = if view.confirm_abort {
         Paragraph::new("Really abort? [y] Yes  [n] No")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-    } else if app.rip.confirm_rescan {
+    } else if view.confirm_rescan {
         Paragraph::new("Rescan disc? This will abort the current rip. [y] Yes  [n] No").style(
             Style::default()
                 .fg(Color::Yellow)
@@ -160,9 +163,19 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(hint, chunks[2]);
 }
 
-pub fn render_done(f: &mut Frame, app: &App) {
-    let completed: Vec<_> = app
-        .rip
+pub fn render(f: &mut Frame, app: &App) {
+    let view = DashboardView {
+        jobs: app.rip.jobs.clone(),
+        current_rip: app.rip.current_rip,
+        confirm_abort: app.rip.confirm_abort,
+        confirm_rescan: app.rip.confirm_rescan,
+        label: app.disc.label.clone(),
+    };
+    render_dashboard_view(f, &view, &app.status_message, f.area());
+}
+
+pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
+    let completed: Vec<_> = view
         .jobs
         .iter()
         .filter_map(|j| match &j.status {
@@ -170,8 +183,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
             _ => None,
         })
         .collect();
-    let skipped: Vec<_> = app
-        .rip
+    let skipped: Vec<_> = view
         .jobs
         .iter()
         .filter_map(|j| match &j.status {
@@ -179,8 +191,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
             _ => None,
         })
         .collect();
-    let failed_count = app
-        .rip
+    let failed_count = view
         .jobs
         .iter()
         .filter(|j| matches!(j.status, PlaylistStatus::Failed(_)))
@@ -193,22 +204,22 @@ pub fn render_done(f: &mut Frame, app: &App) {
             Constraint::Min(4),
             Constraint::Length(1),
         ])
-        .split(f.area());
+        .split(area);
 
     // When showing an error with no rip jobs, put a short summary in the title
     // and the full message in the results body where it can wrap.
-    let error_in_body = !app.status_message.is_empty()
-        && app.rip.jobs.is_empty()
-        && app.wizard.filenames.is_empty();
+    let error_in_body = !view.status_message.is_empty()
+        && view.jobs.is_empty()
+        && view.filenames.is_empty();
 
     let summary = if error_in_body {
-        app.status_message
+        view.status_message
             .split(':')
             .next()
             .expect("split always yields at least one element")
             .to_string()
-    } else if !app.status_message.is_empty() {
-        app.status_message.clone()
+    } else if !view.status_message.is_empty() {
+        view.status_message.clone()
     } else if failed_count > 0 || !skipped.is_empty() {
         let mut parts = vec![format!("{} ripped", completed.len())];
         if !skipped.is_empty() {
@@ -220,7 +231,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         format!(
             "Completed {} of {} playlist(s) ({})",
             completed.len() + skipped.len(),
-            app.rip.jobs.len(),
+            view.jobs.len(),
             parts.join(", ")
         )
     } else {
@@ -234,11 +245,11 @@ pub fn render_done(f: &mut Frame, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
     if error_in_body {
         lines.push(
-            Line::from(format!("  {}", app.status_message)).style(Style::default().fg(Color::Red)),
+            Line::from(format!("  {}", view.status_message)).style(Style::default().fg(Color::Red)),
         );
-    } else if app.rip.jobs.is_empty() && !app.wizard.filenames.is_empty() {
+    } else if view.jobs.is_empty() && !view.filenames.is_empty() {
         // Dry run: show what would have been ripped
-        for name in &app.wizard.filenames {
+        for name in &view.filenames {
             lines.push(Line::from(format!("  {}", name)));
         }
     } else {
@@ -251,7 +262,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
                     .style(Style::default().fg(Color::DarkGray)),
             );
         }
-        for job in &app.rip.jobs {
+        for job in &view.jobs {
             if let PlaylistStatus::Failed(msg) = &job.status {
                 lines.push(
                     Line::from(format!("  {} - FAILED: {}", job.filename, msg))
@@ -272,8 +283,8 @@ pub fn render_done(f: &mut Frame, app: &App) {
     .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 
-    if let Some(ref label) = app.disc_detected_label {
-        let popup_area = centered_rect(60, 5, f.area());
+    if let Some(ref label) = view.disc_detected_label {
+        let popup_area = centered_rect(60, 5, area);
         f.render_widget(Clear, popup_area);
         let popup = Paragraph::new(format!(
             "New disc detected: {}\n\nPress Enter to start, any other key to exit",
@@ -283,6 +294,18 @@ pub fn render_done(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("New Disc"));
         f.render_widget(popup, popup_area);
     }
+}
+
+pub fn render_done(f: &mut Frame, app: &App) {
+    let view = DoneView {
+        jobs: app.rip.jobs.clone(),
+        label: app.disc.label.clone(),
+        disc_detected_label: app.disc_detected_label.clone(),
+        eject: app.eject,
+        status_message: app.status_message.clone(),
+        filenames: app.wizard.filenames.clone(),
+    };
+    render_done_view(f, &view, f.area());
 }
 
 pub fn handle_input(app: &mut App, key: KeyEvent) {
@@ -488,8 +511,8 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     Rect::new(area.x + x, area.y + y, popup_width, height)
 }
 
-fn active_rip_stats(app: &App) -> String {
-    if let Some(job) = app.rip.jobs.get(app.rip.current_rip) {
+fn active_rip_stats_view(view: &DashboardView) -> String {
+    if let Some(job) = view.jobs.get(view.current_rip) {
         if let PlaylistStatus::Ripping(ref prog) = job.status {
             let time_str = rip::format_eta(prog.out_time_secs);
             let bitrate_str =
@@ -515,3 +538,4 @@ fn active_rip_stats(app: &App) -> String {
     }
     String::new()
 }
+

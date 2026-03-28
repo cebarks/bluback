@@ -338,6 +338,7 @@ pub struct TmdbView {
     pub list_cursor: usize,
     pub show_name: String,
     pub label: String,
+    pub episodes_pl_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -348,6 +349,7 @@ pub struct SeasonView {
     pub input_focus: crate::tui::InputFocus,
     pub episodes: Vec<Episode>,
     pub list_cursor: usize,
+    pub label: String,
 }
 
 #[derive(Debug, Clone)]
@@ -366,6 +368,8 @@ pub struct PlaylistView {
     pub input_buffer: String,
     pub chapter_counts: HashMap<String, usize>,
     pub episodes: Vec<Episode>,
+    pub label: String,
+    pub filenames: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -375,6 +379,10 @@ pub struct ConfirmView {
     pub episode_assignments: EpisodeAssignments,
     pub list_cursor: usize,
     pub movie_mode: bool,
+    pub label: String,
+    pub output_dir: String,
+    pub dry_run: bool,
+    pub media_infos: Vec<Option<MediaInfo>>,
 }
 
 #[derive(Debug, Clone)]
@@ -392,6 +400,8 @@ pub struct DoneView {
     pub label: String,
     pub disc_detected_label: Option<String>,
     pub eject: bool,
+    pub status_message: String,
+    pub filenames: Vec<String>,
 }
 
 pub enum Overlay {

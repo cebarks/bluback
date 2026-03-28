@@ -281,6 +281,7 @@ impl DriveSession {
             list_cursor: self.wizard.list_cursor,
             show_name: self.tmdb.show_name.clone(),
             label: self.disc.label.clone(),
+            episodes_pl_count: self.disc.episodes_pl.len(),
         })
     }
 
@@ -295,6 +296,7 @@ impl DriveSession {
             input_focus: self.wizard.input_focus.clone(),
             episodes: self.tmdb.episodes.clone(),
             list_cursor: self.wizard.list_cursor,
+            label: self.disc.label.clone(),
         })
     }
 
@@ -317,6 +319,8 @@ impl DriveSession {
             input_buffer: self.wizard.input_buffer.clone(),
             chapter_counts: self.disc.chapter_counts.clone(),
             episodes: self.tmdb.episodes.clone(),
+            label: self.disc.label.clone(),
+            filenames: std::collections::HashMap::new(), // TODO: compute filenames
         })
     }
 
@@ -346,6 +350,10 @@ impl DriveSession {
             episode_assignments: self.wizard.episode_assignments.clone(),
             list_cursor: self.wizard.list_cursor,
             movie_mode: self.tmdb.movie_mode,
+            label: self.disc.label.clone(),
+            output_dir: self.output_dir.display().to_string(),
+            dry_run: false, // DriveSession doesn't support dry_run yet
+            media_infos: self.wizard.media_infos.clone(),
         })
     }
 
@@ -371,6 +379,8 @@ impl DriveSession {
             label: self.disc.label.clone(),
             disc_detected_label: self.disc_detected_label.clone(),
             eject: self.eject,
+            status_message: self.status_message.clone(),
+            filenames: self.wizard.filenames.clone(),
         })
     }
 }
