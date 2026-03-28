@@ -48,9 +48,19 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 - [x] CI consolidation — 5-platform matrix (Ubuntu/Fedora x86_64+aarch64, macOS aarch64)
 - [x] Code cleanup — dead code removal, clippy fixes
 
-## Upcoming Milestones
+## In Progress: v0.10 — Quality of Life & Automation
 
-- **v0.10** — Quality of Life & Automation: log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history
+- [x] Log files
+- [x] MKV metadata embedding (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, ENCODER + custom tags)
+- [ ] Pause/resume during ripping
+- [ ] Per-stream track titles (alongside per-stream track selection)
+- [ ] Post-rip hooks
+- [ ] Rip verification
+- [ ] Per-stream track selection
+- [ ] Continuous batch mode
+- [ ] Disc history / rip database
+
+## Upcoming Milestones
 - **v0.11** — DVD Support: disc type abstraction, title enumeration, chapter extraction, CSS errors
 - **v0.12** — UHD Blu-ray: AACS 2.0, HDR metadata verification
 - **v0.13** — Intelligence & Distribution: TMDb S00 auto-matching, shell completions, man page
