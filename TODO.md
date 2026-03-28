@@ -51,7 +51,7 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 ## In Progress: v0.10 — Quality of Life & Automation
 
 - [x] Log files
-- [x] MKV metadata embedding (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, ENCODED_BY + custom tags)
+- [x] MKV metadata embedding (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, REMUXED_WITH + custom tags)
 - [ ] Pause/resume during ripping
 - [ ] Per-stream track titles (alongside per-stream track selection)
 - [ ] Post-rip hooks

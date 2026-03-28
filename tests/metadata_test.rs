@@ -98,7 +98,7 @@ fn test_auto_metadata_tags_written() {
     tags.insert("SEASON_NUMBER".into(), "3".into());
     tags.insert("EPISODE_SORT".into(), "9".into());
     tags.insert("DATE_RELEASED".into(), "2013-06-02".into());
-    tags.insert("ENCODED_BY".into(), "bluback v0.9.2".into());
+    tags.insert("REMUXED_WITH".into(), "bluback v0.9.2".into());
 
     remux_with_metadata(input, output_str, &tags);
 
@@ -109,7 +109,7 @@ fn test_auto_metadata_tags_written() {
     assert_eq!(read_tags["SEASON_NUMBER"], "3");
     assert_eq!(read_tags["EPISODE_SORT"], "9");
     assert_eq!(read_tags["DATE_RELEASED"], "2013-06-02");
-    assert_eq!(read_tags["ENCODED_BY"], "bluback v0.9.2");
+    assert_eq!(read_tags["REMUXED_WITH"], "bluback v0.9.2");
 }
 
 #[test]
@@ -124,7 +124,7 @@ fn test_custom_tags_written() {
     tags.insert("TITLE".into(), "Custom Override Title".into());
     tags.insert("STUDIO".into(), "HBO".into());
     tags.insert("COLLECTION".into(), "My Blu-rays".into());
-    tags.insert("ENCODED_BY".into(), "bluback v0.9.2".into());
+    tags.insert("REMUXED_WITH".into(), "bluback v0.9.2".into());
 
     remux_with_metadata(input, output_str, &tags);
 
@@ -133,5 +133,5 @@ fn test_custom_tags_written() {
     assert_eq!(read_tags["TITLE"], "Custom Override Title");
     assert_eq!(read_tags["STUDIO"], "HBO");
     assert_eq!(read_tags["COLLECTION"], "My Blu-rays");
-    assert_eq!(read_tags["ENCODED_BY"], "bluback v0.9.2");
+    assert_eq!(read_tags["REMUXED_WITH"], "bluback v0.9.2");
 }

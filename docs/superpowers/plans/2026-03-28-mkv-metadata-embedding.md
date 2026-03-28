@@ -153,7 +153,7 @@ Add to the `#[cfg(test)] mod tests` block in `src/workflow.rs`:
         assert_eq!(meta.tags["SEASON_NUMBER"], "3");
         assert_eq!(meta.tags["EPISODE_SORT"], "9");
         assert_eq!(meta.tags["DATE_RELEASED"], "2013-06-02");
-        assert!(meta.tags["ENCODER"].starts_with("bluback v"));
+        assert!(meta.tags["REMUXED_WITH"].starts_with("bluback v"));
     }
 
     #[test]
@@ -189,7 +189,7 @@ Add to the `#[cfg(test)] mod tests` block in `src/workflow.rs`:
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Blade Runner 2049");
         assert_eq!(meta.tags["DATE_RELEASED"], "2017-10-06");
-        assert!(meta.tags["ENCODER"].starts_with("bluback v"));
+        assert!(meta.tags["REMUXED_WITH"].starts_with("bluback v"));
         assert!(!meta.tags.contains_key("SHOW"));
         assert!(!meta.tags.contains_key("SEASON_NUMBER"));
     }
@@ -205,7 +205,7 @@ Add to the `#[cfg(test)] mod tests` block in `src/workflow.rs`:
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Manual Title");
-        assert!(meta.tags["ENCODER"].starts_with("bluback v"));
+        assert!(meta.tags["REMUXED_WITH"].starts_with("bluback v"));
         assert!(!meta.tags.contains_key("SHOW"));
         assert!(!meta.tags.contains_key("DATE_RELEASED"));
     }
@@ -301,7 +301,7 @@ pub fn build_metadata(
     let mut tags = HashMap::new();
 
     let encoder = format!("bluback v{}", env!("CARGO_PKG_VERSION"));
-    tags.insert("ENCODER".into(), encoder);
+    tags.insert("REMUXED_WITH".into(), encoder);
 
     if movie_mode {
         if let Some(title) = movie_title {
@@ -926,7 +926,7 @@ In the CLI flags table, add:
 In the Key Design Decisions section, add:
 
 ```
-- **MKV metadata embedding** — Auto-generated tags (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, ENCODER) are embedded during remux via `octx.set_metadata()`. Configurable via `[metadata]` config section (`enabled` bool, `tags` table for custom key-value pairs). Disabled per-run with `--no-metadata`. Custom tags override auto-generated ones on conflict. Empty values are never written.
+- **MKV metadata embedding** — Auto-generated tags (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, REMUXED_WITH) are embedded during remux via `octx.set_metadata()`. Configurable via `[metadata]` config section (`enabled` bool, `tags` table for custom key-value pairs). Disabled per-run with `--no-metadata`. Custom tags override auto-generated ones on conflict. Empty values are never written.
 ```
 
 Add `metadata.enabled` and `metadata.tags` references where relevant in the Config section or env var list.
@@ -941,7 +941,7 @@ Under "Upcoming Milestones", update the v0.10 line to move MKV metadata to a com
 ## In Progress: v0.10 — Quality of Life & Automation
 
 - [x] Log files
-- [x] MKV metadata embedding (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, ENCODER + custom tags)
+- [x] MKV metadata embedding (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, REMUXED_WITH + custom tags)
 - [ ] Pause/resume during ripping
 - [ ] Per-stream track titles (TODO: alongside per-stream track selection)
 - [ ] Post-rip hooks

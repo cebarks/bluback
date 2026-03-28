@@ -162,10 +162,10 @@ pub fn build_metadata(
 
     let mut tags = HashMap::new();
 
-    // Use ENCODED_BY instead of ENCODER — FFmpeg's Matroska muxer
+    // Use REMUXED_WITH instead of ENCODER — FFmpeg's Matroska muxer
     // always overwrites ENCODER with its own "Lavf" version string.
     let encoder = format!("bluback v{}", env!("CARGO_PKG_VERSION"));
-    tags.insert("ENCODED_BY".into(), encoder);
+    tags.insert("REMUXED_WITH".into(), encoder);
 
     if movie_mode {
         if let Some(title) = movie_title {
@@ -460,7 +460,7 @@ mod tests {
         assert_eq!(meta.tags["SEASON_NUMBER"], "3");
         assert_eq!(meta.tags["EPISODE_SORT"], "9");
         assert_eq!(meta.tags["DATE_RELEASED"], "2013-06-02");
-        assert!(meta.tags["ENCODED_BY"].starts_with("bluback v"));
+        assert!(meta.tags["REMUXED_WITH"].starts_with("bluback v"));
     }
 
     #[test]
@@ -488,7 +488,7 @@ mod tests {
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Blade Runner 2049");
         assert_eq!(meta.tags["DATE_RELEASED"], "2017-10-06");
-        assert!(meta.tags["ENCODED_BY"].starts_with("bluback v"));
+        assert!(meta.tags["REMUXED_WITH"].starts_with("bluback v"));
         assert!(!meta.tags.contains_key("SHOW"));
         assert!(!meta.tags.contains_key("SEASON_NUMBER"));
     }
@@ -502,7 +502,7 @@ mod tests {
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Manual Title");
         assert_eq!(meta.tags["SHOW"], "Manual Title");
-        assert!(meta.tags["ENCODED_BY"].starts_with("bluback v"));
+        assert!(meta.tags["REMUXED_WITH"].starts_with("bluback v"));
         assert!(!meta.tags.contains_key("DATE_RELEASED"));
     }
 

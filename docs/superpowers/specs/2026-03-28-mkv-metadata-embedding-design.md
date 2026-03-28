@@ -39,7 +39,7 @@ Tags are written only when a value is available. No empty-string tags are ever w
 | `SEASON_NUMBER`  | Season selection                            | `"3"`                          |
 | `EPISODE_SORT`   | Episode number (first episode for multi-ep) | `"9"`                          |
 | `DATE_RELEASED`  | `first_air_date` from TMDb                  | `"2013-06-02"`                 |
-| `ENCODER`        | `env!("CARGO_PKG_VERSION")` at build time   | `"bluback v0.9.2"`             |
+| `REMUXED_WITH`        | `env!("CARGO_PKG_VERSION")` at build time   | `"bluback v0.9.2"`             |
 
 For multi-episode playlists (e.g., E03-E04): `TITLE` joins episode names with `" / "` separator (e.g., `"Episode 3 / Episode 4"`), `EPISODE_SORT` uses the first episode number.
 
@@ -49,11 +49,11 @@ For multi-episode playlists (e.g., E03-E04): `TITLE` joins episode names with `"
 |------------------|---------------------------------|----------------------|
 | `TITLE`          | Movie title from TMDb or `--title` | `"Blade Runner 2049"` |
 | `DATE_RELEASED`  | `release_date` from TMDb        | `"2017-10-06"`       |
-| `ENCODER`        | `env!("CARGO_PKG_VERSION")` at build time | `"bluback v0.9.2"`   |
+| `REMUXED_WITH`        | `env!("CARGO_PKG_VERSION")` at build time | `"bluback v0.9.2"`   |
 
 ### Fallback (TMDb Skipped)
 
-When TMDb is skipped (via `--title` or Esc in TUI), only `TITLE` (from `--title` or volume label) and `ENCODER` are written.
+When TMDb is skipped (via `--title` or Esc in TUI), only `TITLE` (from `--title` or volume label) and `REMUXED_WITH` are written.
 
 ### Custom Tag Merge
 
@@ -113,7 +113,7 @@ if let Some(ref meta) = options.metadata {
 
 - `build_metadata` with full TV context → all expected tags present
 - `build_metadata` with full movie context → movie tags present
-- `build_metadata` with TMDb skipped (title-only) → only `TITLE` + `ENCODER`
+- `build_metadata` with TMDb skipped (title-only) → only `TITLE` + `REMUXED_WITH`
 - `build_metadata` with custom tags → custom tags present
 - `build_metadata` with custom tag overriding auto-generated key → custom wins
 - `build_metadata` with metadata disabled → returns `None`
