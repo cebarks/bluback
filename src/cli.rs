@@ -1,3 +1,7 @@
+// TODO(multi-drive): Add concurrent CLI support with interleaved output
+// and drive-prefixed progress lines (e.g., [sr0] Ripping playlist 1...)
+// For now, CLI mode is single-drive only.
+
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
