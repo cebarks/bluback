@@ -80,11 +80,13 @@ pub fn scan_playlists_with_progress(
 
     if let Some(err_msg) = scan_error {
         if !playlists.is_empty() {
+            log::info!("Scan complete: found {} playlists", playlists.len());
             return Ok(playlists);
         }
         return Err(MediaError::AacsAuthFailed(err_msg));
     }
 
+    log::info!("Scan complete: found {} playlists", playlists.len());
     Ok(playlists)
 }
 
@@ -315,6 +317,7 @@ macro_rules! log_capture_body {
                         }
                     }
                 });
+                log::debug!(target: "ffmpeg", "{}", s.trim());
             }
         }
     }};

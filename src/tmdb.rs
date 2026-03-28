@@ -48,6 +48,13 @@ fn urlencoding(s: &str) -> String {
 }
 
 fn tmdb_get(path: &str, api_key: &str, extra_params: &[(&str, &str)]) -> Result<serde_json::Value> {
+    if extra_params.is_empty() {
+        log::debug!("TMDb request: {}", path);
+    } else {
+        let params: Vec<String> = extra_params.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+        log::debug!("TMDb request: {}?{}", path, params.join("&"));
+    }
+
     let mut url = format!("https://api.themoviedb.org/3{}?api_key={}", path, api_key);
     for (k, v) in extra_params {
         url.push('&');
