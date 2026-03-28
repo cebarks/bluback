@@ -47,6 +47,10 @@ pub struct Config {
     pub overwrite: Option<bool>,
     pub aacs_backend: Option<String>,
     pub multi_drive: Option<String>,
+    pub log_file: Option<bool>,
+    pub log_level: Option<String>,
+    pub log_dir: Option<String>,
+    pub max_log_files: Option<u32>,
 }
 
 fn config_dir() -> PathBuf {
@@ -143,6 +147,11 @@ impl Config {
         emit_bool(&mut out, "verbose_libbluray", self.verbose_libbluray, false);
         emit_str(&mut out, "aacs_backend", &self.aacs_backend, "auto");
         emit_str(&mut out, "multi_drive", &self.multi_drive, "auto");
+        out.push('\n');
+        emit_bool(&mut out, "log_file", self.log_file, true);
+        emit_str(&mut out, "log_level", &self.log_level, "warn");
+        emit_str(&mut out, "log_dir", &self.log_dir, "");
+        emit_u32(&mut out, "max_log_files", self.max_log_files, 10);
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
 
@@ -258,6 +267,28 @@ impl Config {
         self.multi_drive.as_deref().unwrap_or("auto")
     }
 
+    pub fn log_file_enabled(&self) -> bool {
+        self.log_file.unwrap_or(true)
+    }
+
+    pub fn log_level(&self) -> &str {
+        self.log_level.as_deref().unwrap_or("warn")
+    }
+
+    pub fn log_dir(&self) -> PathBuf {
+        if let Some(ref dir) = self.log_dir {
+            return PathBuf::from(dir);
+        }
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
+        home.join(".local").join("share").join("bluback").join("logs")
+    }
+
+    pub fn max_log_files(&self) -> u32 {
+        self.max_log_files.unwrap_or(10)
+    }
+
     pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
         match self.stream_selection.as_deref() {
             Some("prefer_surround") => crate::media::StreamSelection::PreferSurround,
@@ -295,6 +326,10 @@ const KNOWN_KEYS: &[&str] = &[
     "overwrite",
     "aacs_backend",
     "multi_drive",
+    "log_file",
+    "log_level",
+    "log_dir",
+    "max_log_files",
 ];
 
 pub fn validate_raw_toml(raw: &str) -> Vec<String> {
@@ -321,6 +356,19 @@ pub fn validate_config(config: &Config) -> Vec<String> {
             warnings.push(format!(
                 "reserve_index_space = {} KB seems too large (max recommended: 10000 KB)",
                 r
+            ));
+        }
+    }
+    if let Some(m) = config.max_log_files {
+        if m == 0 {
+            warnings.push("max_log_files must be > 0".into());
+        }
+    }
+    if let Some(ref level) = config.log_level {
+        if !["error", "warn", "info", "debug", "trace"].contains(&level.as_str()) {
+            warnings.push(format!(
+                "log_level must be error, warn, info, debug, or trace — got \"{}\"",
+                level
             ));
         }
     }
@@ -895,5 +943,67 @@ also_unknown = 42"#;
             ..Default::default()
         });
         assert!(warnings.iter().any(|w| w.contains("multi_drive")));
+    }
+
+    #[test]
+    fn test_parse_log_config() {
+        let toml_str = r#"
+            log_file = false
+            log_level = "debug"
+            log_dir = "/tmp/bluback-logs"
+            max_log_files = 5
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.log_file, Some(false));
+        assert_eq!(config.log_level.as_deref(), Some("debug"));
+        assert_eq!(config.log_dir.as_deref(), Some("/tmp/bluback-logs"));
+        assert_eq!(config.max_log_files, Some(5));
+    }
+
+    #[test]
+    fn test_log_config_defaults() {
+        let config = Config::default();
+        assert!(config.log_file_enabled());
+        assert_eq!(config.log_level(), "warn");
+        assert_eq!(config.max_log_files(), 10);
+        assert!(config.log_dir().to_string_lossy().ends_with("bluback/logs"));
+    }
+
+    #[test]
+    fn test_validate_max_log_files_zero_warns() {
+        let config = Config {
+            max_log_files: Some(0),
+            ..Default::default()
+        };
+        let warnings = validate_config(&config);
+        assert!(warnings.iter().any(|w| w.contains("max_log_files")));
+    }
+
+    #[test]
+    fn test_validate_invalid_log_level_warns() {
+        let config = Config {
+            log_level: Some("verbose".into()),
+            ..Default::default()
+        };
+        let warnings = validate_config(&config);
+        assert!(warnings.iter().any(|w| w.contains("log_level")));
+    }
+
+    #[test]
+    fn test_log_config_serialization_roundtrip() {
+        let config = Config {
+            log_file: Some(false),
+            log_level: Some("debug".into()),
+            max_log_files: Some(5),
+            ..Default::default()
+        };
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains("log_file = false"));
+        assert!(toml_str.contains(r#"log_level = "debug""#));
+        assert!(toml_str.contains("max_log_files = 5"));
+        let reparsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(reparsed.log_file, Some(false));
+        assert_eq!(reparsed.log_level.as_deref(), Some("debug"));
+        assert_eq!(reparsed.max_log_files, Some(5));
     }
 }
