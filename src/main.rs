@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod disc;
 mod drive_monitor;
+mod logging;
 mod media;
 mod rip;
 mod session;
@@ -127,6 +128,18 @@ pub struct Args {
     /// Validate environment and configuration, then exit
     #[arg(long)]
     check: bool,
+
+    /// Stderr log verbosity: error, warn, info, debug, trace [default: warn]
+    #[arg(long, value_parser = ["error", "warn", "info", "debug", "trace"])]
+    log_level: Option<String>,
+
+    /// Disable log file output
+    #[arg(long)]
+    no_log: bool,
+
+    /// Custom log file path (overrides default location)
+    #[arg(long, conflicts_with = "no_log")]
+    log_file: Option<PathBuf>,
 }
 
 impl Args {
