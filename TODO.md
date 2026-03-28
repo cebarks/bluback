@@ -35,12 +35,24 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 - [x] macOS CI workflow + release builds (aarch64-apple-darwin)
 - [x] macOS installation guide (`docs/macos-installation.md`)
 
+## Completed: v0.9 — Multi-Drive & CI
+
+- [x] DriveMonitor — background drive polling with event channel
+- [x] Multi-session coordinator — spawns/kills per-drive sessions, routes input
+- [x] DriveSession — per-drive rip workflow with independent state
+- [x] Tab bar UI — device name, state, live rip progress per session
+- [x] Inter-session linking (Ctrl+L) — copy TMDb context between sessions
+- [x] Episode overlap detection across sessions
+- [x] `multi_drive` config option (auto/manual)
+- [x] View-based render architecture replacing App-based rendering
+- [x] CI consolidation — 5-platform matrix (Ubuntu/Fedora x86_64+aarch64, macOS aarch64)
+- [x] Code cleanup — dead code removal, clippy fixes
+
 ## Upcoming Milestones
 
-- **v0.9** — Quality of Life: log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection
-- **v0.10** — DVD Support: disc type abstraction, title enumeration, chapter extraction, CSS errors
-- **v0.11** — UHD Blu-ray: AACS 2.0, HDR metadata verification
-- **v0.12** — Multi-Drive & Automation: parallel ripping, batch mode, disc history
+- **v0.10** — Quality of Life & Automation: log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history
+- **v0.11** — DVD Support: disc type abstraction, title enumeration, chapter extraction, CSS errors
+- **v0.12** — UHD Blu-ray: AACS 2.0, HDR metadata verification
 - **v0.13** — Intelligence & Distribution: TMDb S00 auto-matching, shell completions, man page
 - **v1.0** — Final Release: README rewrite, investigation spikes, integration testing
 

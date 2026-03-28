@@ -2,7 +2,7 @@
 
 ## Context
 
-bluback is at v0.8.0 with solid core functionality, a stable foundation, and cross-platform support (Linux + macOS). Core features: FFmpeg-based Blu-ray remux, TUI wizard, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
+bluback is at v0.9.0 with solid core functionality, multi-drive support, cross-platform coverage (Linux + macOS), and 5-platform CI. Core features: FFmpeg-based Blu-ray remux, TUI wizard with multi-drive tab UI, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
 
 ## Architectural Principles
 
@@ -17,10 +17,10 @@ bluback is at v0.8.0 with solid core functionality, a stable foundation, and cro
 | **v0.6** | Stability & Safety | Bug fixes, error handling, signal handling, overwrite, exit codes, output dir auto-creation |
 | **v0.7** | Architecture & CLI Completeness | Workflow extraction, specials CLI, headless progress, `--check`, `--list-playlists` stream info |
 | **v0.8** | macOS Support | Platform-specific disc ops, FFmpeg 7.0+ compat, fork-free scanning, Homebrew library discovery, macOS CI + release builds |
-| **v0.9** | Quality of Life | Log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection |
-| **v0.10** | DVD Support | Disc type abstraction, title enumeration, chapter extraction, CSS errors |
-| **v0.11** | UHD Blu-ray | AACS 2.0, HDR metadata verification |
-| **v0.12** | Multi-Drive & Automation | Parallel ripping, drive selection, continuous batch mode, disc history |
+| **v0.9** | Multi-Drive & CI | Multi-drive detection, parallel sessions, tab UI, drive monitor, inter-session linking, episode overlap detection, 5-platform CI |
+| **v0.10** | Quality of Life & Automation | Log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history |
+| **v0.11** | DVD Support | Disc type abstraction, title enumeration, chapter extraction, CSS errors |
+| **v0.12** | UHD Blu-ray | AACS 2.0, HDR metadata verification |
 | **v0.13** | Intelligence & Distribution | TMDb S00 auto-matching, shell completions, man page |
 | **v1.0** | Final Release | README rewrite, investigation spikes, integration testing, release |
 
@@ -111,9 +111,45 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.9 — Quality of Life
+## v0.9 — Multi-Drive & CI (RELEASED)
 
-*Features that make daily use more pleasant and reliable.*
+*Multi-drive support with parallel sessions and 5-platform CI. Released 2026-03-28.*
+
+**What shipped:**
+
+### Multi-Drive Architecture
+- **DriveMonitor** (`src/drive_monitor.rs`): Background thread polling optical drives every 2 seconds, tracking drive appearances/disappearances, disc insertions/ejections via `DriveEvent` channel
+- **Coordinator** (`src/tui/coordinator.rs`): Central multi-session orchestrator — spawns/kills `DriveSession` instances based on drive monitor events, routes keyboard input to active session, handles tab switching (Tab/Shift+Tab)
+- **DriveSession** (`src/session.rs`): Per-drive session encapsulating the complete rip workflow (scanning → TMDb → wizard → ripping), with independent state and configuration
+- **Tab Bar** (`src/tui/tab_bar.rs`): Multi-session display showing device name, session state (Idle/Scanning/Wizard/Ripping/Done/Error), and live rip progress per session
+- **Inter-Session Linking** (Ctrl+L): Copy TMDb context (show name, season, next episode) from one session to another — avoids redundant TMDb lookups across discs of the same show
+- **Episode Overlap Detection**: Coordinator tracks episode assignments across sessions, warns if two sessions assign the same episode for the same show/season
+- **`multi_drive` Config Option**: `"auto"` (default, TUI auto-detects all drives) or `"manual"` (single device mode)
+- Core types: `SessionId`, `TabState`, `TabSummary`, `SessionCommand`, `SessionMessage`, `SharedContext`, `DriveEvent`, `Notification`
+
+### CI Consolidation
+- Consolidated `ci.yml` + `macos.yml` into single unified workflow
+- Lint (fmt + clippy) runs once on Ubuntu
+- Test matrix: Ubuntu x86_64/aarch64, Fedora x86_64/aarch64, macOS aarch64
+- Fedora jobs use `container: fedora:43` on Ubuntu runners
+- All 5 platforms are hard gates
+
+### Code Cleanup
+- Removed dead `App`-based rendering code superseded by `View`-based architecture
+- Fixed clippy warnings
+
+**Known incomplete items (deferred to future milestones):**
+- `Notification` variants defined but not emitted by sessions (infrastructure ready)
+- `SessionMessage::Progress` incremental updates not flowing (sessions emit full snapshots)
+- Concurrent CLI mode (`// TODO(multi-drive)` in `cli.rs`)
+- Per-session output directories
+- Cross-session filename collision detection
+
+---
+
+## v0.10 — Quality of Life & Automation
+
+*Features that make daily use more pleasant and reliable, plus batch automation.*
 
 ### 15. Log file support
 - `--log-file <PATH>` or auto-log to `~/.local/share/bluback/logs/`
@@ -147,9 +183,21 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - **Config:** `audio_languages`, `subtitle_languages` defaults
 - **Files:** `src/media/remux.rs`, `src/tui/wizard.rs`, `src/main.rs`, `src/config.rs`
 
+### 30. Continuous batch mode
+- Rip → eject → wait for next disc → auto-start
+- TUI: "continuous mode" toggle; CLI: `--batch` flag
+- Disc history integration: skip already-ripped discs
+- **Files:** `src/tui/mod.rs`, `src/cli.rs`, `src/workflow.rs`
+
+### 31. Disc history / rip database
+- Track ripped discs (volume label, date, output files, success/failure)
+- Storage: `~/.local/share/bluback/history.json`
+- `--history` to list; `--force` to override duplicate detection
+- **Files:** New `src/history.rs`, `src/config.rs`, `src/workflow.rs`
+
 ---
 
-## v0.10 — DVD Support
+## v0.11 — DVD Support
 
 *Requires its own detailed design spec before implementation.*
 
@@ -175,7 +223,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 ---
 
-## v0.11 — UHD Blu-ray
+## v0.12 — UHD Blu-ray
 
 *Verify and improve support for 4K UHD Blu-ray discs.*
 
@@ -192,31 +240,6 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - Show HDR type prominently in playlist info and TUI
 - Warn on Dolby Vision profile compatibility issues
 - **Files:** `src/tui/wizard.rs`, `src/cli.rs`
-
----
-
-## v0.12 — Multi-Drive & Automation
-
-### 28. Multi-drive detection + selection UI
-- TUI: scanning screen shows all drives with status
-- CLI: multiple `--device` flags or `--device all`
-- **Files:** `src/disc.rs`, `src/tui/mod.rs`, `src/types.rs`
-
-### 29. Parallel ripping
-- Per-drive remux thread + mpsc; per-drive progress bars; independent cancellation
-- **Files:** `src/rip.rs`, `src/tui/dashboard.rs`, `src/tui/mod.rs`, `src/workflow.rs`
-
-### 30. Continuous batch mode
-- Rip → eject → wait for next disc → auto-start
-- TUI: "continuous mode" toggle; CLI: `--batch` flag
-- Disc history integration: skip already-ripped discs
-- **Files:** `src/tui/mod.rs`, `src/cli.rs`, `src/workflow.rs`
-
-### 31. Disc history / rip database
-- Track ripped discs (volume label, date, output files, success/failure)
-- Storage: `~/.local/share/bluback/history.json`
-- `--history` to list; `--force` to override duplicate detection
-- **Files:** New `src/history.rs`, `src/config.rs`, `src/workflow.rs`
 
 ---
 
@@ -312,10 +335,10 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 v0.6 (stability)
  └─► v0.7 (architecture + CLI)
       └─► v0.8 (macOS support)
-           └─► v0.9 (quality of life)
-                └─► v0.10 (DVD)
-                     ├─► v0.11 (UHD)
-                     └─► v0.12 (multi-drive + batch)
+           └─► v0.9 (multi-drive + CI)
+                └─► v0.10 (quality of life + automation)
+                     └─► v0.11 (DVD)
+                          ├─► v0.12 (UHD)
                           └─► v0.13 (intelligence + distro)
                                └─► v1.0 (release)
 ```
@@ -327,7 +350,7 @@ v0.6 (stability)
 | FFmpeg `dvd://` log output unparseable | Fallback: sequential title probing |
 | No Rust IFO parser for DVD chapters | Check if FFmpeg populates AVChapter from DVD input first |
 | AACS 2.0 may require unavailable libraries | Document limitation; focus on discs with known VUKs |
-| Parallel ripping TUI complexity | Per-drive tab UI; careful RipState decomposition |
+| Parallel ripping TUI complexity | Per-drive tab UI; careful RipState decomposition (delivered in v0.9) |
 | Scope creep | Each milestone gets its own design spec; strict scope gates |
 | Workflow extraction too disruptive | Incremental; start with rip orchestration, expand |
 
