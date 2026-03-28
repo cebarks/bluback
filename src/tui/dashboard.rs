@@ -425,6 +425,7 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         stream_selection,
         cancel,
         session.config.reserve_index_space(),
+        None,
     );
 
     let (tx, rx) = mpsc::channel();

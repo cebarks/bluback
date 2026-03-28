@@ -40,6 +40,7 @@ pub fn prepare_remux_options(
     stream_selection: StreamSelection,
     cancel: Arc<AtomicBool>,
     reserve_index_space_kb: u32,
+    metadata: Option<crate::types::MkvMetadata>,
 ) -> RemuxOptions {
     let chapters = mount_point
         .and_then(|mount| {
@@ -55,7 +56,7 @@ pub fn prepare_remux_options(
         stream_selection,
         cancel,
         reserve_index_space_kb,
-        metadata: None,
+        metadata,
     }
 }
 
@@ -272,6 +273,7 @@ mod tests {
             StreamSelection::All,
             cancel,
             500,
+            None,
         );
         assert_eq!(opts.device, "/dev/sr0");
         assert_eq!(opts.playlist, "00001");
@@ -296,6 +298,7 @@ mod tests {
             StreamSelection::All,
             cancel,
             500,
+            None,
         );
         assert!(opts.chapters.is_empty());
     }

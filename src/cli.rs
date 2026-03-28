@@ -318,7 +318,32 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         headless,
     )?;
 
-    rip_selected(args, config, &device, &episodes_pl, &selected, &outfiles)
+    let metadata_enabled = config.metadata_enabled() && !args.no_metadata;
+    let custom_tags = config.metadata_tags();
+    let metadata_per_playlist: Vec<Option<crate::types::MkvMetadata>> = selected
+        .iter()
+        .map(|&idx| {
+            let pl = &episodes_pl[idx];
+            let episodes = tmdb_ctx
+                .episode_assignments
+                .get(&pl.num)
+                .cloned()
+                .unwrap_or_default();
+            crate::workflow::build_metadata(
+                metadata_enabled,
+                movie_mode,
+                tmdb_ctx.show_name.as_deref(),
+                tmdb_ctx.season_num,
+                &episodes,
+                tmdb_ctx.movie_title.as_ref().map(|(t, _)| t.as_str()),
+                tmdb_ctx.movie_title.as_ref().map(|(_, y)| y.as_str()),
+                None,
+                &custom_tags,
+            )
+        })
+        .collect();
+
+    rip_selected(args, config, &device, &episodes_pl, &selected, &outfiles, &metadata_per_playlist)
 }
 
 fn scan_disc(
@@ -884,6 +909,7 @@ fn rip_selected(
     episodes_pl: &[Playlist],
     selected: &[usize],
     outfiles: &[PathBuf],
+    metadata_per_playlist: &[Option<crate::types::MkvMetadata>],
 ) -> anyhow::Result<()> {
     if args.dry_run {
         println!("\n[DRY RUN] Would rip:");
@@ -967,6 +993,7 @@ fn rip_selected(
             stream_selection.clone(),
             cancel,
             config.reserve_index_space(),
+            metadata_per_playlist[i].clone(),
         );
 
         let pl_seconds = pl.seconds;
