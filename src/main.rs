@@ -7,6 +7,7 @@ mod disc;
 mod drive_monitor;
 mod media;
 mod rip;
+mod session;
 mod tmdb;
 mod tui;
 mod types;
