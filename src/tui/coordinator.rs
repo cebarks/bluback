@@ -388,6 +388,7 @@ impl Coordinator {
             .nth(self.active_tab)
     }
 
+    #[allow(dead_code)] // Will be used for session-specific operations (e.g., direct state mutation)
     fn active_session_mut(&mut self) -> Option<&mut SessionHandle> {
         let tab = self.active_tab;
         self.sessions

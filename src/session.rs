@@ -139,6 +139,7 @@ impl DriveSession {
     }
 
     /// Build a compact tab bar summary for this session.
+    #[allow(dead_code)] // Used indirectly by coordinator via snapshot-based tab summary updates
     pub fn tab_summary(&self) -> TabSummary {
         let device_name = self
             .device

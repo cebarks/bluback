@@ -269,10 +269,10 @@ fn parse_child_output(data: &str) -> (&str, u8, Option<String>) {
     }
 }
 
-/// Thread-local log capture buffer. When `Some`, the log callback stores
-/// formatted lines here. When `None`, log output is silently discarded.
-/// This enables parallel disc scans — each thread captures its own log output
-/// independently since FFmpeg's `av_log()` runs synchronously on the calling thread.
+// Thread-local log capture buffer. When `Some`, the log callback stores
+// formatted lines here. When `None`, log output is silently discarded.
+// This enables parallel disc scans — each thread captures its own log output
+// independently since FFmpeg's `av_log()` runs synchronously on the calling thread.
 thread_local! {
     static THREAD_LOG_BUFFER: std::cell::RefCell<Option<Vec<String>>> =
         const { std::cell::RefCell::new(None) };

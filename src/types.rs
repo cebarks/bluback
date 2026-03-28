@@ -202,6 +202,7 @@ pub enum TabState {
 /// Compact summary for tab bar rendering
 #[derive(Debug, Clone)]
 pub struct TabSummary {
+    #[allow(dead_code)] // Part of multi-drive API; used for overlap tracking
     pub session_id: SessionId,
     pub device_name: String,
     pub state: TabState,
@@ -227,17 +228,20 @@ pub enum SessionMessage {
     /// Full display state snapshot (on screen transitions, wizard changes)
     Snapshot(Box<RenderSnapshot>),
     /// Lightweight rip progress update (frequent during remux)
+    #[allow(dead_code)] // Part of multi-drive API; not yet emitted but handled by coordinator
     Progress {
         session_id: SessionId,
         progress: RipProgress,
         job_index: usize,
     },
     /// One-shot event notification
+    #[allow(dead_code)] // Part of multi-drive API; not yet emitted but handled by coordinator
     Notification(Notification),
 }
 
 /// One-shot notifications from session to main thread
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Part of multi-drive API; variants not yet constructed but handled by coordinator
 pub enum Notification {
     /// Session's screen changed (for tab bar update)
     ScreenChanged {
@@ -295,7 +299,7 @@ pub enum DriveEvent {
     /// Optical drive removed
     DriveDisappeared(std::path::PathBuf),
     /// Disc inserted into a drive (device, volume_label)
-    DiscInserted(std::path::PathBuf, String),
+    DiscInserted(std::path::PathBuf, #[allow(dead_code)] String),
     /// Disc ejected from a drive
     DiscEjected(std::path::PathBuf),
 }
@@ -305,6 +309,7 @@ pub enum DriveEvent {
 #[derive(Debug, Clone)]
 pub struct RenderSnapshot {
     pub session_id: SessionId,
+    #[allow(dead_code)] // Part of multi-drive API; available for per-session device display
     pub device: std::path::PathBuf,
     pub screen: crate::tui::Screen,
     pub status_message: String,
@@ -330,12 +335,14 @@ pub struct ScanningView {
 pub struct TmdbView {
     pub has_api_key: bool,
     pub movie_mode: bool,
+    #[allow(dead_code)] // Part of multi-drive view API; populated by session snapshot
     pub search_query: String,
     pub input_buffer: String,
     pub input_focus: crate::tui::InputFocus,
     pub show_results: Vec<TmdbShow>,
     pub movie_results: Vec<TmdbMovie>,
     pub list_cursor: usize,
+    #[allow(dead_code)] // Part of multi-drive view API; populated by session snapshot
     pub show_name: String,
     pub label: String,
     pub episodes_pl_count: usize,
@@ -367,6 +374,7 @@ pub struct PlaylistView {
     pub input_focus: crate::tui::InputFocus,
     pub input_buffer: String,
     pub chapter_counts: HashMap<String, usize>,
+    #[allow(dead_code)] // Part of multi-drive view API; available for episode name display
     pub episodes: Vec<Episode>,
     pub label: String,
     pub filenames: HashMap<String, String>,
@@ -376,7 +384,9 @@ pub struct PlaylistView {
 pub struct ConfirmView {
     pub filenames: Vec<String>,
     pub playlists: Vec<Playlist>,
+    #[allow(dead_code)] // Part of multi-drive view API; available for episode detail display
     pub episode_assignments: EpisodeAssignments,
+    #[allow(dead_code)] // Part of multi-drive view API; available for scroll position
     pub list_cursor: usize,
     pub movie_mode: bool,
     pub label: String,
@@ -397,8 +407,10 @@ pub struct DashboardView {
 #[derive(Debug, Clone)]
 pub struct DoneView {
     pub jobs: Vec<RipJob>,
+    #[allow(dead_code)] // Part of multi-drive view API; available for done screen header
     pub label: String,
     pub disc_detected_label: Option<String>,
+    #[allow(dead_code)] // Part of multi-drive view API; controls post-rip eject behavior
     pub eject: bool,
     pub status_message: String,
     pub filenames: Vec<String>,
