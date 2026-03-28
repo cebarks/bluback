@@ -1,5 +1,6 @@
 pub mod dashboard;
 pub mod settings;
+pub mod tab_bar;
 pub mod wizard;
 
 use anyhow::Result;
