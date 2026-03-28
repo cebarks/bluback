@@ -8,6 +8,7 @@ use regex::Regex;
 
 use super::{ensure_init, MediaError};
 use crate::types::{AudioStream, MediaInfo, Playlist, StreamInfo};
+
 use crate::util::duration_to_seconds;
 
 /// Timeout for AACS/libbluray operations (seconds).
@@ -93,11 +94,12 @@ fn scan_with_log_capture(
     device: &str,
     _on_progress: Option<&dyn Fn(u64, u64)>,
 ) -> Result<(Vec<String>, Option<String>), MediaError> {
-    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    {
-        let mut guard = LOG_CAPTURE_LINES.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = Some(std::sync::Arc::clone(&captured));
-    }
+    // Activate thread-local capture buffer
+    THREAD_LOG_BUFFER.with(|buf| {
+        *buf.borrow_mut() = Some(Vec::new());
+    });
+
+    // Set log level and callback (idempotent — same function pointer for all threads)
     ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
     unsafe {
         ffmpeg_the_third::ffi::av_log_set_callback(Some(log_capture_callback));
@@ -105,12 +107,11 @@ fn scan_with_log_capture(
 
     let result = open_bluray(device, None);
 
-    let lines: Vec<String> = captured
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .iter()
+    // Collect captured lines and deactivate capture
+    let lines: Vec<String> = THREAD_LOG_BUFFER
+        .with(|buf| buf.borrow_mut().take().unwrap_or_default())
+        .into_iter()
         .filter(|l| !l.is_empty())
-        .cloned()
         .collect();
 
     match result {
@@ -148,11 +149,9 @@ fn scan_with_log_capture(
         // === CHILD PROCESS ===
         unsafe { libc::close(pipe_read) };
 
-        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        {
-            let mut guard = LOG_CAPTURE_LINES.lock().unwrap_or_else(|p| p.into_inner());
-            *guard = Some(std::sync::Arc::clone(&captured));
-        }
+        THREAD_LOG_BUFFER.with(|buf| {
+            *buf.borrow_mut() = Some(Vec::new());
+        });
         ffmpeg_the_third::log::set_level(ffmpeg_the_third::log::Level::Info);
         unsafe {
             ffmpeg_the_third::ffi::av_log_set_callback(Some(log_capture_callback));
@@ -160,7 +159,8 @@ fn scan_with_log_capture(
 
         let result = open_bluray(device, None);
 
-        let lines = captured.lock().unwrap_or_else(|p| p.into_inner());
+        let lines: Vec<String> =
+            THREAD_LOG_BUFFER.with(|buf| buf.borrow_mut().take().unwrap_or_default());
         let mut buf = String::new();
         for line in lines.iter() {
             buf.push_str(line);
@@ -269,10 +269,14 @@ fn parse_child_output(data: &str) -> (&str, u8, Option<String>) {
     }
 }
 
-/// Global storage for the log capture callback's output buffer.
-/// This is a Mutex<Option<Arc<Mutex<Vec<String>>>>> so the C callback can access it.
-static LOG_CAPTURE_LINES: std::sync::Mutex<Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>> =
-    std::sync::Mutex::new(None);
+// Thread-local log capture buffer. When `Some`, the log callback stores
+// formatted lines here. When `None`, log output is silently discarded.
+// This enables parallel disc scans — each thread captures its own log output
+// independently since FFmpeg's `av_log()` runs synchronously on the calling thread.
+thread_local! {
+    static THREAD_LOG_BUFFER: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// Shared implementation for the log capture callback.
 ///
@@ -304,13 +308,13 @@ macro_rules! log_capture_body {
         if len > 0 {
             let len = (len as usize).min(buf.len());
             if let Ok(s) = std::str::from_utf8(&buf[..len]) {
-                if let Ok(guard) = LOG_CAPTURE_LINES.lock() {
-                    if let Some(ref arc) = *guard {
-                        if let Ok(mut lines) = arc.lock() {
+                THREAD_LOG_BUFFER.with(|buf| {
+                    if let Ok(mut borrow) = buf.try_borrow_mut() {
+                        if let Some(ref mut lines) = *borrow {
                             lines.push(s.to_string());
                         }
                     }
-                }
+                });
             }
         }
     }};

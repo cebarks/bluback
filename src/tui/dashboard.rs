@@ -4,14 +4,13 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Wrap};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 
-use super::{App, Screen};
+use super::Screen;
 use crate::rip;
-use crate::types::PlaylistStatus;
+use crate::types::{DashboardView, DoneView, PlaylistStatus};
 use crate::util::format_size;
 
-pub fn render(f: &mut Frame, app: &App) {
-    let done_count = app
-        .rip
+pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str, area: Rect) {
+    let done_count = view
         .jobs
         .iter()
         .filter(|j| {
@@ -21,7 +20,7 @@ pub fn render(f: &mut Frame, app: &App) {
             )
         })
         .count();
-    let total = app.rip.jobs.len();
+    let total = view.jobs.len();
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -30,10 +29,10 @@ pub fn render(f: &mut Frame, app: &App) {
             Constraint::Min(4),    // job table
             Constraint::Length(1), // key hints
         ])
-        .split(f.area());
+        .split(area);
 
     // Title with stats
-    let stats_text = active_rip_stats(app);
+    let stats_text = active_rip_stats_view(view);
     let title_text = if stats_text.is_empty() {
         format!("Ripping: {}/{} complete", done_count, total)
     } else {
@@ -42,8 +41,13 @@ pub fn render(f: &mut Frame, app: &App) {
             done_count, total, stats_text
         )
     };
+    let block_title = if view.label.is_empty() {
+        "bluback".to_string()
+    } else {
+        format!("bluback — {}", view.label)
+    };
     let title =
-        Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title("bluback"));
+        Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title(block_title));
     f.render_widget(title, chunks[0]);
 
     // Job table
@@ -53,8 +57,7 @@ pub fn render(f: &mut Frame, app: &App) {
             .add_modifier(Modifier::BOLD),
     );
 
-    let rows: Vec<Row> = app
-        .rip
+    let rows: Vec<Row> = view
         .jobs
         .iter()
         .enumerate()
@@ -144,10 +147,10 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(table, chunks[1]);
 
     // Key hints / confirmation prompts
-    let hint = if app.rip.confirm_abort {
+    let hint = if view.confirm_abort {
         Paragraph::new("Really abort? [y] Yes  [n] No")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-    } else if app.rip.confirm_rescan {
+    } else if view.confirm_rescan {
         Paragraph::new("Rescan disc? This will abort the current rip. [y] Yes  [n] No").style(
             Style::default()
                 .fg(Color::Yellow)
@@ -160,9 +163,8 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(hint, chunks[2]);
 }
 
-pub fn render_done(f: &mut Frame, app: &App) {
-    let completed: Vec<_> = app
-        .rip
+pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
+    let completed: Vec<_> = view
         .jobs
         .iter()
         .filter_map(|j| match &j.status {
@@ -170,8 +172,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
             _ => None,
         })
         .collect();
-    let skipped: Vec<_> = app
-        .rip
+    let skipped: Vec<_> = view
         .jobs
         .iter()
         .filter_map(|j| match &j.status {
@@ -179,8 +180,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
             _ => None,
         })
         .collect();
-    let failed_count = app
-        .rip
+    let failed_count = view
         .jobs
         .iter()
         .filter(|j| matches!(j.status, PlaylistStatus::Failed(_)))
@@ -193,22 +193,21 @@ pub fn render_done(f: &mut Frame, app: &App) {
             Constraint::Min(4),
             Constraint::Length(1),
         ])
-        .split(f.area());
+        .split(area);
 
     // When showing an error with no rip jobs, put a short summary in the title
     // and the full message in the results body where it can wrap.
-    let error_in_body = !app.status_message.is_empty()
-        && app.rip.jobs.is_empty()
-        && app.wizard.filenames.is_empty();
+    let error_in_body =
+        !view.status_message.is_empty() && view.jobs.is_empty() && view.filenames.is_empty();
 
     let summary = if error_in_body {
-        app.status_message
+        view.status_message
             .split(':')
             .next()
             .expect("split always yields at least one element")
             .to_string()
-    } else if !app.status_message.is_empty() {
-        app.status_message.clone()
+    } else if !view.status_message.is_empty() {
+        view.status_message.clone()
     } else if failed_count > 0 || !skipped.is_empty() {
         let mut parts = vec![format!("{} ripped", completed.len())];
         if !skipped.is_empty() {
@@ -220,7 +219,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
         format!(
             "Completed {} of {} playlist(s) ({})",
             completed.len() + skipped.len(),
-            app.rip.jobs.len(),
+            view.jobs.len(),
             parts.join(", ")
         )
     } else {
@@ -234,11 +233,11 @@ pub fn render_done(f: &mut Frame, app: &App) {
     let mut lines: Vec<Line> = Vec::new();
     if error_in_body {
         lines.push(
-            Line::from(format!("  {}", app.status_message)).style(Style::default().fg(Color::Red)),
+            Line::from(format!("  {}", view.status_message)).style(Style::default().fg(Color::Red)),
         );
-    } else if app.rip.jobs.is_empty() && !app.wizard.filenames.is_empty() {
+    } else if view.jobs.is_empty() && !view.filenames.is_empty() {
         // Dry run: show what would have been ripped
-        for name in &app.wizard.filenames {
+        for name in &view.filenames {
             lines.push(Line::from(format!("  {}", name)));
         }
     } else {
@@ -251,7 +250,7 @@ pub fn render_done(f: &mut Frame, app: &App) {
                     .style(Style::default().fg(Color::DarkGray)),
             );
         }
-        for job in &app.rip.jobs {
+        for job in &view.jobs {
             if let PlaylistStatus::Failed(msg) = &job.status {
                 lines.push(
                     Line::from(format!("  {} - FAILED: {}", job.filename, msg))
@@ -272,8 +271,8 @@ pub fn render_done(f: &mut Frame, app: &App) {
     .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 
-    if let Some(ref label) = app.disc_detected_label {
-        let popup_area = centered_rect(60, 5, f.area());
+    if let Some(ref label) = view.disc_detected_label {
+        let popup_area = centered_rect(60, 5, area);
         f.render_widget(Clear, popup_area);
         let popup = Paragraph::new(format!(
             "New disc detected: {}\n\nPress Enter to start, any other key to exit",
@@ -282,187 +281,6 @@ pub fn render_done(f: &mut Frame, app: &App) {
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL).title("New Disc"));
         f.render_widget(popup, popup_area);
-    }
-}
-
-pub fn handle_input(app: &mut App, key: KeyEvent) {
-    if app.rip.confirm_abort {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.rip.cancel.store(true, Ordering::Relaxed);
-                app.rip.progress_rx = None;
-                app.quit = true;
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.rip.confirm_abort = false;
-            }
-            _ => {}
-        }
-        return;
-    }
-
-    if key.code == KeyCode::Char('q') {
-        app.rip.confirm_abort = true;
-    }
-}
-
-pub fn tick(app: &mut App) -> anyhow::Result<()> {
-    if check_all_done(app) {
-        return Ok(());
-    }
-
-    if app.rip.progress_rx.is_none() {
-        start_next_job(app);
-        return Ok(());
-    }
-
-    poll_active_job(app);
-    Ok(())
-}
-
-fn check_all_done(app: &mut App) -> bool {
-    let all_done = app.rip.jobs.iter().all(|j| {
-        matches!(
-            j.status,
-            PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) | PlaylistStatus::Failed(_)
-        )
-    });
-
-    if all_done && !app.rip.jobs.is_empty() {
-        app.rip.progress_rx = None;
-        app.screen = Screen::Done;
-        if app.disc.did_mount {
-            let _ = crate::disc::unmount_disc(&app.args.device().to_string_lossy());
-            app.disc.did_mount = false;
-        }
-        super::start_disc_scan(app);
-        app.screen = Screen::Done; // Override start_disc_scan's screen change
-        true
-    } else {
-        false
-    }
-}
-
-fn start_next_job(app: &mut App) {
-    let next_idx = app
-        .rip
-        .jobs
-        .iter()
-        .position(|j| matches!(j.status, PlaylistStatus::Pending));
-
-    let Some(idx) = next_idx else {
-        return;
-    };
-
-    app.rip.current_rip = idx;
-    let job_playlist = app.rip.jobs[idx].playlist.clone();
-    let device = app.args.device().to_string_lossy().to_string();
-    let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
-    if let Some(parent) = outfile.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            app.rip.jobs[idx].status = PlaylistStatus::Failed(format!(
-                "Failed to create output directory {}: {}",
-                parent.display(),
-                e
-            ));
-            return;
-        }
-    }
-
-    match crate::workflow::check_overwrite(&outfile, app.config.overwrite() || app.args.overwrite) {
-        Ok(crate::workflow::OverwriteAction::Proceed) => {}
-        Ok(crate::workflow::OverwriteAction::Skip(size)) => {
-            app.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
-            return;
-        }
-        Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
-        Err(e) => {
-            app.rip.jobs[idx].status =
-                PlaylistStatus::Failed(format!("Overwrite check failed: {}", e));
-            return;
-        }
-    }
-
-    let stream_selection = app.config.resolve_stream_selection();
-    let cancel = app.rip.cancel.clone();
-    cancel.store(false, Ordering::Relaxed);
-
-    let options = crate::workflow::prepare_remux_options(
-        &device,
-        &job_playlist,
-        &outfile,
-        app.disc.mount_point.as_deref(),
-        stream_selection,
-        cancel,
-        app.config.reserve_index_space(),
-    );
-
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let tx_progress = tx.clone();
-        let result = crate::media::remux::remux(options, |progress| {
-            let _ = tx_progress.send(Ok(progress.clone()));
-        });
-        match result {
-            Ok(_chapters_added) => {} // success — sender drops, receiver sees Disconnected
-            Err(e) => {
-                let _ = tx.send(Err(e));
-            }
-        }
-    });
-
-    app.rip.progress_rx = Some(rx);
-    app.rip.jobs[idx].status = PlaylistStatus::Ripping(crate::types::RipProgress::default());
-}
-
-fn poll_active_job(app: &mut App) {
-    let rx = match app.rip.progress_rx {
-        Some(ref rx) => rx,
-        None => return,
-    };
-
-    loop {
-        match rx.try_recv() {
-            Ok(Ok(progress)) => {
-                let idx = app.rip.current_rip;
-                app.rip.jobs[idx].status = PlaylistStatus::Ripping(progress);
-            }
-            Ok(Err(crate::media::MediaError::Cancelled)) => {
-                let idx = app.rip.current_rip;
-                let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
-                if outfile.exists() {
-                    let _ = std::fs::remove_file(&outfile);
-                }
-                app.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
-                app.rip.progress_rx = None;
-                return;
-            }
-            Ok(Err(e)) => {
-                let idx = app.rip.current_rip;
-                let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
-                if outfile.exists() {
-                    let _ = std::fs::remove_file(&outfile);
-                }
-                app.rip.jobs[idx].status = PlaylistStatus::Failed(e.to_string());
-                app.rip.progress_rx = None;
-                return;
-            }
-            Err(mpsc::TryRecvError::Empty) => {
-                // No more messages right now
-                return;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                // Sender dropped = remux thread finished successfully
-                let idx = app.rip.current_rip;
-                if matches!(app.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
-                    let outfile = app.args.output.join(&app.rip.jobs[idx].filename);
-                    let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
-                    app.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
-                }
-                app.rip.progress_rx = None;
-                return;
-            }
-        }
     }
 }
 
@@ -488,8 +306,199 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     Rect::new(area.x + x, area.y + y, popup_width, height)
 }
 
-fn active_rip_stats(app: &App) -> String {
-    if let Some(job) = app.rip.jobs.get(app.rip.current_rip) {
+// --- Session variants of dashboard handlers ---
+
+pub fn handle_input_session(session: &mut crate::session::DriveSession, key: KeyEvent) {
+    if session.rip.confirm_abort {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                session.rip.cancel.store(true, Ordering::Relaxed);
+                session.rip.progress_rx = None;
+                // Session doesn't set quit — the coordinator handles lifecycle
+                // Instead, transition to Done so the session reports completion
+                session.screen = Screen::Done;
+                session.status_message = "Rip aborted.".into();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                session.rip.confirm_abort = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    if key.code == KeyCode::Char('q') {
+        session.rip.confirm_abort = true;
+    }
+}
+
+/// Tick the rip engine for a DriveSession. Returns true if state changed.
+pub fn tick_session(session: &mut crate::session::DriveSession) -> bool {
+    if check_all_done_session(session) {
+        return true;
+    }
+
+    if session.rip.progress_rx.is_none() {
+        let started = start_next_job_session(session);
+        return started;
+    }
+
+    poll_active_job_session(session)
+}
+
+fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
+    let all_done = session.rip.jobs.iter().all(|j| {
+        matches!(
+            j.status,
+            PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) | PlaylistStatus::Failed(_)
+        )
+    });
+
+    if all_done && !session.rip.jobs.is_empty() {
+        session.rip.progress_rx = None;
+        session.screen = Screen::Done;
+        if session.disc.did_mount {
+            let _ = crate::disc::unmount_disc(&session.device.to_string_lossy());
+            session.disc.did_mount = false;
+        }
+        // Start scanning for next disc
+        session.start_disc_scan();
+        session.screen = Screen::Done; // Override start_disc_scan's screen change
+        true
+    } else {
+        false
+    }
+}
+
+fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
+    let next_idx = session
+        .rip
+        .jobs
+        .iter()
+        .position(|j| matches!(j.status, PlaylistStatus::Pending));
+
+    let Some(idx) = next_idx else {
+        return false;
+    };
+
+    session.rip.current_rip = idx;
+    let job_playlist = session.rip.jobs[idx].playlist.clone();
+    let device = session.device.to_string_lossy().to_string();
+    let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+    if let Some(parent) = outfile.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            session.rip.jobs[idx].status = PlaylistStatus::Failed(format!(
+                "Failed to create output directory {}: {}",
+                parent.display(),
+                e
+            ));
+            return true;
+        }
+    }
+
+    match crate::workflow::check_overwrite(
+        &outfile,
+        session.config.overwrite() || session.overwrite,
+    ) {
+        Ok(crate::workflow::OverwriteAction::Proceed) => {}
+        Ok(crate::workflow::OverwriteAction::Skip(size)) => {
+            session.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
+            return true;
+        }
+        Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
+        Err(e) => {
+            session.rip.jobs[idx].status =
+                PlaylistStatus::Failed(format!("Overwrite check failed: {}", e));
+            return true;
+        }
+    }
+
+    let stream_selection = session.config.resolve_stream_selection();
+    let cancel = session.rip.cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+
+    let options = crate::workflow::prepare_remux_options(
+        &device,
+        &job_playlist,
+        &outfile,
+        session.disc.mount_point.as_deref(),
+        stream_selection,
+        cancel,
+        session.config.reserve_index_space(),
+    );
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let tx_progress = tx.clone();
+        let result = crate::media::remux::remux(options, |progress| {
+            let _ = tx_progress.send(Ok(progress.clone()));
+        });
+        match result {
+            Ok(_chapters_added) => {} // success — sender drops, receiver sees Disconnected
+            Err(e) => {
+                let _ = tx.send(Err(e));
+            }
+        }
+    });
+
+    session.rip.progress_rx = Some(rx);
+    session.rip.jobs[idx].status = PlaylistStatus::Ripping(crate::types::RipProgress::default());
+    true
+}
+
+fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
+    let rx = match session.rip.progress_rx {
+        Some(ref rx) => rx,
+        None => return false,
+    };
+
+    let mut changed = false;
+    loop {
+        match rx.try_recv() {
+            Ok(Ok(progress)) => {
+                let idx = session.rip.current_rip;
+                session.rip.jobs[idx].status = PlaylistStatus::Ripping(progress);
+                changed = true;
+            }
+            Ok(Err(crate::media::MediaError::Cancelled)) => {
+                let idx = session.rip.current_rip;
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
+                session.rip.progress_rx = None;
+                return true;
+            }
+            Ok(Err(e)) => {
+                let idx = session.rip.current_rip;
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed(e.to_string());
+                session.rip.progress_rx = None;
+                return true;
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                return changed;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                let idx = session.rip.current_rip;
+                if matches!(session.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
+                    let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                    let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
+                    session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+                }
+                session.rip.progress_rx = None;
+                return true;
+            }
+        }
+    }
+}
+
+fn active_rip_stats_view(view: &DashboardView) -> String {
+    if let Some(job) = view.jobs.get(view.current_rip) {
         if let PlaylistStatus::Ripping(ref prog) = job.status {
             let time_str = rip::format_eta(prog.out_time_secs);
             let bitrate_str =

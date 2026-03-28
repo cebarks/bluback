@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub struct Playlist {
@@ -177,6 +178,242 @@ pub enum BackgroundResult {
     SeasonFetch(anyhow::Result<Vec<Episode>>),
     /// Media info probes completed (one per selected playlist)
     MediaProbe(Vec<Option<MediaInfo>>),
+}
+
+// =============================================================================
+// Multi-drive types
+// =============================================================================
+
+/// Unique identifier for a drive session
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SessionId(pub u64);
+
+/// State shown in the tab bar for each session
+#[derive(Debug, Clone, PartialEq)]
+pub enum TabState {
+    Idle,
+    Scanning,
+    Wizard,
+    Ripping,
+    Done,
+    Error,
+}
+
+/// Compact summary for tab bar rendering
+#[derive(Debug, Clone)]
+pub struct TabSummary {
+    #[allow(dead_code)] // Part of multi-drive API; used for overlap tracking
+    pub session_id: SessionId,
+    pub device_name: String,
+    pub state: TabState,
+    /// (current_job, total_jobs, overall_percent)
+    pub rip_progress: Option<(usize, usize, u8)>,
+    pub error: Option<String>,
+}
+
+/// Commands sent from main thread to a session thread
+pub enum SessionCommand {
+    /// Keyboard input routed to this session
+    KeyEvent(crossterm::event::KeyEvent),
+    /// Copy TMDb/season/episode context from another session
+    LinkTo { context: SharedContext },
+    /// Config was updated via settings panel
+    ConfigChanged(crate::config::Config),
+    /// Drive removed or app shutting down
+    Shutdown,
+}
+
+/// Messages sent from a session thread to the main thread
+pub enum SessionMessage {
+    /// Full display state snapshot (on screen transitions, wizard changes)
+    Snapshot(Box<RenderSnapshot>),
+    /// Lightweight rip progress update (frequent during remux)
+    #[allow(dead_code)] // Part of multi-drive API; not yet emitted but handled by coordinator
+    Progress {
+        session_id: SessionId,
+        progress: RipProgress,
+        job_index: usize,
+    },
+    /// One-shot event notification
+    #[allow(dead_code)] // Part of multi-drive API; not yet emitted but handled by coordinator
+    Notification(Notification),
+}
+
+/// One-shot notifications from session to main thread
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Part of multi-drive API; variants not yet constructed but handled by coordinator
+pub enum Notification {
+    /// Session's screen changed (for tab bar update)
+    ScreenChanged {
+        session_id: SessionId,
+        tab_summary: TabSummary,
+    },
+    /// Episode assignments confirmed (for overlap validation)
+    EpisodesAssigned {
+        session_id: SessionId,
+        show_name: String,
+        season: u32,
+        episodes: Vec<u32>,
+    },
+    /// Rip job completed
+    RipComplete {
+        session_id: SessionId,
+        filename: String,
+        size: u64,
+    },
+    /// Rip job failed
+    RipFailed {
+        session_id: SessionId,
+        filename: String,
+        error: String,
+    },
+    /// All rip jobs done
+    AllDone { session_id: SessionId },
+    /// Session crashed
+    SessionCrashed {
+        session_id: SessionId,
+        error: String,
+    },
+    /// New disc detected (on Done screen)
+    DiscDetected {
+        session_id: SessionId,
+        label: String,
+    },
+}
+
+/// Context copied from one session to another for linked multi-disc workflows
+#[derive(Debug, Clone)]
+pub struct SharedContext {
+    pub show_name: String,
+    pub tmdb_show: Option<TmdbShow>,
+    pub season_num: u32,
+    pub next_episode: u32,
+    pub movie_mode: bool,
+    pub episodes: Vec<Episode>,
+}
+
+/// Events from the drive monitor thread
+pub enum DriveEvent {
+    /// New optical drive detected
+    DriveAppeared(std::path::PathBuf),
+    /// Optical drive removed
+    DriveDisappeared(std::path::PathBuf),
+    /// Disc inserted into a drive (device, volume_label)
+    DiscInserted(std::path::PathBuf, #[allow(dead_code)] String),
+    /// Disc ejected from a drive
+    DiscEjected(std::path::PathBuf),
+}
+
+/// Full display-only state sent from session to main thread for rendering.
+/// Only the view matching the current screen is populated.
+#[derive(Debug, Clone)]
+pub struct RenderSnapshot {
+    pub session_id: SessionId,
+    #[allow(dead_code)] // Part of multi-drive API; available for per-session device display
+    pub device: std::path::PathBuf,
+    pub screen: crate::tui::Screen,
+    pub status_message: String,
+    pub spinner_frame: usize,
+    /// Available once TMDb lookup complete (for Ctrl+L link picker)
+    pub linkable_context: Option<SharedContext>,
+    pub scanning: Option<ScanningView>,
+    pub tmdb: Option<TmdbView>,
+    pub season: Option<SeasonView>,
+    pub playlist_mgr: Option<PlaylistView>,
+    pub confirm: Option<ConfirmView>,
+    pub dashboard: Option<DashboardView>,
+    pub done: Option<DoneView>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScanningView {
+    pub label: String,
+    pub scan_log: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TmdbView {
+    pub has_api_key: bool,
+    pub movie_mode: bool,
+    #[allow(dead_code)] // Part of multi-drive view API; populated by session snapshot
+    pub search_query: String,
+    pub input_buffer: String,
+    pub input_focus: crate::tui::InputFocus,
+    pub show_results: Vec<TmdbShow>,
+    pub movie_results: Vec<TmdbMovie>,
+    pub list_cursor: usize,
+    #[allow(dead_code)] // Part of multi-drive view API; populated by session snapshot
+    pub show_name: String,
+    pub label: String,
+    pub episodes_pl_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct SeasonView {
+    pub show_name: String,
+    pub season_num: Option<u32>,
+    pub input_buffer: String,
+    pub input_focus: crate::tui::InputFocus,
+    pub episodes: Vec<Episode>,
+    pub list_cursor: usize,
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlaylistView {
+    pub movie_mode: bool,
+    pub show_name: String,
+    pub season_num: Option<u32>,
+    pub playlists: Vec<Playlist>,
+    pub episodes_pl: Vec<Playlist>,
+    pub playlist_selected: Vec<bool>,
+    pub episode_assignments: EpisodeAssignments,
+    pub specials: HashSet<String>,
+    pub show_filtered: bool,
+    pub list_cursor: usize,
+    pub input_focus: crate::tui::InputFocus,
+    pub input_buffer: String,
+    pub chapter_counts: HashMap<String, usize>,
+    #[allow(dead_code)] // Part of multi-drive view API; available for episode name display
+    pub episodes: Vec<Episode>,
+    pub label: String,
+    pub filenames: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfirmView {
+    pub filenames: Vec<String>,
+    pub playlists: Vec<Playlist>,
+    #[allow(dead_code)] // Part of multi-drive view API; available for episode detail display
+    pub episode_assignments: EpisodeAssignments,
+    #[allow(dead_code)] // Part of multi-drive view API; available for scroll position
+    pub list_cursor: usize,
+    pub movie_mode: bool,
+    pub label: String,
+    pub output_dir: String,
+    pub dry_run: bool,
+    pub media_infos: Vec<Option<MediaInfo>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DashboardView {
+    pub jobs: Vec<RipJob>,
+    pub current_rip: usize,
+    pub confirm_abort: bool,
+    pub confirm_rescan: bool,
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DoneView {
+    pub jobs: Vec<RipJob>,
+    #[allow(dead_code)] // Part of multi-drive view API; available for done screen header
+    pub label: String,
+    pub disc_detected_label: Option<String>,
+    #[allow(dead_code)] // Part of multi-drive view API; controls post-rip eject behavior
+    pub eject: bool,
+    pub status_message: String,
+    pub filenames: Vec<String>,
 }
 
 pub enum Overlay {
@@ -1006,6 +1243,40 @@ mod tests {
         state.cursor = last;
         state.move_cursor_down();
         assert_eq!(state.cursor, last);
+    }
+
+    #[test]
+    fn test_session_id_equality() {
+        assert_eq!(SessionId(1), SessionId(1));
+        assert_ne!(SessionId(1), SessionId(2));
+    }
+
+    #[test]
+    fn test_tab_summary_from_screen() {
+        let summary = TabSummary {
+            session_id: SessionId(1),
+            device_name: "sr0".into(),
+            state: TabState::Ripping,
+            rip_progress: Some((2, 5, 40)),
+            error: None,
+        };
+        assert_eq!(summary.state, TabState::Ripping);
+        assert_eq!(summary.rip_progress, Some((2, 5, 40)));
+    }
+
+    #[test]
+    fn test_shared_context_clone() {
+        let ctx = SharedContext {
+            show_name: "Test Show".into(),
+            tmdb_show: None,
+            season_num: 1,
+            next_episode: 5,
+            movie_mode: false,
+            episodes: vec![],
+        };
+        let cloned = ctx.clone();
+        assert_eq!(cloned.show_name, "Test Show");
+        assert_eq!(cloned.next_episode, 5);
     }
 
     #[test]

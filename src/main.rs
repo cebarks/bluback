@@ -4,8 +4,10 @@ mod check;
 mod cli;
 mod config;
 mod disc;
+mod drive_monitor;
 mod media;
 mod rip;
+mod session;
 mod tmdb;
 mod tui;
 mod types;
@@ -253,20 +255,26 @@ fn run_inner() -> anyhow::Result<i32> {
     }
 
     // Apply config defaults to args
-    if args.device.is_none() {
-        if let Some(ref dev) = config.device {
-            if dev != "auto-detect" {
-                args.device = Some(PathBuf::from(dev));
-            }
-        }
-    }
     if args.output.as_os_str() == "." {
         if let Some(ref dir) = config.output_dir {
             args.output = PathBuf::from(dir);
         }
     }
 
-    if args.device.is_none() {
+    let use_tui = !args.no_tui && atty_stdout();
+
+    // Device resolution: in TUI multi-drive auto mode, leave args.device as None
+    // so the coordinator's DriveMonitor can detect and manage all drives.
+    // In CLI mode or TUI manual mode, resolve a single device.
+    let multi_drive_auto = use_tui && config.multi_drive_mode() == "auto";
+    if args.device.is_none() && !multi_drive_auto {
+        if let Some(ref dev) = config.device {
+            if dev != "auto-detect" {
+                args.device = Some(PathBuf::from(dev));
+            }
+        }
+    }
+    if args.device.is_none() && !multi_drive_auto {
         let drives = disc::detect_optical_drives();
         if let Some(drive) = drives.first() {
             args.device = Some(drive.clone());
@@ -280,7 +288,6 @@ fn run_inner() -> anyhow::Result<i32> {
         return Ok(EXIT_SUCCESS);
     }
 
-    let use_tui = !args.no_tui && atty_stdout();
     let headless = args.yes || (!atty_stdin() && !use_tui);
 
     if use_tui {
