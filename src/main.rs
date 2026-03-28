@@ -230,18 +230,7 @@ fn run_inner() -> anyhow::Result<i32> {
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path);
 
-    if config_path.exists() {
-        if let Ok(raw) = std::fs::read_to_string(&config_path) {
-            for w in config::validate_raw_toml(&raw) {
-                log::warn!("{} in {}", w, config_path.display());
-            }
-            for w in config::validate_config(&config) {
-                log::warn!("{}", w);
-            }
-        }
-    }
-
-    // Initialize logging
+    // Initialize logging before config validation so warnings are captured
     let use_tui = !args.no_tui && atty_stdout();
     let stderr_level = logging::parse_level(
         args.log_level
@@ -255,6 +244,17 @@ fn run_inner() -> anyhow::Result<i32> {
         args.no_log,
         use_tui,
     )?;
+
+    if config_path.exists() {
+        if let Ok(raw) = std::fs::read_to_string(&config_path) {
+            for w in config::validate_raw_toml(&raw) {
+                log::warn!("{} in {}", w, config_path.display());
+            }
+            for w in config::validate_config(&config) {
+                log::warn!("{}", w);
+            }
+        }
+    }
 
     if let Some(ref path) = log_path {
         let header = logging::session_header(

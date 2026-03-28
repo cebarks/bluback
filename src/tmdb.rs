@@ -70,7 +70,10 @@ fn tmdb_get(path: &str, api_key: &str, extra_params: &[(&str, &str)]) -> Result<
         .get(&url)
         .header("Accept", "application/json")
         .call()
-        .context("TMDb request failed")?
+        .map_err(|e| {
+            let msg = e.to_string().replace(api_key, "***");
+            anyhow::anyhow!("TMDb request to {} failed: {}", path, msg)
+        })?
         .body_mut()
         .read_json()
         .context("Failed to parse TMDb response")

@@ -67,7 +67,7 @@ pub fn session_header(
          Output dir:   {output_dir}\n\
          Config:       {config_path}\n\
          AACS backend: {aacs_backend}\n\
-         ===",
+         ===\n",
         config_path = config_path.display(),
     )
 }
