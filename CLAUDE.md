@@ -25,11 +25,11 @@ FFmpeg development libraries and clang are required at build time (bindgen gener
 **Fedora/RHEL:** `sudo dnf install ffmpeg-free-devel clang clang-libs pkg-config` (or `ffmpeg-devel` from [RPMFusion](https://rpmfusion.org/) for broader codec support)
 **Ubuntu/Debian:** `sudo apt install libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev pkg-config clang libclang-dev`
 **Arch:** `sudo pacman -S ffmpeg clang pkgconf`
-**macOS:** `brew install ffmpeg llvm pkg-config` — Ensure llvm's clang is in PATH: `export PATH="/opt/homebrew/opt/llvm/bin:$PATH"`
+**macOS:** `brew install ffmpeg llvm pkg-config` — Ensure llvm's clang is in PATH: `export PATH="/opt/homebrew/opt/llvm/bin:$PATH"`. **CRITICAL:** Homebrew's default FFmpeg does NOT include `--enable-libbluray`. You must patch the formula and rebuild from source (see `docs/macos-installation.md`).
 
 ### Runtime Requirements
 
-- FFmpeg shared libraries (libavformat, libavcodec, libavutil, etc.) — typically installed with the dev packages above or the `ffmpeg` package
+- FFmpeg shared libraries (libavformat, libavcodec, libavutil, etc.) — typically installed with the dev packages above or the `ffmpeg` package. **macOS:** Must be compiled with `--enable-libbluray` for the `bluray://` protocol.
 - **libaacs** + **libbluray** — for Blu-ray AACS decryption and playlist enumeration (macOS: `brew install libaacs libbluray`)
 - `~/.config/aacs/KEYDB.cfg` — containing device keys, processing keys, and/or per-disc VUKs
 - A Blu-ray drive accessible as a block device:
@@ -38,6 +38,7 @@ FFmpeg development libraries and clang are required at build time (bindgen gener
 - Platform-specific tools:
   - Linux: `udisksctl` (from `udisks2`), `eject`
   - macOS: `diskutil`, `drutil` (both built-in)
+- **macOS dlopen workaround:** libbluray loads libaacs/libmmbd at runtime via `dlopen()`, but `/opt/homebrew/lib/` is not in macOS's default search path. Symlinks to `/usr/local/lib/` are required (see `docs/macos-installation.md`).
 
 ### AACS Decryption Details
 
