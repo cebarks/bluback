@@ -164,6 +164,7 @@ pub struct TmdbLookupResult {
     pub episodes: Vec<Episode>,
     pub season: u32,
     pub show_name: String,
+    pub first_air_date: Option<String>,
 }
 
 /// Result types for background operations in TUI mode

@@ -437,14 +437,6 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         } else {
             None
         };
-        let movie_year = if session.tmdb.movie_mode {
-            session.tmdb.movie_results
-                .get(session.tmdb.selected_movie.unwrap_or(0))
-                .and_then(|m| m.release_date.as_deref())
-                .map(|d| if d.len() >= 4 { &d[..4] } else { d })
-        } else {
-            None
-        };
         crate::workflow::build_metadata(
             metadata_enabled,
             session.tmdb.movie_mode,
@@ -452,7 +444,6 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
             session.wizard.season_num,
             episodes,
             movie_title,
-            movie_year,
             date,
             &custom_tags,
         )

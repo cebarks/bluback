@@ -153,7 +153,6 @@ pub fn build_metadata(
     season: Option<u32>,
     episodes: &[Episode],
     movie_title: Option<&str>,
-    _movie_year: Option<&str>,
     date_released: Option<&str>,
     custom_tags: &HashMap<String, String>,
 ) -> Option<crate::types::MkvMetadata> {
@@ -450,7 +449,7 @@ mod tests {
             true, false,
             Some("Game of Thrones"), Some(3),
             &[crate::types::Episode { episode_number: 9, name: "The Rains of Castamere".into(), runtime: None }],
-            None, None, Some("2013-06-02"),
+            None, Some("2013-06-02"),
             &HashMap::new(),
         );
         let meta = meta.unwrap();
@@ -470,7 +469,7 @@ mod tests {
                 crate::types::Episode { episode_number: 3, name: "Ep Three".into(), runtime: None },
                 crate::types::Episode { episode_number: 4, name: "Ep Four".into(), runtime: None },
             ],
-            None, None, None, &HashMap::new(),
+            None, None, &HashMap::new(),
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Ep Three / Ep Four");
@@ -481,7 +480,7 @@ mod tests {
     fn test_build_metadata_movie() {
         let meta = build_metadata(
             true, true, None, None, &[],
-            Some("Blade Runner 2049"), Some("2017"), Some("2017-10-06"),
+            Some("Blade Runner 2049"), Some("2017-10-06"),
             &HashMap::new(),
         );
         let meta = meta.unwrap();
@@ -496,7 +495,7 @@ mod tests {
     fn test_build_metadata_tmdb_skipped() {
         let meta = build_metadata(
             true, false, Some("Manual Title"), None, &[],
-            None, None, None, &HashMap::new(),
+            None, None, &HashMap::new(),
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Manual Title");
@@ -512,7 +511,7 @@ mod tests {
         let meta = build_metadata(
             true, false, Some("Show"), Some(1),
             &[crate::types::Episode { episode_number: 1, name: "Pilot".into(), runtime: None }],
-            None, None, None, &custom,
+            None, None, &custom,
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["STUDIO"], "HBO");
@@ -526,7 +525,7 @@ mod tests {
         let meta = build_metadata(
             true, false, Some("Show"), Some(1),
             &[crate::types::Episode { episode_number: 1, name: "Auto Title".into(), runtime: None }],
-            None, None, None, &custom,
+            None, None, &custom,
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Custom Title");
@@ -537,7 +536,7 @@ mod tests {
         let meta = build_metadata(
             false, false, Some("Show"), Some(1),
             &[crate::types::Episode { episode_number: 1, name: "Pilot".into(), runtime: None }],
-            None, None, None, &HashMap::new(),
+            None, None, &HashMap::new(),
         );
         assert!(meta.is_none());
     }
@@ -547,7 +546,7 @@ mod tests {
         let meta = build_metadata(
             true, false, Some("Show"), Some(1),
             &[crate::types::Episode { episode_number: 1, name: String::new(), runtime: None }],
-            None, None, None, &HashMap::new(),
+            None, None, &HashMap::new(),
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Show");

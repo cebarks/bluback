@@ -51,6 +51,7 @@ struct TmdbContext {
     season_num: Option<u32>,
     movie_title: Option<(String, String)>,
     show_name: Option<String>,
+    date_released: Option<String>,
 }
 
 pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
@@ -336,8 +337,7 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
                 tmdb_ctx.season_num,
                 &episodes,
                 tmdb_ctx.movie_title.as_ref().map(|(t, _)| t.as_str()),
-                tmdb_ctx.movie_title.as_ref().map(|(_, y)| y.as_str()),
-                None,
+                tmdb_ctx.date_released.as_deref(),
                 &custom_tags,
             )
         })
@@ -419,6 +419,7 @@ fn lookup_tmdb(
         season_num: args.season.or(label_info.as_ref().map(|l| l.season)),
         movie_title: None,
         show_name: None,
+        date_released: None,
     };
 
     // --title: skip TMDb entirely, use the provided title directly
@@ -487,6 +488,12 @@ fn lookup_tmdb(
             } else {
                 ctx.movie_title = prompt_tmdb_movie(key, default_query)?;
             }
+            // Use movie year as date_released for metadata
+            if let Some((_, ref year)) = ctx.movie_title {
+                if !year.is_empty() {
+                    ctx.date_released = Some(year.clone());
+                }
+            }
         } else {
             if api_key.is_none() && (args.season.is_some() || args.start_episode.is_some()) {
                 println!("Warning: --season/--start-episode require TMDb. Ignoring.");
@@ -503,6 +510,7 @@ fn lookup_tmdb(
             if let Some(lookup) = lookup {
                 ctx.season_num = Some(lookup.season);
                 ctx.show_name = Some(lookup.show_name);
+                ctx.date_released = lookup.first_air_date;
 
                 let disc_number = label_info.as_ref().map(|l| l.disc);
                 let default_start = args
@@ -1246,6 +1254,7 @@ fn prompt_tmdb(
         episodes,
         season: season_num,
         show_name: show.name.clone(),
+        first_air_date: show.first_air_date.clone(),
     }))
 }
 
@@ -1393,6 +1402,7 @@ fn headless_tmdb_tv(
         episodes,
         season: season_num,
         show_name: show.name.clone(),
+        first_air_date: show.first_air_date.clone(),
     }))
 }
 
