@@ -460,12 +460,20 @@ impl DriveSession {
             .name(format!("scan-{}", self.device.display()))
             .spawn(move || {
                 let dev_str = device.to_string_lossy().to_string();
-                let label = crate::disc::get_volume_label(&dev_str);
-                if label.is_empty() {
+
+                // Poll for disc presence every 2 seconds until found
+                let label = loop {
+                    let l = crate::disc::get_volume_label(&dev_str);
+                    if !l.is_empty() {
+                        break l;
+                    }
                     let msg = format!("{} — no disc", dev_str);
-                    let _ = tx.send(BackgroundResult::WaitingForDisc(msg));
-                    return;
-                }
+                    if tx.send(BackgroundResult::WaitingForDisc(msg)).is_err() {
+                        return; // Receiver dropped, session shutting down
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                };
+
                 let _ = tx.send(BackgroundResult::DiscFound(dev_str.clone()));
                 if max_speed {
                     crate::disc::set_max_speed(&dev_str);

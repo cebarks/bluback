@@ -46,8 +46,13 @@ pub fn render_dashboard_view(
             done_count, total, stats_text
         )
     };
+    let block_title = if view.label.is_empty() {
+        "bluback".to_string()
+    } else {
+        format!("bluback — {}", view.label)
+    };
     let title =
-        Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title("bluback"));
+        Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title(block_title));
     f.render_widget(title, chunks[0]);
 
     // Job table

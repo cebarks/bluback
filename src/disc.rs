@@ -41,8 +41,59 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
 
 #[cfg(target_os = "macos")]
 pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
-    // drutil status shows the current optical drive's device path in the format:
-    //   "Type: BD-ROM               Name: /dev/disk6"
+    let mut drives = Vec::new();
+
+    // "drutil list" enumerates all optical drives with 1-based indices:
+    //   1  MATSHITA BD-MLT  UJ272    ST04 External
+    //   2  HL-DT-ST DVDRAM GP65NS60 YP00 External
+    // Then "drutil status -drive N" gives each drive's device path.
+    let list_output = match Command::new("drutil").arg("list").output() {
+        Ok(o) if o.status.success() => o,
+        _ => {
+            // Fallback: try plain "drutil status" for single-drive systems
+            return detect_optical_drives_single();
+        }
+    };
+
+    let list_text = String::from_utf8_lossy(&list_output.stdout);
+    let indices: Vec<u32> = list_text
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            // Lines starting with a digit are drive entries
+            trimmed.split_whitespace().next()?.parse::<u32>().ok()
+        })
+        .collect();
+
+    if indices.is_empty() {
+        return drives;
+    }
+
+    for idx in &indices {
+        if let Ok(status) = Command::new("drutil")
+            .args(["status", "-drive", &idx.to_string()])
+            .output()
+        {
+            if status.status.success() {
+                let text = String::from_utf8_lossy(&status.stdout);
+                for line in text.lines() {
+                    if let Some(pos) = line.find("Name:") {
+                        let after = line[pos + 5..].trim();
+                        if after.starts_with("/dev/") {
+                            drives.push(std::path::PathBuf::from(after));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    drives
+}
+
+/// Fallback: single-drive detection via plain "drutil status"
+#[cfg(target_os = "macos")]
+fn detect_optical_drives_single() -> Vec<std::path::PathBuf> {
     if let Ok(output) = Command::new("drutil").arg("status").output() {
         if output.status.success() {
             let text = String::from_utf8_lossy(&output.stdout);
@@ -56,7 +107,6 @@ pub fn detect_optical_drives() -> Vec<std::path::PathBuf> {
             }
         }
     }
-
     Vec::new()
 }
 
