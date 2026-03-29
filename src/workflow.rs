@@ -181,9 +181,17 @@ pub fn build_metadata(
                 .map(|e| e.name.as_str())
                 .filter(|n| !n.is_empty())
                 .collect();
-            if names.is_empty() { None } else { Some(names.join(" / ")) }
+            if names.is_empty() {
+                None
+            } else {
+                Some(names.join(" / "))
+            }
         } else if let Some(ep) = episodes.first() {
-            if ep.name.is_empty() { None } else { Some(ep.name.clone()) }
+            if ep.name.is_empty() {
+                None
+            } else {
+                Some(ep.name.clone())
+            }
         } else {
             None
         };
@@ -448,10 +456,17 @@ mod tests {
     #[test]
     fn test_build_metadata_tv_full() {
         let meta = build_metadata(
-            true, false,
-            Some("Game of Thrones"), Some(3),
-            &[crate::types::Episode { episode_number: 9, name: "The Rains of Castamere".into(), runtime: None }],
-            None, Some("2013-06-02"),
+            true,
+            false,
+            Some("Game of Thrones"),
+            Some(3),
+            &[crate::types::Episode {
+                episode_number: 9,
+                name: "The Rains of Castamere".into(),
+                runtime: None,
+            }],
+            None,
+            Some("2013-06-02"),
             &HashMap::new(),
         );
         let meta = meta.unwrap();
@@ -466,12 +481,25 @@ mod tests {
     #[test]
     fn test_build_metadata_tv_multi_episode() {
         let meta = build_metadata(
-            true, false, Some("Show"), Some(1),
+            true,
+            false,
+            Some("Show"),
+            Some(1),
             &[
-                crate::types::Episode { episode_number: 3, name: "Ep Three".into(), runtime: None },
-                crate::types::Episode { episode_number: 4, name: "Ep Four".into(), runtime: None },
+                crate::types::Episode {
+                    episode_number: 3,
+                    name: "Ep Three".into(),
+                    runtime: None,
+                },
+                crate::types::Episode {
+                    episode_number: 4,
+                    name: "Ep Four".into(),
+                    runtime: None,
+                },
             ],
-            None, None, &HashMap::new(),
+            None,
+            None,
+            &HashMap::new(),
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Ep Three / Ep Four");
@@ -481,8 +509,13 @@ mod tests {
     #[test]
     fn test_build_metadata_movie() {
         let meta = build_metadata(
-            true, true, None, None, &[],
-            Some("Blade Runner 2049"), Some("2017-10-06"),
+            true,
+            true,
+            None,
+            None,
+            &[],
+            Some("Blade Runner 2049"),
+            Some("2017-10-06"),
             &HashMap::new(),
         );
         let meta = meta.unwrap();
@@ -496,8 +529,14 @@ mod tests {
     #[test]
     fn test_build_metadata_tmdb_skipped() {
         let meta = build_metadata(
-            true, false, Some("Manual Title"), None, &[],
-            None, None, &HashMap::new(),
+            true,
+            false,
+            Some("Manual Title"),
+            None,
+            &[],
+            None,
+            None,
+            &HashMap::new(),
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Manual Title");
@@ -511,9 +550,18 @@ mod tests {
         let mut custom = HashMap::new();
         custom.insert("STUDIO".into(), "HBO".into());
         let meta = build_metadata(
-            true, false, Some("Show"), Some(1),
-            &[crate::types::Episode { episode_number: 1, name: "Pilot".into(), runtime: None }],
-            None, None, &custom,
+            true,
+            false,
+            Some("Show"),
+            Some(1),
+            &[crate::types::Episode {
+                episode_number: 1,
+                name: "Pilot".into(),
+                runtime: None,
+            }],
+            None,
+            None,
+            &custom,
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["STUDIO"], "HBO");
@@ -525,9 +573,18 @@ mod tests {
         let mut custom = HashMap::new();
         custom.insert("TITLE".into(), "Custom Title".into());
         let meta = build_metadata(
-            true, false, Some("Show"), Some(1),
-            &[crate::types::Episode { episode_number: 1, name: "Auto Title".into(), runtime: None }],
-            None, None, &custom,
+            true,
+            false,
+            Some("Show"),
+            Some(1),
+            &[crate::types::Episode {
+                episode_number: 1,
+                name: "Auto Title".into(),
+                runtime: None,
+            }],
+            None,
+            None,
+            &custom,
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Custom Title");
@@ -536,9 +593,18 @@ mod tests {
     #[test]
     fn test_build_metadata_disabled() {
         let meta = build_metadata(
-            false, false, Some("Show"), Some(1),
-            &[crate::types::Episode { episode_number: 1, name: "Pilot".into(), runtime: None }],
-            None, None, &HashMap::new(),
+            false,
+            false,
+            Some("Show"),
+            Some(1),
+            &[crate::types::Episode {
+                episode_number: 1,
+                name: "Pilot".into(),
+                runtime: None,
+            }],
+            None,
+            None,
+            &HashMap::new(),
         );
         assert!(meta.is_none());
     }
@@ -546,9 +612,18 @@ mod tests {
     #[test]
     fn test_build_metadata_no_empty_strings() {
         let meta = build_metadata(
-            true, false, Some("Show"), Some(1),
-            &[crate::types::Episode { episode_number: 1, name: String::new(), runtime: None }],
-            None, None, &HashMap::new(),
+            true,
+            false,
+            Some("Show"),
+            Some(1),
+            &[crate::types::Episode {
+                episode_number: 1,
+                name: String::new(),
+                runtime: None,
+            }],
+            None,
+            None,
+            &HashMap::new(),
         );
         let meta = meta.unwrap();
         assert_eq!(meta.tags["TITLE"], "Show");

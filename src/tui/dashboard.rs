@@ -422,16 +422,22 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         let custom_tags = session.config.metadata_tags();
         let episodes = &session.rip.jobs[idx].episode;
         let date = if session.tmdb.movie_mode {
-            session.tmdb.movie_results
+            session
+                .tmdb
+                .movie_results
                 .get(session.tmdb.selected_movie.unwrap_or(0))
                 .and_then(|m| m.release_date.as_deref())
         } else {
-            session.tmdb.search_results
+            session
+                .tmdb
+                .search_results
                 .get(session.tmdb.selected_show.unwrap_or(0))
                 .and_then(|s| s.first_air_date.as_deref())
         };
         let movie_title = if session.tmdb.movie_mode {
-            session.tmdb.movie_results
+            session
+                .tmdb
+                .movie_results
                 .get(session.tmdb.selected_movie.unwrap_or(0))
                 .map(|m| m.title.as_str())
         } else {
@@ -440,7 +446,9 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         crate::workflow::build_metadata(
             metadata_enabled,
             session.tmdb.movie_mode,
-            Some(&session.tmdb.show_name).filter(|s| !s.is_empty()).map(|s| s.as_str()),
+            Some(&session.tmdb.show_name)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.as_str()),
             session.wizard.season_num,
             episodes,
             movie_title,

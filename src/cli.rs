@@ -343,7 +343,15 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         })
         .collect();
 
-    rip_selected(args, config, &device, &episodes_pl, &selected, &outfiles, &metadata_per_playlist)
+    rip_selected(
+        args,
+        config,
+        &device,
+        &episodes_pl,
+        &selected,
+        &outfiles,
+        &metadata_per_playlist,
+    )
 }
 
 fn scan_disc(

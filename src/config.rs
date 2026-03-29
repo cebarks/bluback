@@ -176,7 +176,12 @@ impl Config {
                 }
             }
         }
-        if self.metadata.as_ref().and_then(|m| m.tags.as_ref()).is_none_or(|t| t.is_empty()) {
+        if self
+            .metadata
+            .as_ref()
+            .and_then(|m| m.tags.as_ref())
+            .is_none_or(|t| t.is_empty())
+        {
             out.push_str("# tags = { }\n");
         }
 
