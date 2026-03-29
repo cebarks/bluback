@@ -740,7 +740,7 @@ impl Coordinator {
                     if !session.dead {
                         let _ = session
                             .input_tx
-                            .send(SessionCommand::ConfigChanged(new_config.clone()));
+                            .send(SessionCommand::ConfigChanged(Box::new(new_config.clone())));
                     }
                 }
             }

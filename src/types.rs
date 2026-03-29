@@ -225,7 +225,7 @@ pub enum SessionCommand {
     /// Copy TMDb/season/episode context from another session
     LinkTo { context: SharedContext },
     /// Config was updated via settings panel
-    ConfigChanged(crate::config::Config),
+    ConfigChanged(Box<crate::config::Config>),
     /// Drive removed or app shutting down
     Shutdown,
 }

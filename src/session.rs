@@ -416,7 +416,7 @@ impl DriveSession {
                     self.emit_snapshot();
                 }
                 Ok(SessionCommand::ConfigChanged(config)) => {
-                    self.config = config;
+                    self.config = *config;
                     self.eject = self.config.should_eject(self.cli_eject);
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
