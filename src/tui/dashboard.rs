@@ -9,6 +9,77 @@ use crate::rip;
 use crate::types::{DashboardView, DoneView, PlaylistStatus};
 use crate::util::format_size;
 
+fn build_post_rip_vars(
+    session: &crate::session::DriveSession,
+    job_idx: usize,
+    status: &str,
+    error: &str,
+) -> std::collections::HashMap<&'static str, String> {
+    let job = &session.rip.jobs[job_idx];
+    let file_size = match &job.status {
+        crate::types::PlaylistStatus::Done(size) => *size,
+        _ => 0,
+    };
+    let outfile = session.output_dir.join(&job.filename);
+
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("file", outfile.display().to_string());
+    vars.insert("filename", job.filename.clone());
+    vars.insert("dir", session.output_dir.display().to_string());
+    vars.insert("size", file_size.to_string());
+    vars.insert("chapters", "0".to_string());
+    vars.insert(
+        "title",
+        if session.tmdb.movie_mode {
+            session
+                .tmdb
+                .movie_results
+                .get(session.tmdb.selected_movie.unwrap_or(0))
+                .map(|m| m.title.clone())
+                .unwrap_or_default()
+        } else {
+            session.tmdb.show_name.clone()
+        },
+    );
+    vars.insert(
+        "season",
+        session
+            .wizard
+            .season_num
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+    );
+    vars.insert(
+        "episode",
+        job.episode
+            .first()
+            .map(|e| e.episode_number.to_string())
+            .unwrap_or_default(),
+    );
+    vars.insert(
+        "episode_name",
+        job.episode
+            .first()
+            .map(|e| e.name.clone())
+            .unwrap_or_default(),
+    );
+    vars.insert("playlist", job.playlist.num.clone());
+    vars.insert("label", session.disc.label.clone());
+    vars.insert(
+        "mode",
+        if session.tmdb.movie_mode {
+            "movie"
+        } else {
+            "tv"
+        }
+        .to_string(),
+    );
+    vars.insert("device", session.device.display().to_string());
+    vars.insert("status", status.to_string());
+    vars.insert("error", error.to_string());
+    vars
+}
+
 pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str, area: Rect) {
     let done_count = view
         .jobs
@@ -361,6 +432,62 @@ fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
             let _ = crate::disc::unmount_disc(&session.device.to_string_lossy());
             session.disc.did_mount = false;
         }
+
+        // Post-session hook
+        {
+            let (succeeded, failed, skipped) =
+                session
+                    .rip
+                    .jobs
+                    .iter()
+                    .fold((0u32, 0u32, 0u32), |(s, f, sk), j| match j.status {
+                        PlaylistStatus::Done(_) => (s + 1, f, sk),
+                        PlaylistStatus::Failed(_) => (s, f + 1, sk),
+                        PlaylistStatus::Skipped(_) => (s, f, sk + 1),
+                        _ => (s, f, sk),
+                    });
+            let total = succeeded + failed + skipped;
+            let mut vars = std::collections::HashMap::new();
+            vars.insert(
+                "title",
+                if session.tmdb.movie_mode {
+                    session
+                        .tmdb
+                        .movie_results
+                        .get(session.tmdb.selected_movie.unwrap_or(0))
+                        .map(|m| m.title.clone())
+                        .unwrap_or_default()
+                } else {
+                    session.tmdb.show_name.clone()
+                },
+            );
+            vars.insert(
+                "season",
+                session
+                    .wizard
+                    .season_num
+                    .map(|n| n.to_string())
+                    .unwrap_or_default(),
+            );
+            vars.insert("label", session.disc.label.clone());
+            vars.insert("device", session.device.display().to_string());
+            vars.insert(
+                "mode",
+                if session.tmdb.movie_mode {
+                    "movie"
+                } else {
+                    "tv"
+                }
+                .to_string(),
+            );
+            vars.insert("dir", session.output_dir.display().to_string());
+            vars.insert("total", total.to_string());
+            vars.insert("succeeded", succeeded.to_string());
+            vars.insert("failed", failed.to_string());
+            vars.insert("skipped", skipped.to_string());
+            crate::hooks::run_post_session(&session.config, &vars, session.no_hooks);
+        }
+
         // Start scanning for next disc
         session.start_disc_scan();
         session.screen = Screen::Done; // Override start_disc_scan's screen change
@@ -509,16 +636,21 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                 }
                 session.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
                 session.rip.progress_rx = None;
+                let vars = build_post_rip_vars(session, idx, "failed", "Cancelled");
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 return true;
             }
             Ok(Err(e)) => {
                 let idx = session.rip.current_rip;
+                let err_msg = e.to_string();
                 let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
                 if outfile.exists() {
                     let _ = std::fs::remove_file(&outfile);
                 }
-                session.rip.jobs[idx].status = PlaylistStatus::Failed(e.to_string());
+                session.rip.jobs[idx].status = PlaylistStatus::Failed(err_msg.clone());
                 session.rip.progress_rx = None;
+                let vars = build_post_rip_vars(session, idx, "failed", &err_msg);
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 return true;
             }
             Err(mpsc::TryRecvError::Empty) => {
@@ -530,6 +662,8 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                     let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
                     let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
                     session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+                    let vars = build_post_rip_vars(session, idx, "success", "");
+                    crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 }
                 session.rip.progress_rx = None;
                 return true;
