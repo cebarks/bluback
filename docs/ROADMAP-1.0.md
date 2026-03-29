@@ -18,7 +18,7 @@ bluback is at v0.9.2 with solid core functionality, multi-drive support, cross-p
 | **v0.7** | Architecture & CLI Completeness | Workflow extraction, specials CLI, headless progress, `--check`, `--list-playlists` stream info |
 | **v0.8** | macOS Support | Platform-specific disc ops, FFmpeg 7.0+ compat, fork-free scanning, Homebrew library discovery, macOS CI + release builds |
 | **v0.9** | Multi-Drive & CI | Multi-drive detection, parallel sessions, tab UI, drive monitor, inter-session linking, episode overlap detection, 5-platform CI |
-| **v0.10** | Quality of Life & Automation | ~~Log files~~, ~~MKV metadata~~, pause/resume, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history |
+| **v0.10** | Quality of Life & Automation | ~~Log files~~, ~~MKV metadata~~, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history |
 | **v0.11** | DVD Support | Disc type abstraction, title enumeration, chapter extraction, CSS errors |
 | **v0.12** | UHD Blu-ray | AACS 2.0, HDR metadata verification |
 | **v0.13** | Intelligence & Distribution | TMDb S00 auto-matching, shell completions, man page |
@@ -174,11 +174,6 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
   - Uses `REMUXED_WITH` instead of `ENCODER` (FFmpeg overwrites `ENCODER` with its own version string)
 - **Files:** `src/types.rs`, `src/workflow.rs`, `src/media/remux.rs`, `src/config.rs`, `src/cli.rs`, `src/tui/dashboard.rs`, `src/session.rs`, `src/tui/settings.rs`
 
-### 16. Pause/resume during ripping
-- `AtomicBool` pause flag; remux loop sleeps until unpaused
-- TUI: `p` to toggle, "PAUSED" indicator
-- **Files:** `src/media/remux.rs`, `src/rip.rs`, `src/tui/dashboard.rs`
-
 ### 18. Post-rip hooks
 - `post_rip_command` config with template variables (`{file}`, `{title}`, `{season}`, `{episode}`)
 - Run via `std::process::Command`; don't fail rip on hook failure
@@ -313,6 +308,11 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - Windows remains: replace Linux-specific tools with WMI/PowerShell equivalents
 - Platform abstraction layer in `disc.rs` (pattern established by macOS `#[cfg]` approach)
 - Windows CI targets and cross-compilation
+
+### Pause/Resume During Ripping
+- `AtomicBool` pause flag; remux loop sleeps until unpaused
+- TUI: `p` to toggle, "PAUSED" indicator
+- Deferred from v0.10
 
 ### Desktop Notifications
 - Notify via `notify-send` (Linux), native APIs (macOS/Windows) when a long rip finishes
