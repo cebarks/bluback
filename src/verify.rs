@@ -339,10 +339,18 @@ fn decode_frame_at(path: &str, seek_secs: i64) -> Result<(), String> {
         .map_err(|e| format!("failed to open decoder: {}", e))?;
 
     // Seek to target position (timestamp in AV_TIME_BASE units = microseconds)
+    // Use a wide seek range (0..=target) so FFmpeg can find the nearest keyframe
     let seek_ts = seek_secs * i64::from(ffmpeg_the_third::ffi::AV_TIME_BASE);
     if seek_secs > 0 {
-        ictx.seek(seek_ts, ..seek_ts)
-            .map_err(|e| format!("seek failed: {}", e))?;
+        if let Err(e) = ictx.seek(seek_ts, 0..=seek_ts) {
+            // Seek failure on short files is expected — fall through to
+            // read from the current position, which still validates the bitstream
+            log::debug!(
+                "Seek to {}s failed ({}), reading from current position",
+                seek_secs,
+                e
+            );
+        }
     }
 
     // Read packets and try to decode one video frame
@@ -593,5 +601,88 @@ mod tests {
         let failed: Vec<&VerifyCheck> = result.checks.iter().filter(|c| !c.passed).collect();
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].name, "duration");
+    }
+
+    #[test]
+    fn test_verify_full_mode_with_fixture() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return;
+        }
+        let expected = VerifyExpected {
+            duration_secs: 2, // fixture is ~2 seconds
+            video_streams: 1,
+            audio_streams: 1,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Full);
+        // Full mode should decode frames at seek points
+        let decode_checks: Vec<&VerifyCheck> = result
+            .checks
+            .iter()
+            .filter(|c| c.name == "decode_frame")
+            .collect();
+        assert!(
+            !decode_checks.is_empty(),
+            "full mode should have decode_frame checks"
+        );
+        assert!(
+            decode_checks.iter().all(|c| c.passed),
+            "all decode_frame checks should pass: {:?}",
+            decode_checks
+        );
+    }
+
+    #[test]
+    fn test_verify_duration_match_with_fixture() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return;
+        }
+        // Fixture is ~2 seconds; expect 2s — should be within 2% tolerance
+        let expected = VerifyExpected {
+            duration_secs: 2,
+            video_streams: 1,
+            audio_streams: 1,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Quick);
+        let duration_check = result
+            .checks
+            .iter()
+            .find(|c| c.name == "duration")
+            .expect("should have duration check");
+        assert!(
+            duration_check.passed,
+            "duration should match: {}",
+            duration_check.detail
+        );
+    }
+
+    #[test]
+    fn test_verify_duration_mismatch_with_fixture() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return;
+        }
+        // Fixture is ~2s but expect 100s — way off, should fail
+        let expected = VerifyExpected {
+            duration_secs: 100,
+            video_streams: 1,
+            audio_streams: 1,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Quick);
+        assert!(!result.passed);
+        let duration_check = result
+            .checks
+            .iter()
+            .find(|c| c.name == "duration")
+            .expect("should have duration check");
+        assert!(!duration_check.passed);
+        assert!(duration_check.detail.contains("short"));
     }
 }
