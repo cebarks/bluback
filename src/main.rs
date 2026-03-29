@@ -5,6 +5,7 @@ mod cli;
 mod config;
 mod disc;
 mod drive_monitor;
+mod hooks;
 mod logging;
 mod media;
 mod rip;
