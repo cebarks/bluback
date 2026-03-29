@@ -664,6 +664,81 @@ impl SettingsState {
                 key: "metadata.enabled".into(),
                 value: config.metadata_enabled(),
             },
+            SettingItem::Separator {
+                label: Some("Hooks".into()),
+            },
+            SettingItem::Text {
+                label: "Post-Rip Command".into(),
+                key: "post_rip.command".into(),
+                value: config
+                    .post_rip
+                    .as_ref()
+                    .and_then(|h| h.command.clone())
+                    .unwrap_or_default(),
+            },
+            SettingItem::Toggle {
+                label: "  Run on Failure".into(),
+                key: "post_rip.on_failure".into(),
+                value: config
+                    .post_rip
+                    .as_ref()
+                    .map(|h| h.on_failure())
+                    .unwrap_or(false),
+            },
+            SettingItem::Toggle {
+                label: "  Blocking".into(),
+                key: "post_rip.blocking".into(),
+                value: config
+                    .post_rip
+                    .as_ref()
+                    .map(|h| h.blocking())
+                    .unwrap_or(true),
+            },
+            SettingItem::Toggle {
+                label: "  Log Output".into(),
+                key: "post_rip.log_output".into(),
+                value: config
+                    .post_rip
+                    .as_ref()
+                    .map(|h| h.log_output())
+                    .unwrap_or(true),
+            },
+            SettingItem::Text {
+                label: "Post-Session Command".into(),
+                key: "post_session.command".into(),
+                value: config
+                    .post_session
+                    .as_ref()
+                    .and_then(|h| h.command.clone())
+                    .unwrap_or_default(),
+            },
+            SettingItem::Toggle {
+                label: "  Run on Failure".into(),
+                key: "post_session.on_failure".into(),
+                value: config
+                    .post_session
+                    .as_ref()
+                    .map(|h| h.on_failure())
+                    .unwrap_or(false),
+            },
+            SettingItem::Toggle {
+                label: "  Blocking".into(),
+                key: "post_session.blocking".into(),
+                value: config
+                    .post_session
+                    .as_ref()
+                    .map(|h| h.blocking())
+                    .unwrap_or(true),
+            },
+            SettingItem::Toggle {
+                label: "  Log Output".into(),
+                key: "post_session.log_output".into(),
+                value: config
+                    .post_session
+                    .as_ref()
+                    .map(|h| h.log_output())
+                    .unwrap_or(true),
+            },
             SettingItem::Separator { label: None },
             SettingItem::Action {
                 label: "Save to Config (Ctrl+S)".into(),
@@ -851,6 +926,14 @@ impl SettingsState {
                     "tmdb_api_key" if !value.is_empty() => {
                         config.tmdb_api_key = Some(value.clone())
                     }
+                    "post_rip.command" if !value.is_empty() => {
+                        let hook = config.post_rip.get_or_insert_with(Default::default);
+                        hook.command = Some(value.clone());
+                    }
+                    "post_session.command" if !value.is_empty() => {
+                        let hook = config.post_session.get_or_insert_with(Default::default);
+                        hook.command = Some(value.clone());
+                    }
                     _ => {}
                 },
                 SettingItem::Toggle { key, value, .. } => match key.as_str() {
@@ -863,6 +946,30 @@ impl SettingsState {
                     "metadata.enabled" if !*value => {
                         let meta = config.metadata.get_or_insert_with(Default::default);
                         meta.enabled = Some(false);
+                    }
+                    "post_rip.on_failure" if *value => {
+                        let hook = config.post_rip.get_or_insert_with(Default::default);
+                        hook.on_failure = Some(true);
+                    }
+                    "post_rip.blocking" if !*value => {
+                        let hook = config.post_rip.get_or_insert_with(Default::default);
+                        hook.blocking = Some(false);
+                    }
+                    "post_rip.log_output" if !*value => {
+                        let hook = config.post_rip.get_or_insert_with(Default::default);
+                        hook.log_output = Some(false);
+                    }
+                    "post_session.on_failure" if *value => {
+                        let hook = config.post_session.get_or_insert_with(Default::default);
+                        hook.on_failure = Some(true);
+                    }
+                    "post_session.blocking" if !*value => {
+                        let hook = config.post_session.get_or_insert_with(Default::default);
+                        hook.blocking = Some(false);
+                    }
+                    "post_session.log_output" if !*value => {
+                        let hook = config.post_session.get_or_insert_with(Default::default);
+                        hook.log_output = Some(false);
                     }
                     _ => {}
                 },
@@ -1021,13 +1128,13 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 5 separators + 18 settings + 1 action = 24 items
+        // 6 separators + 26 settings + 1 action = 33 items
         let non_separator_count = state
             .items
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 19); // 18 settings + 1 action
+        assert_eq!(non_separator_count, 27); // 26 settings + 1 action
     }
 
     #[test]
@@ -1349,5 +1456,62 @@ mod tests {
         assert_eq!(restored.preset.as_deref(), Some("plex"));
         assert_eq!(restored.min_duration, Some(600));
         assert_eq!(restored.output_dir.as_deref(), Some("/tmp/rips"));
+    }
+
+    #[test]
+    fn test_settings_has_hooks_section() {
+        let config = crate::config::Config::default();
+        let state = SettingsState::from_config(&config);
+        let has_hooks_separator = state
+            .items
+            .iter()
+            .any(|i| matches!(i, SettingItem::Separator { label: Some(l) } if l == "Hooks"));
+        assert!(has_hooks_separator);
+    }
+
+    #[test]
+    fn test_settings_hook_items_from_config() {
+        let config = crate::config::Config {
+            post_rip: Some(crate::config::HookConfig {
+                command: Some("echo test".into()),
+                on_failure: Some(true),
+                blocking: Some(false),
+                log_output: Some(false),
+            }),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+        let cmd = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Text { key, .. } if key == "post_rip.command"));
+        assert!(matches!(cmd, Some(SettingItem::Text { value, .. }) if value == "echo test"));
+        let on_fail = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "post_rip.on_failure"));
+        assert!(matches!(
+            on_fail,
+            Some(SettingItem::Toggle { value: true, .. })
+        ));
+    }
+
+    #[test]
+    fn test_settings_hook_to_config_roundtrip() {
+        let config = crate::config::Config {
+            post_rip: Some(crate::config::HookConfig {
+                command: Some("echo test".into()),
+                on_failure: Some(true),
+                blocking: Some(false),
+                log_output: None,
+            }),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+        let restored = state.to_config();
+        let hook = restored.post_rip.unwrap();
+        assert_eq!(hook.command.as_deref(), Some("echo test"));
+        assert_eq!(hook.on_failure, Some(true));
+        assert_eq!(hook.blocking, Some(false));
     }
 }
