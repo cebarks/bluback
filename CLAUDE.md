@@ -67,7 +67,14 @@ cargo test                     # Run all tests
 cargo test -- test_name        # Run a single test by name
 cargo test -- --test-threads=1 # Run tests sequentially (useful for debugging)
 cargo clippy                   # Lint
+cargo fmt                      # Format code
 ```
+
+## Pre-Commit Checklist
+
+Before every commit, you MUST run:
+1. `cargo fmt` — format all code
+2. `cargo clippy` — fix any warnings (only the pre-existing `large_enum_variant` on `SessionCommand` is acceptable)
 
 ## Architecture
 
