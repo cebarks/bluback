@@ -7,6 +7,9 @@ pub struct Playlist {
     pub num: String,
     pub duration: String,
     pub seconds: u32,
+    pub video_streams: u32,
+    pub audio_streams: u32,
+    pub subtitle_streams: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1513,5 +1516,20 @@ mod tests {
         assert_eq!(hook.command.as_deref(), Some("echo test"));
         assert_eq!(hook.on_failure, Some(true));
         assert_eq!(hook.blocking, Some(false));
+    }
+
+    #[test]
+    fn test_playlist_default_stream_counts() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        assert_eq!(pl.video_streams, 0);
+        assert_eq!(pl.audio_streams, 0);
+        assert_eq!(pl.subtitle_streams, 0);
     }
 }

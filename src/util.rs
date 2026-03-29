@@ -453,11 +453,17 @@ mod tests {
                 num: "00001".into(),
                 duration: "0:43:00".into(),
                 seconds: 2580,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00002".into(),
                 duration: "0:44:00".into(),
                 seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
         ];
         let episodes = vec![
@@ -483,6 +489,9 @@ mod tests {
             num: "00003".into(),
             duration: "0:43:00".into(),
             seconds: 2580,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         }];
         let episodes = vec![
             Episode {
@@ -512,11 +521,17 @@ mod tests {
                 num: "00001".into(),
                 duration: "0:43:00".into(),
                 seconds: 2580,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00002".into(),
                 duration: "0:44:00".into(),
                 seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
         ];
         let episodes = vec![Episode {
@@ -535,6 +550,9 @@ mod tests {
             num: "00001".into(),
             duration: "0:43:00".into(),
             seconds: 2580,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         }];
         let result = assign_episodes(&playlists, &[], 1);
         assert!(result.is_empty());
@@ -913,21 +931,33 @@ mod tests {
                 num: "00001".into(),
                 duration: "0:43:00".into(),
                 seconds: 2580,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00002".into(),
                 duration: "0:44:00".into(),
                 seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00003".into(),
                 duration: "0:45:00".into(),
                 seconds: 2700,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00004".into(),
                 duration: "1:30:00".into(),
                 seconds: 5400,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
         ];
         let episodes: Vec<Episode> = (1..=5)
@@ -956,11 +986,17 @@ mod tests {
                 num: "00001".into(),
                 duration: "0:43:00".into(),
                 seconds: 2580,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00002".into(),
                 duration: "0:44:00".into(),
                 seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
         ];
         let episodes: Vec<Episode> = (1..=2)
@@ -981,6 +1017,9 @@ mod tests {
             num: "00001".into(),
             duration: "1:30:00".into(),
             seconds: 5400,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         }];
         let episodes: Vec<Episode> = (1..=2)
             .map(|n| Episode {
@@ -1002,11 +1041,17 @@ mod tests {
                 num: "00001".into(),
                 duration: "0:44:00".into(),
                 seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00002".into(),
                 duration: "1:30:00".into(),
                 seconds: 5400,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
         ];
         let episodes: Vec<Episode> = (1..=2)

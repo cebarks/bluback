@@ -984,6 +984,9 @@ mod tests {
                     num: "00001".into(),
                     duration: "1:00:00".into(),
                     seconds: 3600,
+                    video_streams: 0,
+                    audio_streams: 0,
+                    subtitle_streams: 0,
                 },
                 episode: vec![Episode {
                     episode_number: 1,
@@ -998,6 +1001,9 @@ mod tests {
                     num: "00002".into(),
                     duration: "1:00:00".into(),
                     seconds: 3600,
+                    video_streams: 0,
+                    audio_streams: 0,
+                    subtitle_streams: 0,
                 },
                 episode: vec![Episode {
                     episode_number: 2,
@@ -1019,6 +1025,9 @@ mod tests {
                     num: "00003".into(),
                     duration: "1:00:00".into(),
                     seconds: 3600,
+                    video_streams: 0,
+                    audio_streams: 0,
+                    subtitle_streams: 0,
                 },
                 episode: vec![Episode {
                     episode_number: 3,
