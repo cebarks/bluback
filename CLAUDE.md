@@ -73,7 +73,7 @@ cargo fmt                      # Format code
 ## Pre-Commit Checklist
 
 Before every commit, you MUST run:
-1. `cargo fmt` — format all code
+1. `rustup run stable cargo fmt` — format all code (must use stable toolchain to match CI)
 2. `cargo clippy` — fix any warnings (only the pre-existing `large_enum_variant` on `SessionCommand` is acceptable)
 
 ## Architecture
