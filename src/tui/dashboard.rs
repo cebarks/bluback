@@ -79,6 +79,22 @@ fn build_post_rip_vars(
     vars.insert("device", session.device.display().to_string());
     vars.insert("status", status.to_string());
     vars.insert("error", error.to_string());
+    let (verify_status, verify_detail) = match &job.status {
+        crate::types::PlaylistStatus::Verified(_, _) => ("passed".to_string(), String::new()),
+        crate::types::PlaylistStatus::VerifyFailed(_, ref result) => {
+            let detail = result
+                .checks
+                .iter()
+                .filter(|c| !c.passed)
+                .map(|c| c.name)
+                .collect::<Vec<_>>()
+                .join(",");
+            ("failed".to_string(), detail)
+        }
+        _ => ("skipped".to_string(), String::new()),
+    };
+    vars.insert("verify", verify_status);
+    vars.insert("verify_detail", verify_detail);
     vars
 }
 

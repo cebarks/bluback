@@ -1070,7 +1070,14 @@ fn rip_selected(
 
         let was_cancelled = matches!(&result, Err(crate::media::MediaError::Cancelled));
 
-        let (hook_status, hook_error, hook_size, hook_chapters) = match result {
+        let (
+            hook_status,
+            hook_error,
+            hook_size,
+            hook_chapters,
+            verify_hook_status,
+            verify_hook_detail,
+        ) = match result {
             Ok(chapters_added) => {
                 let final_size = std::fs::metadata(outfile)?.len();
                 if !is_tty {
@@ -1082,44 +1089,64 @@ fn rip_selected(
                 }
 
                 // Verification
-                let do_verify = args.verify || (!args.no_verify && config.verify());
-                if do_verify {
-                    let level = match args
-                        .verify_level
-                        .as_deref()
-                        .unwrap_or(config.verify_level())
-                    {
-                        "full" => crate::verify::VerifyLevel::Full,
-                        _ => crate::verify::VerifyLevel::Quick,
-                    };
-                    let expected = crate::verify::VerifyExpected {
-                        duration_secs: pl.seconds,
-                        video_streams: pl.video_streams,
-                        audio_streams: pl.audio_streams,
-                        subtitle_streams: pl.subtitle_streams,
-                        chapters: chapters_added,
-                    };
-                    let result = crate::verify::verify_output(outfile, &expected, level);
-                    if result.passed {
-                        println!("  Verified ({:?}): all checks passed", level);
+                let (verify_status, verify_detail) = {
+                    let do_verify = args.verify || (!args.no_verify && config.verify());
+                    if do_verify {
+                        let level = match args
+                            .verify_level
+                            .as_deref()
+                            .unwrap_or(config.verify_level())
+                        {
+                            "full" => crate::verify::VerifyLevel::Full,
+                            _ => crate::verify::VerifyLevel::Quick,
+                        };
+                        let expected = crate::verify::VerifyExpected {
+                            duration_secs: pl.seconds,
+                            video_streams: pl.video_streams,
+                            audio_streams: pl.audio_streams,
+                            subtitle_streams: pl.subtitle_streams,
+                            chapters: chapters_added,
+                        };
+                        let result = crate::verify::verify_output(outfile, &expected, level);
+                        if result.passed {
+                            println!("  Verified ({:?}): all checks passed", level);
+                            ("passed", String::new())
+                        } else {
+                            let failed: Vec<&str> = result
+                                .checks
+                                .iter()
+                                .filter(|c| !c.passed)
+                                .map(|c| c.detail.as_str())
+                                .collect();
+                            log::warn!(
+                                "Verification failed for {}: {}",
+                                filename,
+                                failed.join("; ")
+                            );
+                            println!("  WARNING: verification failed: {}", failed.join("; "));
+                            let detail = result
+                                .checks
+                                .iter()
+                                .filter(|c| !c.passed)
+                                .map(|c| c.name)
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            ("failed", detail)
+                        }
                     } else {
-                        let failed: Vec<&str> = result
-                            .checks
-                            .iter()
-                            .filter(|c| !c.passed)
-                            .map(|c| c.detail.as_str())
-                            .collect();
-                        log::warn!(
-                            "Verification failed for {}: {}",
-                            filename,
-                            failed.join("; ")
-                        );
-                        println!("  WARNING: verification failed: {}", failed.join("; "));
+                        ("skipped", String::new())
                     }
-                }
+                };
 
                 success_count += 1;
-                ("success", String::new(), final_size, chapters_added)
+                (
+                    "success",
+                    String::new(),
+                    final_size,
+                    chapters_added,
+                    verify_status.to_string(),
+                    verify_detail,
+                )
             }
             Err(crate::media::MediaError::Cancelled) => {
                 if outfile.exists() {
@@ -1127,7 +1154,14 @@ fn rip_selected(
                 }
                 println!("Cancelled — removed partial file {}", filename);
                 fail_count += 1;
-                ("failed", "Cancelled".to_string(), 0u64, 0usize)
+                (
+                    "failed",
+                    "Cancelled".to_string(),
+                    0u64,
+                    0usize,
+                    "skipped".to_string(),
+                    String::new(),
+                )
             }
             Err(e) => {
                 let err_msg = e.to_string();
@@ -1136,7 +1170,14 @@ fn rip_selected(
                 }
                 println!("Error: {} — removed partial file {}", err_msg, filename);
                 fail_count += 1;
-                ("failed", err_msg, 0u64, 0usize)
+                (
+                    "failed",
+                    err_msg,
+                    0u64,
+                    0usize,
+                    "skipped".to_string(),
+                    String::new(),
+                )
             }
         };
 
@@ -1186,6 +1227,8 @@ fn rip_selected(
             vars.insert("device", device.to_string());
             vars.insert("status", hook_status.to_string());
             vars.insert("error", hook_error);
+            vars.insert("verify", verify_hook_status);
+            vars.insert("verify_detail", verify_hook_detail);
             crate::hooks::run_post_rip(config, &vars, no_hooks);
         }
 
