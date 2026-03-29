@@ -6,13 +6,13 @@
 use std::collections::HashMap;
 use std::process::Command;
 
+fn has_ffprobe() -> bool {
+    Command::new("ffprobe").arg("-version").output().is_ok()
+}
+
 /// Remux a test fixture with metadata tags using the FFmpeg API directly.
 /// Returns the path to the output file.
-fn remux_with_metadata(
-    input: &str,
-    output: &str,
-    tags: &HashMap<String, String>,
-) {
+fn remux_with_metadata(input: &str, output: &str, tags: &HashMap<String, String>) {
     ffmpeg_the_third::init().unwrap();
 
     let mut ictx = ffmpeg_the_third::format::input(input).expect("open input");
@@ -61,12 +61,7 @@ fn remux_with_metadata(
 /// Read metadata tags from an MKV file using ffprobe.
 fn read_metadata(path: &str) -> HashMap<String, String> {
     let output = Command::new("ffprobe")
-        .args([
-            "-v", "quiet",
-            "-print_format", "json",
-            "-show_format",
-            path,
-        ])
+        .args(["-v", "quiet", "-print_format", "json", "-show_format", path])
         .output()
         .expect("ffprobe must be installed");
 
@@ -86,6 +81,10 @@ fn read_metadata(path: &str) -> HashMap<String, String> {
 
 #[test]
 fn test_auto_metadata_tags_written() {
+    if !has_ffprobe() {
+        eprintln!("skipping: ffprobe not found");
+        return;
+    }
     let input = "tests/fixtures/media/test_video.mkv";
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("auto_metadata.mkv");
@@ -114,6 +113,10 @@ fn test_auto_metadata_tags_written() {
 
 #[test]
 fn test_custom_tags_written() {
+    if !has_ffprobe() {
+        eprintln!("skipping: ffprobe not found");
+        return;
+    }
     let input = "tests/fixtures/media/test_video.mkv";
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("custom_metadata.mkv");
