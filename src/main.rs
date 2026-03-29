@@ -14,7 +14,6 @@ mod tmdb;
 mod tui;
 mod types;
 mod util;
-#[allow(dead_code)] // Public API — consumed by CLI/TUI integration in later tasks
 mod verify;
 mod workflow;
 

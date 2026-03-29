@@ -17,7 +17,9 @@ fn build_post_rip_vars(
 ) -> std::collections::HashMap<&'static str, String> {
     let job = &session.rip.jobs[job_idx];
     let file_size = match &job.status {
-        crate::types::PlaylistStatus::Done(size) => *size,
+        crate::types::PlaylistStatus::Done(size)
+        | crate::types::PlaylistStatus::Verified(size, _)
+        | crate::types::PlaylistStatus::VerifyFailed(size, _) => *size,
         _ => 0,
     };
     let outfile = session.output_dir.join(&job.filename);
@@ -87,7 +89,10 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
         .filter(|j| {
             matches!(
                 j.status,
-                PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_)
+                PlaylistStatus::Done(_)
+                    | PlaylistStatus::Verified(..)
+                    | PlaylistStatus::VerifyFailed(..)
+                    | PlaylistStatus::Skipped(_)
             )
         })
         .count();
@@ -165,8 +170,17 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
                         .unwrap_or_default();
                     (format!("{} {}%", bar, pct), size_str, eta_str)
                 }
+                PlaylistStatus::Verifying => {
+                    ("Verifying...".to_string(), String::new(), String::new())
+                }
                 PlaylistStatus::Done(sz) => {
                     ("Completed".to_string(), format_size(*sz), String::new())
+                }
+                PlaylistStatus::Verified(sz, _) => {
+                    ("Verified".to_string(), format_size(*sz), String::new())
+                }
+                PlaylistStatus::VerifyFailed(sz, _) => {
+                    ("Verify failed".to_string(), format_size(*sz), String::new())
                 }
                 PlaylistStatus::Skipped(sz) => (
                     format!("Skipped ({})", format_size(*sz)),
@@ -192,12 +206,14 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
                 eta,
             ]);
             match &job.status {
+                PlaylistStatus::Pending => row,
                 PlaylistStatus::Ripping(_) => row.style(Style::default().fg(Color::Cyan)),
-                PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) => {
-                    row.style(Style::default().fg(Color::DarkGray))
-                }
+                PlaylistStatus::Verifying => row.style(Style::default().fg(Color::Yellow)),
+                PlaylistStatus::Done(_)
+                | PlaylistStatus::Verified(..)
+                | PlaylistStatus::Skipped(_) => row.style(Style::default().fg(Color::DarkGray)),
+                PlaylistStatus::VerifyFailed(..) => row.style(Style::default().fg(Color::Yellow)),
                 PlaylistStatus::Failed(_) => row.style(Style::default().fg(Color::Red)),
-                _ => row,
             }
         })
         .collect();
@@ -239,7 +255,9 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
         .jobs
         .iter()
         .filter_map(|j| match &j.status {
-            PlaylistStatus::Done(sz) => Some((j.filename.as_str(), *sz)),
+            PlaylistStatus::Done(sz) | PlaylistStatus::Verified(sz, _) => {
+                Some((j.filename.as_str(), *sz))
+            }
             _ => None,
         })
         .collect();
@@ -255,6 +273,11 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
         .jobs
         .iter()
         .filter(|j| matches!(j.status, PlaylistStatus::Failed(_)))
+        .count();
+    let verify_failed_count = view
+        .jobs
+        .iter()
+        .filter(|j| matches!(j.status, PlaylistStatus::VerifyFailed(..)))
         .count();
 
     let chunks = Layout::default()
@@ -279,13 +302,16 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
             .to_string()
     } else if !view.status_message.is_empty() {
         view.status_message.clone()
-    } else if failed_count > 0 || !skipped.is_empty() {
+    } else if failed_count > 0 || verify_failed_count > 0 || !skipped.is_empty() {
         let mut parts = vec![format!("{} ripped", completed.len())];
         if !skipped.is_empty() {
             parts.push(format!("{} skipped", skipped.len()));
         }
         if failed_count > 0 {
             parts.push(format!("{} failed", failed_count));
+        }
+        if verify_failed_count > 0 {
+            parts.push(format!("{} verify failed", verify_failed_count));
         }
         format!(
             "Completed {} of {} playlist(s) ({})",
@@ -326,6 +352,23 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
                 lines.push(
                     Line::from(format!("  {} - FAILED: {}", job.filename, msg))
                         .style(Style::default().fg(Color::Red)),
+                );
+            }
+            if let PlaylistStatus::VerifyFailed(sz, ref result) = job.status {
+                let failed_details: Vec<String> = result
+                    .checks
+                    .iter()
+                    .filter(|c| !c.passed)
+                    .map(|c| format!("{}: {}", c.name, c.detail))
+                    .collect();
+                lines.push(
+                    Line::from(format!(
+                        "  {} ({}) - VERIFY FAILED: {}",
+                        job.filename,
+                        format_size(sz),
+                        failed_details.join("; ")
+                    ))
+                    .style(Style::default().fg(Color::Red)),
                 );
             }
         }
@@ -421,7 +464,11 @@ fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
     let all_done = session.rip.jobs.iter().all(|j| {
         matches!(
             j.status,
-            PlaylistStatus::Done(_) | PlaylistStatus::Skipped(_) | PlaylistStatus::Failed(_)
+            PlaylistStatus::Done(_)
+                | PlaylistStatus::Verified(..)
+                | PlaylistStatus::VerifyFailed(..)
+                | PlaylistStatus::Skipped(_)
+                | PlaylistStatus::Failed(_)
         )
     });
 
@@ -441,8 +488,10 @@ fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
                     .jobs
                     .iter()
                     .fold((0u32, 0u32, 0u32), |(s, f, sk), j| match j.status {
-                        PlaylistStatus::Done(_) => (s + 1, f, sk),
-                        PlaylistStatus::Failed(_) => (s, f + 1, sk),
+                        PlaylistStatus::Done(_) | PlaylistStatus::Verified(..) => (s + 1, f, sk),
+                        PlaylistStatus::Failed(_) | PlaylistStatus::VerifyFailed(..) => {
+                            (s, f + 1, sk)
+                        }
                         PlaylistStatus::Skipped(_) => (s, f, sk + 1),
                         _ => (s, f, sk),
                     });
@@ -595,6 +644,9 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         metadata,
     );
 
+    session.rip.chapters_added.store(0, Ordering::Relaxed);
+    let chapters_added_arc = session.rip.chapters_added.clone();
+
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let tx_progress = tx.clone();
@@ -602,7 +654,9 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
             let _ = tx_progress.send(Ok(progress.clone()));
         });
         match result {
-            Ok(_chapters_added) => {} // success — sender drops, receiver sees Disconnected
+            Ok(added) => {
+                chapters_added_arc.store(added, std::sync::atomic::Ordering::Relaxed);
+            }
             Err(e) => {
                 let _ = tx.send(Err(e));
             }
@@ -661,7 +715,44 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                 if matches!(session.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
                     let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
                     let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
-                    session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+
+                    if session.verify {
+                        let playlist = &session.rip.jobs[idx].playlist;
+                        let chapters = session
+                            .rip
+                            .chapters_added
+                            .load(std::sync::atomic::Ordering::Relaxed);
+                        let expected = crate::verify::VerifyExpected {
+                            duration_secs: playlist.seconds,
+                            video_streams: playlist.video_streams,
+                            audio_streams: playlist.audio_streams,
+                            subtitle_streams: playlist.subtitle_streams,
+                            chapters,
+                        };
+                        let result =
+                            crate::verify::verify_output(&outfile, &expected, session.verify_level);
+                        if result.passed {
+                            session.rip.jobs[idx].status =
+                                PlaylistStatus::Verified(file_size, result);
+                        } else {
+                            let detail: String = result
+                                .checks
+                                .iter()
+                                .filter(|c| !c.passed)
+                                .map(|c| c.detail.clone())
+                                .collect::<Vec<_>>()
+                                .join("; ");
+                            log::warn!(
+                                "Verification failed for {}: {}",
+                                session.rip.jobs[idx].filename,
+                                detail
+                            );
+                            session.rip.jobs[idx].status =
+                                PlaylistStatus::VerifyFailed(file_size, result);
+                        }
+                    } else {
+                        session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+                    }
                     let vars = build_post_rip_vars(session, idx, "success", "");
                     crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 }

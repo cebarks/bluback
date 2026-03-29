@@ -97,7 +97,12 @@ pub struct RipProgress {
 pub enum PlaylistStatus {
     Pending,
     Ripping(RipProgress),
+    #[allow(dead_code)]
+    // Matched in dashboard render; constructed by Task 5 (verify failure prompt)
+    Verifying,
     Done(u64),
+    Verified(u64, #[allow(dead_code)] crate::verify::VerifyResult),
+    VerifyFailed(u64, crate::verify::VerifyResult),
     Skipped(u64),
     Failed(String),
 }

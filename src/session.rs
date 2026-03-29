@@ -46,6 +46,8 @@ pub struct DriveSession {
     pub overwrite: bool,
     pub no_metadata: bool,
     pub no_hooks: bool,
+    pub verify: bool,
+    pub verify_level: crate::verify::VerifyLevel,
 }
 
 impl DriveSession {
@@ -90,6 +92,8 @@ impl DriveSession {
             overwrite: false,
             no_metadata: false,
             no_hooks: false,
+            verify: false,
+            verify_level: crate::verify::VerifyLevel::Quick,
         }
     }
 
@@ -168,7 +172,14 @@ impl DriveSession {
                     .rip
                     .jobs
                     .iter()
-                    .filter(|j| matches!(j.status, PlaylistStatus::Done(_)))
+                    .filter(|j| {
+                        matches!(
+                            j.status,
+                            PlaylistStatus::Done(_)
+                                | PlaylistStatus::Verified(..)
+                                | PlaylistStatus::VerifyFailed(..)
+                        )
+                    })
                     .count();
 
                 let current_pct = self
