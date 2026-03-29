@@ -2,7 +2,7 @@
 
 ## Context
 
-bluback is at v0.9.0 with solid core functionality, multi-drive support, cross-platform coverage (Linux + macOS), and 5-platform CI. Core features: FFmpeg-based Blu-ray remux, TUI wizard with multi-drive tab UI, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
+bluback is at v0.9.2 with solid core functionality, multi-drive support, cross-platform coverage (Linux + macOS), and 5-platform CI. Core features: FFmpeg-based Blu-ray remux, TUI wizard with multi-drive tab UI, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection, structured logging, MKV metadata embedding. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
 
 ## Architectural Principles
 
@@ -18,7 +18,7 @@ bluback is at v0.9.0 with solid core functionality, multi-drive support, cross-p
 | **v0.7** | Architecture & CLI Completeness | Workflow extraction, specials CLI, headless progress, `--check`, `--list-playlists` stream info |
 | **v0.8** | macOS Support | Platform-specific disc ops, FFmpeg 7.0+ compat, fork-free scanning, Homebrew library discovery, macOS CI + release builds |
 | **v0.9** | Multi-Drive & CI | Multi-drive detection, parallel sessions, tab UI, drive monitor, inter-session linking, episode overlap detection, 5-platform CI |
-| **v0.10** | Quality of Life & Automation | Log files, pause/resume, MKV metadata, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history |
+| **v0.10** | Quality of Life & Automation | ~~Log files~~, ~~MKV metadata~~, pause/resume, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history |
 | **v0.11** | DVD Support | Disc type abstraction, title enumeration, chapter extraction, CSS errors |
 | **v0.12** | UHD Blu-ray | AACS 2.0, HDR metadata verification |
 | **v0.13** | Intelligence & Distribution | TMDb S00 auto-matching, shell completions, man page |
@@ -151,21 +151,33 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 
 *Features that make daily use more pleasant and reliable, plus batch automation.*
 
-### 15. Log file support
-- `--log-file <PATH>` or auto-log to `~/.local/share/bluback/logs/`
-- Captures: FFmpeg, libbluray, disc detection, AACS, rip progress
-- `--log-level` or config for verbosity; rotate (keep last 10)
-- **Files:** New `src/logging.rs`, `src/main.rs`, `src/media/probe.rs`
+### 15. Log file support ✓
+- **Goal:** Structured file logging with rotation and configurable verbosity
+- **Implementation:** `fern` v0.7 + `log` v0.4 + `chrono` for timestamps
+  - `src/logging.rs` — init, rotation (keep last N logs), session header (version, platform, device, AACS backend)
+  - Config fields: `log_file` (bool, default true), `log_level` (error/warn/info/debug/trace), `log_dir` (default `~/.local/share/bluback/logs`), `max_log_files` (default 10)
+  - CLI flags: `--log-level`, `--no-log`, `--log-file <PATH>`
+  - Migrated all `eprintln!` calls to `log::*` macros across `main.rs`, `aacs.rs`, `tui/coordinator.rs`, `cli.rs`, `media/remux.rs`
+  - Workflow milestone logging: disc detection, scan completion, TMDb lookups, remux start/completion
+  - API key sanitized from error messages
+- **Files:** `src/logging.rs`, `src/main.rs`, `src/aacs.rs`, `src/cli.rs`, `src/tui/coordinator.rs`, `src/media/remux.rs`, `src/workflow.rs`
+
+### 17. MKV metadata embedding ✓
+- **Goal:** Embed show/movie metadata into MKV container during remux
+- **Implementation:**
+  - `MkvMetadata` struct (HashMap of tags) in `src/types.rs`
+  - `build_metadata()` in `src/workflow.rs` — auto-generates TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, REMUXED_WITH tags
+  - Metadata injected via `octx.set_metadata()` before `write_header()` in `src/media/remux.rs`
+  - `[metadata]` config section with `enabled` (bool) and `tags` (custom key-value table); custom tags override auto-generated on conflict
+  - `--no-metadata` CLI flag; `no_metadata` session flag threaded through CLI and TUI paths
+  - Metadata toggle in settings panel
+  - Uses `REMUXED_WITH` instead of `ENCODER` (FFmpeg overwrites `ENCODER` with its own version string)
+- **Files:** `src/types.rs`, `src/workflow.rs`, `src/media/remux.rs`, `src/config.rs`, `src/cli.rs`, `src/tui/dashboard.rs`, `src/session.rs`, `src/tui/settings.rs`
 
 ### 16. Pause/resume during ripping
 - `AtomicBool` pause flag; remux loop sleeps until unpaused
 - TUI: `p` to toggle, "PAUSED" indicator
 - **Files:** `src/media/remux.rs`, `src/rip.rs`, `src/tui/dashboard.rs`
-
-### 17. MKV metadata embedding
-- Write title, season, episode, show name into MKV container metadata
-- Set `AVFormatContext` metadata dict before `write_header()`
-- **Files:** `src/media/remux.rs`, `src/types.rs`
 
 ### 18. Post-rip hooks
 - `post_rip_command` config with template variables (`{file}`, `{title}`, `{season}`, `{episode}`)
@@ -181,6 +193,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - **TUI:** Track picker with codec, language, channels; checkboxes
 - **CLI:** `--audio "eng,5.1"` / `--subtitle "eng"` flags
 - **Config:** `audio_languages`, `subtitle_languages` defaults
+- Infrastructure partially exists: `StreamSelection::Manual(Vec<usize>)` variant in `remux.rs`, but no user-facing selection UI
 - **Files:** `src/media/remux.rs`, `src/tui/wizard.rs`, `src/main.rs`, `src/config.rs`
 
 ### 30. Continuous batch mode
@@ -317,10 +330,10 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - Media servers (Jellyfin, Plex) auto-populate artwork from these files
 - TMDb already provides poster URLs in search results — minimal API work
 
-### crates.io Publishing
-- Publish bluback as a crate for `cargo install bluback`
-- Requires stabilizing the public API surface (currently all internal)
-- Consider splitting into `bluback-core` library crate + `bluback` binary crate
+### crates.io Publishing ✓ (shipped early)
+- CI auto-publishes to crates.io on release (since v0.9.2)
+- `cargo install bluback` works today
+- Future: consider splitting into `bluback-core` library crate + `bluback` binary crate
 
 ### Transcoding Profiles
 - Optional re-encoding during rip (e.g., H.265 for space savings, AAC for compatibility)
