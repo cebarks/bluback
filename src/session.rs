@@ -381,6 +381,7 @@ impl DriveSession {
             confirm_abort: self.rip.confirm_abort,
             confirm_rescan: self.rip.confirm_rescan,
             label: self.disc.label.clone(),
+            verify_failed_idx: self.rip.verify_failed_idx,
         })
     }
 
