@@ -1487,6 +1487,97 @@ mod tests {
             text
         );
     }
+
+    // --- Hook variable tests for {verify} and {verify_detail} ---
+
+    fn make_session_with_job(status: PlaylistStatus) -> crate::session::DriveSession {
+        let config = crate::config::Config::default();
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (msg_tx, _msg_rx) = std::sync::mpsc::channel();
+        let mut session = crate::session::DriveSession::new(
+            std::path::PathBuf::from("/dev/sr0"),
+            config,
+            cmd_rx,
+            msg_tx,
+        );
+        session.screen = Screen::Ripping;
+        session.output_dir = std::env::temp_dir();
+        session.rip.jobs = vec![crate::types::RipJob {
+            playlist: crate::types::Playlist {
+                num: "00001".into(),
+                duration: "1:00:00".into(),
+                seconds: 3600,
+                video_streams: 1,
+                audio_streams: 2,
+                subtitle_streams: 3,
+            },
+            episode: vec![],
+            filename: "test.mkv".into(),
+            status,
+        }];
+        session
+    }
+
+    #[test]
+    fn test_hook_vars_verify_passed() {
+        let result = crate::verify::VerifyResult {
+            passed: true,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![
+                crate::verify::VerifyCheck {
+                    name: "duration",
+                    passed: true,
+                    detail: "ok".into(),
+                },
+                crate::verify::VerifyCheck {
+                    name: "video_streams",
+                    passed: true,
+                    detail: "1".into(),
+                },
+            ],
+        };
+        let session = make_session_with_job(PlaylistStatus::Verified(1_000_000, result));
+        let vars = build_post_rip_vars(&session, 0, "success", "");
+        assert_eq!(vars["verify"], "passed");
+        assert_eq!(vars["verify_detail"], "");
+    }
+
+    #[test]
+    fn test_hook_vars_verify_failed() {
+        let result = crate::verify::VerifyResult {
+            passed: false,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![
+                crate::verify::VerifyCheck {
+                    name: "duration",
+                    passed: false,
+                    detail: "expected 3600s, got 3000s".into(),
+                },
+                crate::verify::VerifyCheck {
+                    name: "video_streams",
+                    passed: true,
+                    detail: "1".into(),
+                },
+                crate::verify::VerifyCheck {
+                    name: "audio_streams",
+                    passed: false,
+                    detail: "expected 2, got 1".into(),
+                },
+            ],
+        };
+        let session = make_session_with_job(PlaylistStatus::VerifyFailed(1_000_000, result));
+        let vars = build_post_rip_vars(&session, 0, "success", "");
+        assert_eq!(vars["verify"], "failed");
+        assert_eq!(vars["verify_detail"], "duration,audio_streams");
+    }
+
+    #[test]
+    fn test_hook_vars_verify_skipped() {
+        let session = make_session_with_job(PlaylistStatus::Done(1_000_000));
+        let vars = build_post_rip_vars(&session, 0, "success", "");
+        assert_eq!(vars["verify"], "skipped");
+        assert_eq!(vars["verify_detail"], "");
+    }
 }
 
 fn active_rip_stats_view(view: &DashboardView) -> String {
