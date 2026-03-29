@@ -685,4 +685,167 @@ mod tests {
         assert!(!duration_check.passed);
         assert!(duration_check.detail.contains("short"));
     }
+
+    // -- End-to-end pipeline tests matching CLI --verify and --verify-level behavior --
+
+    /// Simulates `--verify` (quick mode, default): exercises the full pipeline
+    /// that the CLI/TUI would run after a successful remux. Verifies that the
+    /// result matches what `println!("Verified ({:?}): all checks passed", level)`
+    /// would print.
+    #[test]
+    fn test_end_to_end_quick_verify_pipeline() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return;
+        }
+        // Simulate what the CLI builds from Playlist fields after remux
+        let expected = VerifyExpected {
+            duration_secs: 2,
+            video_streams: 1,
+            audio_streams: 1,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Quick);
+
+        // Verify the result matches CLI success output
+        assert!(
+            result.passed,
+            "quick verify should pass: {:?}",
+            result.checks
+        );
+        assert_eq!(result.level, VerifyLevel::Quick);
+
+        // This is exactly what the CLI would print
+        let output = format!("Verified ({:?}): all checks passed", result.level);
+        assert_eq!(output, "Verified (Quick): all checks passed");
+
+        // No decode_frame checks in quick mode
+        assert!(
+            !result.checks.iter().any(|c| c.name == "decode_frame"),
+            "quick mode should not decode frames"
+        );
+
+        // All 7 quick checks should be present and passing
+        let expected_checks = [
+            "file_exists",
+            "ffmpeg_open",
+            "duration",
+            "video_streams",
+            "audio_streams",
+            "subtitle_streams",
+            "chapters",
+        ];
+        for name in &expected_checks {
+            let check = result
+                .checks
+                .iter()
+                .find(|c| c.name == *name)
+                .unwrap_or_else(|| panic!("missing check: {}", name));
+            assert!(
+                check.passed,
+                "check '{}' should pass: {}",
+                name, check.detail
+            );
+        }
+    }
+
+    /// Simulates `--verify --verify-level full`: exercises the full pipeline
+    /// including frame decode at seek points. Verifies decode_frame checks
+    /// are present and pass on a real MKV file.
+    #[test]
+    fn test_end_to_end_full_verify_pipeline() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return;
+        }
+        let expected = VerifyExpected {
+            duration_secs: 2,
+            video_streams: 1,
+            audio_streams: 1,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Full);
+
+        // Verify the result matches CLI success output
+        assert!(
+            result.passed,
+            "full verify should pass: {:?}",
+            result.checks
+        );
+        assert_eq!(result.level, VerifyLevel::Full);
+
+        let output = format!("Verified ({:?}): all checks passed", result.level);
+        assert_eq!(output, "Verified (Full): all checks passed");
+
+        // Full mode includes all quick checks plus decode_frame checks
+        let decode_checks: Vec<&VerifyCheck> = result
+            .checks
+            .iter()
+            .filter(|c| c.name == "decode_frame")
+            .collect();
+        assert!(
+            decode_checks.len() >= 2,
+            "full mode should have multiple decode_frame checks, got {}",
+            decode_checks.len()
+        );
+        assert!(
+            decode_checks.iter().all(|c| c.passed),
+            "all frame decodes should pass: {:?}",
+            decode_checks
+        );
+    }
+
+    /// Simulates `--verify` with a verification failure: exercises the failure
+    /// path and verifies the warning output format matches the CLI.
+    #[test]
+    fn test_end_to_end_verify_failure_output() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return;
+        }
+        // Wrong stream counts to force failure
+        let expected = VerifyExpected {
+            duration_secs: 2,
+            video_streams: 3, // wrong
+            audio_streams: 1,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Quick);
+
+        assert!(!result.passed);
+
+        // Simulate the CLI warning format
+        let failed: Vec<&str> = result
+            .checks
+            .iter()
+            .filter(|c| !c.passed)
+            .map(|c| c.detail.as_str())
+            .collect();
+        let warning = format!("WARNING: verification failed: {}", failed.join("; "));
+        assert!(
+            warning.contains("WARNING: verification failed:"),
+            "should format as warning"
+        );
+        assert!(
+            warning.contains("expected 3, got 1"),
+            "should describe the stream count mismatch: {}",
+            warning
+        );
+
+        // The hook variable format uses check names (not details)
+        let hook_detail: Vec<&str> = result
+            .checks
+            .iter()
+            .filter(|c| !c.passed)
+            .map(|c| c.name)
+            .collect();
+        assert!(
+            hook_detail.contains(&"video_streams"),
+            "hook detail should include video_streams: {:?}",
+            hook_detail
+        );
+    }
 }
