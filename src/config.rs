@@ -33,6 +33,31 @@ pub struct MetadataConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct HookConfig {
+    pub command: Option<String>,
+    pub on_failure: Option<bool>,
+    pub blocking: Option<bool>,
+    pub log_output: Option<bool>,
+}
+
+impl HookConfig {
+    #[allow(dead_code)]
+    pub fn on_failure(&self) -> bool {
+        self.on_failure.unwrap_or(false)
+    }
+
+    #[allow(dead_code)]
+    pub fn blocking(&self) -> bool {
+        self.blocking.unwrap_or(true)
+    }
+
+    #[allow(dead_code)]
+    pub fn log_output(&self) -> bool {
+        self.log_output.unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
     pub tmdb_api_key: Option<String>,
     pub preset: Option<String>,
@@ -59,6 +84,8 @@ pub struct Config {
     pub log_dir: Option<String>,
     pub max_log_files: Option<u32>,
     pub metadata: Option<MetadataConfig>,
+    pub post_rip: Option<HookConfig>,
+    pub post_session: Option<HookConfig>,
 }
 
 fn config_dir() -> PathBuf {
@@ -187,6 +214,22 @@ impl Config {
 
         out.push('\n');
         emit_str(&mut out, "tmdb_api_key", &self.tmdb_api_key, "");
+
+        out.push('\n');
+        out.push_str("[post_rip]\n");
+        let pr = self.post_rip.as_ref();
+        emit_str(&mut out, "command", &pr.and_then(|h| h.command.clone()), "");
+        emit_bool(&mut out, "on_failure", pr.and_then(|h| h.on_failure), false);
+        emit_bool(&mut out, "blocking", pr.and_then(|h| h.blocking), true);
+        emit_bool(&mut out, "log_output", pr.and_then(|h| h.log_output), true);
+
+        out.push('\n');
+        out.push_str("[post_session]\n");
+        let ps = self.post_session.as_ref();
+        emit_str(&mut out, "command", &ps.and_then(|h| h.command.clone()), "");
+        emit_bool(&mut out, "on_failure", ps.and_then(|h| h.on_failure), false);
+        emit_bool(&mut out, "blocking", ps.and_then(|h| h.blocking), true);
+        emit_bool(&mut out, "log_output", ps.and_then(|h| h.log_output), true);
 
         out
     }
@@ -383,6 +426,16 @@ const KNOWN_KEYS: &[&str] = &[
     "metadata",
     "metadata.enabled",
     "metadata.tags",
+    "post_rip",
+    "post_rip.command",
+    "post_rip.on_failure",
+    "post_rip.blocking",
+    "post_rip.log_output",
+    "post_session",
+    "post_session.command",
+    "post_session.on_failure",
+    "post_session.blocking",
+    "post_session.log_output",
 ];
 
 pub fn validate_raw_toml(raw: &str) -> Vec<String> {
@@ -1096,5 +1149,110 @@ also_unknown = 42"#;
         let reparsed: Config = toml::from_str(&output).unwrap();
         let meta = reparsed.metadata.unwrap();
         assert_eq!(meta.enabled, Some(false));
+    }
+
+    #[test]
+    fn test_parse_post_rip_config() {
+        let toml_str = r#"
+            [post_rip]
+            command = "notify-send '{filename}'"
+            on_failure = true
+            blocking = false
+            log_output = false
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let hook = config.post_rip.unwrap();
+        assert_eq!(hook.command.as_deref(), Some("notify-send '{filename}'"));
+        assert_eq!(hook.on_failure, Some(true));
+        assert_eq!(hook.blocking, Some(false));
+        assert_eq!(hook.log_output, Some(false));
+    }
+
+    #[test]
+    fn test_parse_post_session_config() {
+        let toml_str = r#"
+            [post_session]
+            command = "echo done"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let hook = config.post_session.unwrap();
+        assert_eq!(hook.command.as_deref(), Some("echo done"));
+        assert!(hook.on_failure.is_none());
+        assert!(hook.blocking.is_none());
+    }
+
+    #[test]
+    fn test_parse_missing_hooks_defaults() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.post_rip.is_none());
+        assert!(config.post_session.is_none());
+    }
+
+    #[test]
+    fn test_hook_config_accessors() {
+        let hook = HookConfig {
+            command: Some("echo hi".into()),
+            on_failure: None,
+            blocking: None,
+            log_output: None,
+        };
+        assert!(!hook.on_failure());
+        assert!(hook.blocking());
+        assert!(hook.log_output());
+
+        let hook2 = HookConfig {
+            command: Some("echo hi".into()),
+            on_failure: Some(true),
+            blocking: Some(false),
+            log_output: Some(false),
+        };
+        assert!(hook2.on_failure());
+        assert!(!hook2.blocking());
+        assert!(!hook2.log_output());
+    }
+
+    #[test]
+    fn test_hook_config_serialization_roundtrip() {
+        let config = Config {
+            post_rip: Some(HookConfig {
+                command: Some("echo '{filename}'".into()),
+                on_failure: Some(true),
+                blocking: Some(false),
+                log_output: Some(false),
+            }),
+            ..Default::default()
+        };
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains("[post_rip]"));
+        assert!(toml_str.contains(r#"command = "echo '{filename}'"#));
+        assert!(toml_str.contains("on_failure = true"));
+        assert!(toml_str.contains("blocking = false"));
+        assert!(toml_str.contains("log_output = false"));
+        let reparsed: Config = toml::from_str(&toml_str).unwrap();
+        let hook = reparsed.post_rip.unwrap();
+        assert_eq!(hook.command.as_deref(), Some("echo '{filename}'"));
+        assert_eq!(hook.on_failure, Some(true));
+    }
+
+    #[test]
+    fn test_hook_config_default_serialization_commented() {
+        let config = Config::default();
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains("[post_rip]"));
+        assert!(toml_str.contains("# command = \"\""));
+        assert!(toml_str.contains("[post_session]"));
+    }
+
+    #[test]
+    fn test_validate_hook_known_keys() {
+        let raw = r#"
+            [post_rip]
+            command = "echo hi"
+            on_failure = true
+            blocking = false
+            log_output = true
+        "#;
+        let warnings = validate_raw_toml(raw);
+        assert!(warnings.is_empty());
     }
 }
