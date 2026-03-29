@@ -428,21 +428,33 @@ mod tests {
                 num: "00001".into(),
                 duration: "0:00:30".into(),
                 seconds: 30,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00002".into(),
                 duration: "0:43:00".into(),
                 seconds: 2580,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00003".into(),
                 duration: "0:44:00".into(),
                 seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
             Playlist {
                 num: "00004".into(),
                 duration: "0:02:00".into(),
                 seconds: 120,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
             },
         ];
         let result = filter_episodes(&playlists, 900);

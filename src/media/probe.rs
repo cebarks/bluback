@@ -47,6 +47,27 @@ fn open_bluray(
     }
 }
 
+/// Count streams by type for a single playlist.
+/// Returns (video, audio, subtitle) counts. Returns (0, 0, 0) on error.
+fn count_streams(device: &str, playlist_num: &str) -> (u32, u32, u32) {
+    let ctx = match open_bluray(device, Some(playlist_num)) {
+        Ok(ctx) => ctx,
+        Err(_) => return (0, 0, 0),
+    };
+    let mut video = 0u32;
+    let mut audio = 0u32;
+    let mut subtitle = 0u32;
+    for stream in ctx.streams() {
+        match stream.parameters().medium() {
+            MediaType::Video => video += 1,
+            MediaType::Audio => audio += 1,
+            MediaType::Subtitle => subtitle += 1,
+            _ => {}
+        }
+    }
+    (video, audio, subtitle)
+}
+
 /// Scan a Blu-ray device for available playlists.
 ///
 /// Because the FFmpeg API doesn't expose playlist enumeration directly, libbluray
@@ -73,7 +94,7 @@ pub fn scan_playlists_with_progress(
     //   macOS IOKit doesn't have the same D-state issue with USB bridges
     let (lines, scan_error) = scan_with_log_capture(device, on_progress)?;
 
-    let playlists: Vec<Playlist> = lines
+    let mut playlists: Vec<Playlist> = lines
         .iter()
         .filter_map(|line| parse_playlist_log_line(&playlist_re, line))
         .collect();
@@ -84,6 +105,14 @@ pub fn scan_playlists_with_progress(
             return Ok(playlists);
         }
         return Err(MediaError::AacsAuthFailed(err_msg));
+    }
+
+    // Probe stream counts for each discovered playlist
+    for pl in &mut playlists {
+        let (v, a, s) = count_streams(device, &pl.num);
+        pl.video_streams = v;
+        pl.audio_streams = a;
+        pl.subtitle_streams = s;
     }
 
     log::info!("Scan complete: found {} playlists", playlists.len());
@@ -361,6 +390,9 @@ fn parse_playlist_log_line(re: &Regex, line: &str) -> Option<Playlist> {
         num,
         duration,
         seconds,
+        video_streams: 0,
+        audio_streams: 0,
+        subtitle_streams: 0,
     })
 }
 

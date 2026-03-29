@@ -274,6 +274,9 @@ mod tests {
             num: "00001".into(),
             duration: "1:23:45".into(),
             seconds: 5025,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let opts = prepare_remux_options(
@@ -299,6 +302,9 @@ mod tests {
             num: "00001".into(),
             duration: "1:23:45".into(),
             seconds: 5025,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let opts = prepare_remux_options(
@@ -320,6 +326,9 @@ mod tests {
             num: "00001".into(),
             duration: "0:45:00".into(),
             seconds: 2700,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         };
         let eps = vec![crate::types::Episode {
             episode_number: 3,
@@ -352,6 +361,9 @@ mod tests {
             num: "00001".into(),
             duration: "2:00:00".into(),
             seconds: 7200,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         };
         let config = Config::default();
         let result = build_output_filename(
@@ -379,6 +391,9 @@ mod tests {
             num: "00006".into(),
             duration: "0:30:00".into(),
             seconds: 1800,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         };
         let eps = vec![crate::types::Episode {
             episode_number: 1,
@@ -400,6 +415,9 @@ mod tests {
             num: "00001".into(),
             duration: "1:00:00".into(),
             seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         };
         let config = Config::default();
         let result = build_output_filename(
@@ -427,6 +445,9 @@ mod tests {
             num: "00001".into(),
             duration: "0:45:00".into(),
             seconds: 2700,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
         };
         let eps = vec![crate::types::Episode {
             episode_number: 1,
