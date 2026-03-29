@@ -41,17 +41,14 @@ pub struct HookConfig {
 }
 
 impl HookConfig {
-    #[allow(dead_code)]
     pub fn on_failure(&self) -> bool {
         self.on_failure.unwrap_or(false)
     }
 
-    #[allow(dead_code)]
     pub fn blocking(&self) -> bool {
         self.blocking.unwrap_or(true)
     }
 
-    #[allow(dead_code)]
     pub fn log_output(&self) -> bool {
         self.log_output.unwrap_or(true)
     }

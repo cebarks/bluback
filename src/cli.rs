@@ -921,6 +921,7 @@ fn build_filenames(
     Ok(outfiles)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rip_selected(
     args: &Args,
     config: &crate::config::Config,
@@ -1105,7 +1106,11 @@ fn rip_selected(
         {
             let episodes = tmdb_ctx.episode_assignments.get(&pl.num);
             let title_str = if movie_mode {
-                tmdb_ctx.movie_title.as_ref().map(|(t, _)| t.as_str()).unwrap_or("")
+                tmdb_ctx
+                    .movie_title
+                    .as_ref()
+                    .map(|(t, _)| t.as_str())
+                    .unwrap_or("")
             } else {
                 tmdb_ctx.show_name.as_deref().unwrap_or("")
             };
@@ -1116,9 +1121,27 @@ fn rip_selected(
             vars.insert("size", hook_size.to_string());
             vars.insert("chapters", hook_chapters.to_string());
             vars.insert("title", title_str.to_string());
-            vars.insert("season", tmdb_ctx.season_num.map(|n| n.to_string()).unwrap_or_default());
-            vars.insert("episode", episodes.and_then(|e| e.first()).map(|e| e.episode_number.to_string()).unwrap_or_default());
-            vars.insert("episode_name", episodes.and_then(|e| e.first()).map(|e| e.name.clone()).unwrap_or_default());
+            vars.insert(
+                "season",
+                tmdb_ctx
+                    .season_num
+                    .map(|n| n.to_string())
+                    .unwrap_or_default(),
+            );
+            vars.insert(
+                "episode",
+                episodes
+                    .and_then(|e| e.first())
+                    .map(|e| e.episode_number.to_string())
+                    .unwrap_or_default(),
+            );
+            vars.insert(
+                "episode_name",
+                episodes
+                    .and_then(|e| e.first())
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default(),
+            );
             vars.insert("playlist", pl.num.clone());
             vars.insert("label", label.to_string());
             vars.insert("mode", mode_str.to_string());
@@ -1140,13 +1163,23 @@ fn rip_selected(
     // Post-session hook
     {
         let title_str = if movie_mode {
-            tmdb_ctx.movie_title.as_ref().map(|(t, _)| t.as_str()).unwrap_or("")
+            tmdb_ctx
+                .movie_title
+                .as_ref()
+                .map(|(t, _)| t.as_str())
+                .unwrap_or("")
         } else {
             tmdb_ctx.show_name.as_deref().unwrap_or("")
         };
         let mut vars = std::collections::HashMap::new();
         vars.insert("title", title_str.to_string());
-        vars.insert("season", tmdb_ctx.season_num.map(|n| n.to_string()).unwrap_or_default());
+        vars.insert(
+            "season",
+            tmdb_ctx
+                .season_num
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
+        );
         vars.insert("label", label.to_string());
         vars.insert("device", device.to_string());
         vars.insert("mode", mode_str.to_string());

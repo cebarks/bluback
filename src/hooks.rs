@@ -71,51 +71,57 @@ pub fn expand_template(command: &str, vars: &HashMap<&str, String>) -> String {
     result
 }
 
-/// Run a post-rip hook if configured and appropriate.
-pub fn run_post_rip(config: &Config, vars: &HashMap<&str, String>, no_hooks: bool) {
+/// Decide whether a post-rip hook should fire and return the expanded command.
+/// Returns None if the hook should be skipped, Some(expanded_command) if it should run.
+fn prepare_post_rip(
+    config: &Config,
+    vars: &HashMap<&str, String>,
+    no_hooks: bool,
+) -> Option<String> {
     if no_hooks {
         log::debug!("Skipping post-rip hook (no_hooks flag set)");
-        return;
+        return None;
     }
 
-    let hook = match &config.post_rip {
-        Some(h) => h,
-        None => return, // No hook configured
-    };
-
-    let command = match &hook.command {
-        Some(c) => c,
-        None => return, // No command specified
-    };
+    let hook = config.post_rip.as_ref()?;
+    let command = hook.command.as_deref().filter(|c| !c.is_empty())?;
 
     // Check status - skip on failure unless on_failure is true
     if let Some(status) = vars.get("status") {
         if status != "success" && !hook.on_failure() {
-            log::debug!("Skipping post-rip hook (status={}, on_failure=false)", status);
-            return;
+            log::debug!(
+                "Skipping post-rip hook (status={}, on_failure=false)",
+                status
+            );
+            return None;
         }
     }
 
-    let expanded = expand_template(command, vars);
-    execute_hook(&expanded, hook.blocking(), hook.log_output(), "post-rip");
+    Some(expand_template(command, vars))
 }
 
-/// Run a post-session hook if configured and appropriate.
-pub fn run_post_session(config: &Config, vars: &HashMap<&str, String>, no_hooks: bool) {
+/// Run a post-rip hook if configured and appropriate.
+pub fn run_post_rip(config: &Config, vars: &HashMap<&str, String>, no_hooks: bool) {
+    if let Some(expanded) = prepare_post_rip(config, vars, no_hooks) {
+        let hook = config.post_rip.as_ref().unwrap();
+        execute_hook(&expanded, hook.blocking(), hook.log_output(), "post-rip");
+    }
+}
+
+/// Decide whether a post-session hook should fire and return the expanded command.
+/// Returns None if the hook should be skipped, Some(expanded_command) if it should run.
+fn prepare_post_session(
+    config: &Config,
+    vars: &HashMap<&str, String>,
+    no_hooks: bool,
+) -> Option<String> {
     if no_hooks {
         log::debug!("Skipping post-session hook (no_hooks flag set)");
-        return;
+        return None;
     }
 
-    let hook = match &config.post_session {
-        Some(h) => h,
-        None => return, // No hook configured
-    };
-
-    let command = match &hook.command {
-        Some(c) => c,
-        None => return, // No command specified
-    };
+    let hook = config.post_session.as_ref()?;
+    let command = hook.command.as_deref().filter(|c| !c.is_empty())?;
 
     // Check failed count - skip if any failed unless on_failure is true
     if let Some(failed) = vars.get("failed") {
@@ -125,13 +131,25 @@ pub fn run_post_session(config: &Config, vars: &HashMap<&str, String>, no_hooks:
                     "Skipping post-session hook (failed={}, on_failure=false)",
                     count
                 );
-                return;
+                return None;
             }
         }
     }
 
-    let expanded = expand_template(command, vars);
-    execute_hook(&expanded, hook.blocking(), hook.log_output(), "post-session");
+    Some(expand_template(command, vars))
+}
+
+/// Run a post-session hook if configured and appropriate.
+pub fn run_post_session(config: &Config, vars: &HashMap<&str, String>, no_hooks: bool) {
+    if let Some(expanded) = prepare_post_session(config, vars, no_hooks) {
+        let hook = config.post_session.as_ref().unwrap();
+        execute_hook(
+            &expanded,
+            hook.blocking(),
+            hook.log_output(),
+            "post-session",
+        );
+    }
 }
 
 /// Execute a hook command, either blocking or in a background thread.
@@ -283,5 +301,159 @@ mod tests {
 
         let result = expand_template("{var_name}", &vars);
         assert_eq!(result, "value");
+    }
+
+    // --- prepare_post_rip tests ---
+
+    fn hook_config(command: &str) -> crate::config::HookConfig {
+        crate::config::HookConfig {
+            command: Some(command.into()),
+            on_failure: None,
+            blocking: None,
+            log_output: None,
+        }
+    }
+
+    fn success_vars() -> HashMap<&'static str, String> {
+        let mut vars = HashMap::new();
+        vars.insert("status", "success".into());
+        vars.insert("filename", "test.mkv".into());
+        vars
+    }
+
+    fn failed_vars() -> HashMap<&'static str, String> {
+        let mut vars = HashMap::new();
+        vars.insert("status", "failed".into());
+        vars.insert("error", "some error".into());
+        vars
+    }
+
+    #[test]
+    fn test_post_rip_skips_when_no_hooks() {
+        let config = Config {
+            post_rip: Some(hook_config("echo hi")),
+            ..Default::default()
+        };
+        assert!(prepare_post_rip(&config, &success_vars(), true).is_none());
+    }
+
+    #[test]
+    fn test_post_rip_skips_when_no_config() {
+        let config = Config::default();
+        assert!(prepare_post_rip(&config, &success_vars(), false).is_none());
+    }
+
+    #[test]
+    fn test_post_rip_skips_when_no_command() {
+        let config = Config {
+            post_rip: Some(crate::config::HookConfig {
+                command: None,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(prepare_post_rip(&config, &success_vars(), false).is_none());
+    }
+
+    #[test]
+    fn test_post_rip_skips_when_empty_command() {
+        let config = Config {
+            post_rip: Some(hook_config("")),
+            ..Default::default()
+        };
+        assert!(prepare_post_rip(&config, &success_vars(), false).is_none());
+    }
+
+    #[test]
+    fn test_post_rip_fires_on_success() {
+        let config = Config {
+            post_rip: Some(hook_config("echo {filename}")),
+            ..Default::default()
+        };
+        let result = prepare_post_rip(&config, &success_vars(), false);
+        assert_eq!(result.as_deref(), Some("echo test.mkv"));
+    }
+
+    #[test]
+    fn test_post_rip_skips_failure_by_default() {
+        let config = Config {
+            post_rip: Some(hook_config("echo hi")),
+            ..Default::default()
+        };
+        assert!(prepare_post_rip(&config, &failed_vars(), false).is_none());
+    }
+
+    #[test]
+    fn test_post_rip_fires_on_failure_when_configured() {
+        let config = Config {
+            post_rip: Some(crate::config::HookConfig {
+                command: Some("echo {error}".into()),
+                on_failure: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let result = prepare_post_rip(&config, &failed_vars(), false);
+        assert_eq!(result.as_deref(), Some("echo some error"));
+    }
+
+    // --- prepare_post_session tests ---
+
+    fn session_vars(failed: u32) -> HashMap<&'static str, String> {
+        let mut vars = HashMap::new();
+        vars.insert("total", "4".into());
+        vars.insert("succeeded", (4 - failed).to_string());
+        vars.insert("failed", failed.to_string());
+        vars.insert("skipped", "0".into());
+        vars.insert("label", "DISC_1".into());
+        vars
+    }
+
+    #[test]
+    fn test_post_session_skips_when_no_hooks() {
+        let config = Config {
+            post_session: Some(hook_config("echo done")),
+            ..Default::default()
+        };
+        assert!(prepare_post_session(&config, &session_vars(0), true).is_none());
+    }
+
+    #[test]
+    fn test_post_session_skips_when_no_config() {
+        let config = Config::default();
+        assert!(prepare_post_session(&config, &session_vars(0), false).is_none());
+    }
+
+    #[test]
+    fn test_post_session_fires_on_all_success() {
+        let config = Config {
+            post_session: Some(hook_config("echo {label}")),
+            ..Default::default()
+        };
+        let result = prepare_post_session(&config, &session_vars(0), false);
+        assert_eq!(result.as_deref(), Some("echo DISC_1"));
+    }
+
+    #[test]
+    fn test_post_session_skips_on_failures_by_default() {
+        let config = Config {
+            post_session: Some(hook_config("echo done")),
+            ..Default::default()
+        };
+        assert!(prepare_post_session(&config, &session_vars(2), false).is_none());
+    }
+
+    #[test]
+    fn test_post_session_fires_on_failures_when_configured() {
+        let config = Config {
+            post_session: Some(crate::config::HookConfig {
+                command: Some("echo {failed} failed".into()),
+                on_failure: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let result = prepare_post_session(&config, &session_vars(2), false);
+        assert_eq!(result.as_deref(), Some("echo 2 failed"));
     }
 }

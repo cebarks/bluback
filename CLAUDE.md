@@ -91,6 +91,7 @@ Before every commit, you MUST run:
 9. `util.rs` contains all pure functions (template rendering, selection parsing)
 10. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority, validates on load (unknown keys, numeric bounds, template syntax)
 11. `aacs.rs` — AACS backend preflight (library detection via ldconfig, makemkvcon availability, LIBAACS_PATH env var setup, zombie process reaping)
+12. `hooks.rs` — post-rip/post-session hook execution: template expansion, `sh -c` execution, blocking/non-blocking modes, output logging
 
 ### Two UI Modes
 
@@ -134,6 +135,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Structured exit codes** — `main()` → `run()` → `run_inner()`. `classify_exit_code()` uses both string matching and `MediaError` downcast for error-to-code mapping.
 - **Setup validation** — `--check` validates environment without requiring a disc: FFmpeg libs, libbluray, libaacs, KEYDB.cfg, libmmbd, makemkvcon, udisksctl, optical drives, drive permissions, output directory, TMDb API key, config file. Exit code 0 (all required pass) or 2 (any required fail). Dispatches before AACS preflight.
 - **Headless progress** — Non-TTY stdout gets `println!` progress lines at 10-second wall-clock intervals instead of `\r` carriage returns. TTY keeps existing carriage return behavior.
+- **Post-rip hooks** — `[post_rip]` and `[post_session]` config tables with `command`, `on_failure`, `blocking`, `log_output` fields. Commands run via `sh -c` with `{var}` template expansion (TODO(debt): shell injection risk from unescaped values). Per-file hook fires after each playlist remux; per-session hook fires after all jobs complete. Both called from CLI (`cli.rs`) and TUI (`tui/dashboard.rs`). `--no-hooks` disables for the run. Hook failures are logged but never fail the rip.
 
 ## Testing
 
@@ -183,6 +185,7 @@ bluback [OPTIONS]
   -v, --verbose                Verbose output (with --list-playlists: show stream details)
       --overwrite              Overwrite existing output files instead of skipping
       --no-metadata            Don't embed metadata tags in output MKV files
+      --no-hooks               Disable post-rip/post-session hooks for this run
       --aacs-backend <BACKEND> AACS decryption backend: auto, libaacs, or libmmbd
       --check                  Validate environment setup and exit (no disc required)
       --settings               Open settings panel (no disc/ffmpeg required)
