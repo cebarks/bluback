@@ -1080,6 +1080,44 @@ fn rip_selected(
                 if chapters_added > 0 {
                     println!("  Added {} chapter markers", chapters_added);
                 }
+
+                // Verification
+                let do_verify = args.verify || (!args.no_verify && config.verify());
+                if do_verify {
+                    let level = match args
+                        .verify_level
+                        .as_deref()
+                        .unwrap_or(config.verify_level())
+                    {
+                        "full" => crate::verify::VerifyLevel::Full,
+                        _ => crate::verify::VerifyLevel::Quick,
+                    };
+                    let expected = crate::verify::VerifyExpected {
+                        duration_secs: pl.seconds,
+                        video_streams: pl.video_streams,
+                        audio_streams: pl.audio_streams,
+                        subtitle_streams: pl.subtitle_streams,
+                        chapters: chapters_added,
+                    };
+                    let result = crate::verify::verify_output(outfile, &expected, level);
+                    if result.passed {
+                        println!("  Verified ({:?}): all checks passed", level);
+                    } else {
+                        let failed: Vec<&str> = result
+                            .checks
+                            .iter()
+                            .filter(|c| !c.passed)
+                            .map(|c| c.detail.as_str())
+                            .collect();
+                        log::warn!(
+                            "Verification failed for {}: {}",
+                            filename,
+                            failed.join("; ")
+                        );
+                        println!("  WARNING: verification failed: {}", failed.join("; "));
+                    }
+                }
+
                 success_count += 1;
                 ("success", String::new(), final_size, chapters_added)
             }
