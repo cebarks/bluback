@@ -145,6 +145,10 @@ pub struct Args {
     /// Custom log file path (overrides default location)
     #[arg(long, conflicts_with = "no_log")]
     log_file: Option<PathBuf>,
+
+    /// Disable post-rip and post-session hooks for this run
+    #[arg(long)]
+    no_hooks: bool,
 }
 
 impl Args {
