@@ -417,6 +417,7 @@ pub struct DashboardView {
     pub confirm_abort: bool,
     pub confirm_rescan: bool,
     pub label: String,
+    pub verify_failed_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone)]

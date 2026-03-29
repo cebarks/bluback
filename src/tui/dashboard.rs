@@ -234,6 +234,31 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
     f.render_widget(table, chunks[1]);
 
     // Key hints / confirmation prompts
+    if let Some(fail_idx) = view.verify_failed_idx {
+        if let Some(job) = view.jobs.get(fail_idx) {
+            if let PlaylistStatus::VerifyFailed(_, ref result) = job.status {
+                let failed_details: Vec<&str> = result
+                    .checks
+                    .iter()
+                    .filter(|c| !c.passed)
+                    .map(|c| c.detail.as_str())
+                    .collect();
+                let msg = format!(
+                    "{}: {}  [D]elete & retry  [K]eep  [S]kip",
+                    job.filename,
+                    failed_details.join("; ")
+                );
+                let hint = Paragraph::new(msg).style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                );
+                f.render_widget(hint, chunks[2]);
+                return;
+            }
+        }
+    }
+
     let hint = if view.confirm_abort {
         Paragraph::new("Really abort? [y] Yes  [n] No")
             .style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
@@ -423,6 +448,38 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
 // --- Session variants of dashboard handlers ---
 
 pub fn handle_input_session(session: &mut crate::session::DriveSession, key: KeyEvent) {
+    if let Some(fail_idx) = session.rip.verify_failed_idx {
+        match key.code {
+            KeyCode::Char('d') | KeyCode::Char('D') => {
+                // Delete and retry
+                let outfile = session
+                    .output_dir
+                    .join(&session.rip.jobs[fail_idx].filename);
+                let _ = std::fs::remove_file(&outfile);
+                session.rip.jobs[fail_idx].status = PlaylistStatus::Pending;
+                session.rip.verify_failed_idx = None;
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                // Keep as-is
+                if let PlaylistStatus::VerifyFailed(sz, _) = &session.rip.jobs[fail_idx].status {
+                    session.rip.jobs[fail_idx].status = PlaylistStatus::Done(*sz);
+                }
+                session.rip.verify_failed_idx = None;
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                // Skip (delete file)
+                let outfile = session
+                    .output_dir
+                    .join(&session.rip.jobs[fail_idx].filename);
+                let _ = std::fs::remove_file(&outfile);
+                session.rip.jobs[fail_idx].status = PlaylistStatus::Skipped(0);
+                session.rip.verify_failed_idx = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     if session.rip.confirm_abort {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -749,6 +806,7 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                             );
                             session.rip.jobs[idx].status =
                                 PlaylistStatus::VerifyFailed(file_size, result);
+                            session.rip.verify_failed_idx = Some(idx);
                         }
                     } else {
                         session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
