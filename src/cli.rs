@@ -351,6 +351,9 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         &selected,
         &outfiles,
         &metadata_per_playlist,
+        args.no_hooks,
+        &label,
+        &tmdb_ctx,
     )
 }
 
@@ -926,6 +929,9 @@ fn rip_selected(
     selected: &[usize],
     outfiles: &[PathBuf],
     metadata_per_playlist: &[Option<crate::types::MkvMetadata>],
+    no_hooks: bool,
+    label: &str,
+    tmdb_ctx: &TmdbContext,
 ) -> anyhow::Result<()> {
     if args.dry_run {
         println!("\n[DRY RUN] Would rip:");
@@ -964,7 +970,11 @@ fn rip_selected(
     }
 
     let stream_selection = config.resolve_stream_selection();
-    let mut had_failure = false;
+    let mut success_count = 0u32;
+    let mut fail_count = 0u32;
+    let mut skip_count = 0u32;
+    let movie_mode = args.movie;
+    let mode_str = if movie_mode { "movie" } else { "tv" };
 
     for (i, &idx) in selected.iter().enumerate() {
         if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
@@ -988,6 +998,7 @@ fn rip_selected(
                     filename,
                     format_size(size)
                 );
+                skip_count += 1;
                 continue;
             }
             crate::workflow::OverwriteAction::DeleteAndProceed(size) => {
@@ -1055,7 +1066,10 @@ fn rip_selected(
         if is_tty {
             println!(); // newline after \r progress
         }
-        match result {
+
+        let was_cancelled = matches!(&result, Err(crate::media::MediaError::Cancelled));
+
+        let (hook_status, hook_error, hook_size, hook_chapters) = match result {
             Ok(chapters_added) => {
                 let final_size = std::fs::metadata(outfile)?.len();
                 if !is_tty {
@@ -1065,27 +1079,83 @@ fn rip_selected(
                 if chapters_added > 0 {
                     println!("  Added {} chapter markers", chapters_added);
                 }
+                success_count += 1;
+                ("success", String::new(), final_size, chapters_added)
             }
             Err(crate::media::MediaError::Cancelled) => {
                 if outfile.exists() {
                     let _ = std::fs::remove_file(outfile);
                 }
                 println!("Cancelled — removed partial file {}", filename);
-                break;
+                fail_count += 1;
+                ("failed", "Cancelled".to_string(), 0u64, 0usize)
             }
             Err(e) => {
+                let err_msg = e.to_string();
                 if outfile.exists() {
                     let _ = std::fs::remove_file(outfile);
                 }
-                println!("Error: {} — removed partial file {}", e, filename);
-                had_failure = true;
-                continue;
+                println!("Error: {} — removed partial file {}", err_msg, filename);
+                fail_count += 1;
+                ("failed", err_msg, 0u64, 0usize)
             }
+        };
+
+        // Post-rip hook
+        {
+            let episodes = tmdb_ctx.episode_assignments.get(&pl.num);
+            let title_str = if movie_mode {
+                tmdb_ctx.movie_title.as_ref().map(|(t, _)| t.as_str()).unwrap_or("")
+            } else {
+                tmdb_ctx.show_name.as_deref().unwrap_or("")
+            };
+            let mut vars = std::collections::HashMap::new();
+            vars.insert("file", outfile.display().to_string());
+            vars.insert("filename", filename.to_string());
+            vars.insert("dir", args.output.display().to_string());
+            vars.insert("size", hook_size.to_string());
+            vars.insert("chapters", hook_chapters.to_string());
+            vars.insert("title", title_str.to_string());
+            vars.insert("season", tmdb_ctx.season_num.map(|n| n.to_string()).unwrap_or_default());
+            vars.insert("episode", episodes.and_then(|e| e.first()).map(|e| e.episode_number.to_string()).unwrap_or_default());
+            vars.insert("episode_name", episodes.and_then(|e| e.first()).map(|e| e.name.clone()).unwrap_or_default());
+            vars.insert("playlist", pl.num.clone());
+            vars.insert("label", label.to_string());
+            vars.insert("mode", mode_str.to_string());
+            vars.insert("device", device.to_string());
+            vars.insert("status", hook_status.to_string());
+            vars.insert("error", hook_error);
+            crate::hooks::run_post_rip(config, &vars, no_hooks);
+        }
+
+        if was_cancelled {
+            break;
         }
     }
 
     if let Some(ref mut guard) = _mount_guard {
         guard.cleanup();
+    }
+
+    // Post-session hook
+    {
+        let title_str = if movie_mode {
+            tmdb_ctx.movie_title.as_ref().map(|(t, _)| t.as_str()).unwrap_or("")
+        } else {
+            tmdb_ctx.show_name.as_deref().unwrap_or("")
+        };
+        let mut vars = std::collections::HashMap::new();
+        vars.insert("title", title_str.to_string());
+        vars.insert("season", tmdb_ctx.season_num.map(|n| n.to_string()).unwrap_or_default());
+        vars.insert("label", label.to_string());
+        vars.insert("device", device.to_string());
+        vars.insert("mode", mode_str.to_string());
+        vars.insert("dir", args.output.display().to_string());
+        vars.insert("total", selected.len().to_string());
+        vars.insert("succeeded", success_count.to_string());
+        vars.insert("failed", fail_count.to_string());
+        vars.insert("skipped", skip_count.to_string());
+        crate::hooks::run_post_session(config, &vars, no_hooks);
     }
 
     println!(
@@ -1094,7 +1164,7 @@ fn rip_selected(
         args.output.display()
     );
 
-    if !had_failure && config.should_eject(args.cli_eject()) {
+    if fail_count == 0 && config.should_eject(args.cli_eject()) {
         println!("Ejecting disc...");
         if let Err(e) = disc::eject_disc(device) {
             println!("Warning: failed to eject disc: {}", e);
