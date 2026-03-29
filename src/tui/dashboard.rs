@@ -950,6 +950,543 @@ mod tests {
         assert!(!session.rip.confirm_abort);
         assert!(session.rip.verify_failed_idx.is_some());
     }
+
+    // =========================================================================
+    // Rendering tests — dashboard and done views via TestBackend
+    // =========================================================================
+
+    use crate::types::{DashboardView, DoneView, Episode, Playlist, RipJob, RipProgress};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                let cell = &buf[(x, y)];
+                text.push_str(cell.symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    fn render_dashboard(view: &DashboardView) -> String {
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_dashboard_view(f, view, "", f.area());
+            })
+            .unwrap();
+        buffer_text(&terminal)
+    }
+
+    fn render_done(view: &DoneView) -> String {
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_done_view(f, view, f.area());
+            })
+            .unwrap();
+        buffer_text(&terminal)
+    }
+
+    fn make_playlist() -> Playlist {
+        Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 1,
+            audio_streams: 2,
+            subtitle_streams: 3,
+        }
+    }
+
+    fn make_job(status: PlaylistStatus) -> RipJob {
+        RipJob {
+            playlist: make_playlist(),
+            episode: vec![Episode {
+                episode_number: 1,
+                name: "Pilot".into(),
+                runtime: None,
+            }],
+            filename: "S01E01_Pilot.mkv".into(),
+            status,
+        }
+    }
+
+    fn default_dashboard_view(jobs: Vec<RipJob>) -> DashboardView {
+        DashboardView {
+            jobs,
+            current_rip: 0,
+            confirm_abort: false,
+            confirm_rescan: false,
+            label: String::new(),
+            verify_failed_idx: None,
+        }
+    }
+
+    fn default_done_view(jobs: Vec<RipJob>) -> DoneView {
+        DoneView {
+            jobs,
+            label: String::new(),
+            disc_detected_label: None,
+            eject: false,
+            status_message: String::new(),
+            filenames: vec![],
+        }
+    }
+
+    // --- Dashboard job status rendering ---
+
+    #[test]
+    fn test_render_dashboard_pending_job() {
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Pending)]);
+        let text = render_dashboard(&view);
+        assert!(text.contains("Pending"), "should show Pending: {}", text);
+    }
+
+    #[test]
+    fn test_render_dashboard_ripping_job() {
+        let prog = RipProgress {
+            frame: 1000,
+            fps: 24.0,
+            total_size: 500_000_000,
+            out_time_secs: 1800,
+            bitrate: "30000".into(),
+            speed: 1.5,
+        };
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Ripping(prog))]);
+        let text = render_dashboard(&view);
+        assert!(text.contains("[#"), "should show progress bar: {}", text);
+        assert!(text.contains("50%"), "should show 50%: {}", text);
+    }
+
+    #[test]
+    fn test_render_dashboard_done_job() {
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Done(1_000_000_000))]);
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("Completed"),
+            "should show Completed: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_dashboard_skipped_job() {
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Skipped(500_000_000))]);
+        let text = render_dashboard(&view);
+        assert!(text.contains("Skipped"), "should show Skipped: {}", text);
+    }
+
+    #[test]
+    fn test_render_dashboard_failed_job() {
+        let view =
+            default_dashboard_view(vec![make_job(PlaylistStatus::Failed("AACS error".into()))]);
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("Failed:"),
+            "should show Failed prefix: {}",
+            text
+        );
+        assert!(
+            text.contains("AACS error"),
+            "should show error message: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_dashboard_verifying_job() {
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Verifying)]);
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("Verifying..."),
+            "should show Verifying...: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_dashboard_verified_job() {
+        let result = crate::verify::VerifyResult {
+            passed: true,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![],
+        };
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Verified(
+            1_000_000_000,
+            result,
+        ))]);
+        let text = render_dashboard(&view);
+        assert!(text.contains("Verified"), "should show Verified: {}", text);
+    }
+
+    #[test]
+    fn test_render_dashboard_verify_failed_job() {
+        let result = crate::verify::VerifyResult {
+            passed: false,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![crate::verify::VerifyCheck {
+                name: "duration",
+                passed: false,
+                detail: "expected 3600s, got 3000s".into(),
+            }],
+        };
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::VerifyFailed(
+            1_000_000_000,
+            result,
+        ))]);
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("Verify failed"),
+            "should show Verify failed: {}",
+            text
+        );
+    }
+
+    // --- Dashboard prompts/overlays ---
+
+    #[test]
+    fn test_render_dashboard_abort_confirmation() {
+        let mut view = default_dashboard_view(vec![make_job(PlaylistStatus::Pending)]);
+        view.confirm_abort = true;
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("Really abort?"),
+            "should show abort confirmation: {}",
+            text
+        );
+        assert!(text.contains("[y] Yes"), "should show yes option: {}", text);
+        assert!(text.contains("[n] No"), "should show no option: {}", text);
+    }
+
+    #[test]
+    fn test_render_dashboard_rescan_confirmation() {
+        let mut view = default_dashboard_view(vec![make_job(PlaylistStatus::Pending)]);
+        view.confirm_rescan = true;
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("Rescan disc?"),
+            "should show rescan confirmation: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_dashboard_verify_prompt() {
+        let result = crate::verify::VerifyResult {
+            passed: false,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![crate::verify::VerifyCheck {
+                name: "duration",
+                passed: false,
+                detail: "expected 3600s, got 3000s".into(),
+            }],
+        };
+        let mut view = default_dashboard_view(vec![make_job(PlaylistStatus::VerifyFailed(
+            1_000_000_000,
+            result,
+        ))]);
+        view.verify_failed_idx = Some(0);
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("S01E01_Pilot.mkv"),
+            "should show filename: {}",
+            text
+        );
+        assert!(
+            text.contains("[D]elete"),
+            "should show delete option: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_dashboard_normal_hints() {
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Pending)]);
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("[q] Abort"),
+            "should show abort hint: {}",
+            text
+        );
+        assert!(
+            text.contains("[Ctrl+R] Rescan"),
+            "should show rescan hint: {}",
+            text
+        );
+        assert!(
+            text.contains("[Ctrl+S] Settings"),
+            "should show settings hint: {}",
+            text
+        );
+    }
+
+    // --- Dashboard header/stats ---
+
+    #[test]
+    fn test_render_dashboard_progress_stats() {
+        let prog = RipProgress {
+            frame: 1000,
+            fps: 24.0,
+            total_size: 500_000_000,
+            out_time_secs: 1800,
+            bitrate: "30000".into(),
+            speed: 1.5,
+        };
+        let view = default_dashboard_view(vec![make_job(PlaylistStatus::Ripping(prog))]);
+        let text = render_dashboard(&view);
+        assert!(text.contains("fps:"), "should show fps stat: {}", text);
+        assert!(text.contains("size:"), "should show size stat: {}", text);
+        assert!(text.contains("time:"), "should show time stat: {}", text);
+        assert!(
+            text.contains("bitrate:"),
+            "should show bitrate stat: {}",
+            text
+        );
+        assert!(text.contains("speed:"), "should show speed stat: {}", text);
+    }
+
+    #[test]
+    fn test_render_dashboard_completion_count() {
+        let view = default_dashboard_view(vec![
+            make_job(PlaylistStatus::Done(1_000_000)),
+            make_job(PlaylistStatus::Pending),
+        ]);
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("1/2 complete"),
+            "should show 1/2 complete: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_dashboard_label() {
+        let mut view = default_dashboard_view(vec![make_job(PlaylistStatus::Pending)]);
+        view.label = "MY_DISC_LABEL".into();
+        let text = render_dashboard(&view);
+        assert!(
+            text.contains("MY_DISC_LABEL"),
+            "should show disc label in title: {}",
+            text
+        );
+    }
+
+    // --- Done view tests ---
+
+    #[test]
+    fn test_render_done_completed_files() {
+        let view = default_done_view(vec![make_job(PlaylistStatus::Done(1_073_741_824))]);
+        let text = render_done(&view);
+        assert!(
+            text.contains("S01E01_Pilot.mkv"),
+            "should show filename: {}",
+            text
+        );
+        assert!(text.contains("1.0 GiB"), "should show size: {}", text);
+    }
+
+    #[test]
+    fn test_render_done_skipped_files() {
+        let view = default_done_view(vec![make_job(PlaylistStatus::Skipped(500_000_000))]);
+        let text = render_done(&view);
+        assert!(text.contains("SKIPPED"), "should show SKIPPED: {}", text);
+    }
+
+    #[test]
+    fn test_render_done_failed_files() {
+        let view = default_done_view(vec![make_job(PlaylistStatus::Failed("I/O error".into()))]);
+        let text = render_done(&view);
+        assert!(
+            text.contains("FAILED:"),
+            "should show FAILED prefix: {}",
+            text
+        );
+        assert!(
+            text.contains("I/O error"),
+            "should show error message: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_verified_files() {
+        let result = crate::verify::VerifyResult {
+            passed: true,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![],
+        };
+        let view = default_done_view(vec![make_job(PlaylistStatus::Verified(
+            1_073_741_824,
+            result,
+        ))]);
+        let text = render_done(&view);
+        // Verified files appear in the completed list with size
+        assert!(
+            text.contains("S01E01_Pilot.mkv"),
+            "should show filename: {}",
+            text
+        );
+        assert!(text.contains("1.0 GiB"), "should show size: {}", text);
+    }
+
+    #[test]
+    fn test_render_done_verify_failed_files() {
+        let result = crate::verify::VerifyResult {
+            passed: false,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![crate::verify::VerifyCheck {
+                name: "duration",
+                passed: false,
+                detail: "expected 3600s, got 3000s".into(),
+            }],
+        };
+        let view = default_done_view(vec![make_job(PlaylistStatus::VerifyFailed(
+            1_073_741_824,
+            result,
+        ))]);
+        let text = render_done(&view);
+        assert!(
+            text.contains("VERIFY FAILED"),
+            "should show VERIFY FAILED: {}",
+            text
+        );
+        assert!(
+            text.contains("duration"),
+            "should show check name: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_all_success_summary() {
+        let view = default_done_view(vec![
+            make_job(PlaylistStatus::Done(1_000_000)),
+            make_job(PlaylistStatus::Done(2_000_000)),
+        ]);
+        let text = render_done(&view);
+        assert!(
+            text.contains("All done! Backed up 2 playlist(s)"),
+            "should show all success summary: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_mixed_summary() {
+        let view = default_done_view(vec![
+            make_job(PlaylistStatus::Done(1_000_000)),
+            make_job(PlaylistStatus::Skipped(500_000)),
+            make_job(PlaylistStatus::Failed("error".into())),
+        ]);
+        let text = render_done(&view);
+        assert!(
+            text.contains("Completed 2 of 3 playlist(s)"),
+            "should show mixed summary: {}",
+            text
+        );
+        assert!(
+            text.contains("1 ripped"),
+            "should show ripped count: {}",
+            text
+        );
+        assert!(
+            text.contains("1 skipped"),
+            "should show skipped count: {}",
+            text
+        );
+        assert!(
+            text.contains("1 failed"),
+            "should show failed count: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_disc_detected_popup() {
+        let mut view = default_done_view(vec![make_job(PlaylistStatus::Done(1_000_000))]);
+        view.disc_detected_label = Some("NEW_DISC".into());
+        let text = render_done(&view);
+        assert!(
+            text.contains("New disc detected"),
+            "should show popup title: {}",
+            text
+        );
+        assert!(
+            text.contains("NEW_DISC"),
+            "should show disc label: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_error_in_body() {
+        let view = DoneView {
+            jobs: vec![],
+            label: String::new(),
+            disc_detected_label: None,
+            eject: false,
+            status_message: "AACS: decryption failed for this disc".into(),
+            filenames: vec![],
+        };
+        let text = render_done(&view);
+        assert!(text.contains("AACS"), "should show error in body: {}", text);
+        assert!(
+            text.contains("decryption failed"),
+            "should show full error: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_dry_run() {
+        let view = DoneView {
+            jobs: vec![],
+            label: String::new(),
+            disc_detected_label: None,
+            eject: false,
+            status_message: String::new(),
+            filenames: vec!["S01E01_Pilot.mkv".into(), "S01E02_Second.mkv".into()],
+        };
+        let text = render_done(&view);
+        assert!(
+            text.contains("S01E01_Pilot.mkv"),
+            "should show first dry run file: {}",
+            text
+        );
+        assert!(
+            text.contains("S01E02_Second.mkv"),
+            "should show second dry run file: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_key_hints() {
+        let view = default_done_view(vec![make_job(PlaylistStatus::Done(1_000_000))]);
+        let text = render_done(&view);
+        assert!(
+            text.contains("[Enter/Ctrl+R] Rescan"),
+            "should show rescan hint: {}",
+            text
+        );
+        assert!(
+            text.contains("[Ctrl+E] Eject"),
+            "should show eject hint: {}",
+            text
+        );
+        assert!(
+            text.contains("[Ctrl+S] Settings"),
+            "should show settings hint: {}",
+            text
+        );
+    }
 }
 
 fn active_rip_stats_view(view: &DashboardView) -> String {
