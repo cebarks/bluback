@@ -563,6 +563,21 @@ impl SettingsState {
                 key: "overwrite".into(),
                 value: config.overwrite.unwrap_or(false),
             },
+            SettingItem::Toggle {
+                label: "Verify Rips".into(),
+                key: "verify".into(),
+                value: config.verify.unwrap_or(false),
+            },
+            SettingItem::Choice {
+                label: "Verify Level".into(),
+                key: "verify_level".into(),
+                options: vec!["quick".into(), "full".into()],
+                selected: match config.verify_level.as_deref() {
+                    Some("full") => 1,
+                    _ => 0,
+                },
+                custom_value: None,
+            },
             SettingItem::Choice {
                 key: "aacs_backend".into(),
                 label: "AACS Backend".into(),
@@ -792,6 +807,8 @@ impl SettingsState {
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
+            ("BLUBACK_VERIFY", "verify"),
+            ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("BLUBACK_METADATA", "metadata.enabled"),
             ("TMDB_API_KEY", "tmdb_api_key"),
@@ -897,6 +914,8 @@ impl SettingsState {
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
+            ("BLUBACK_VERIFY", "verify"),
+            ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("BLUBACK_METADATA", "metadata.enabled"),
             ("TMDB_API_KEY", "tmdb_api_key"),
@@ -951,6 +970,7 @@ impl SettingsState {
                     "show_filtered" if *value => config.show_filtered = Some(true),
                     "verbose_libbluray" if *value => config.verbose_libbluray = Some(true),
                     "overwrite" if *value => config.overwrite = Some(true),
+                    "verify" if *value => config.verify = Some(true),
                     "log_file" if !*value => config.log_file = Some(false),
                     "metadata.enabled" if !*value => {
                         let meta = config.metadata.get_or_insert_with(Default::default);
@@ -1020,6 +1040,12 @@ impl SettingsState {
                         let val = &options[*selected];
                         if val != "auto" {
                             config.aacs_backend = Some(val.clone());
+                        }
+                    }
+                    "verify_level" => {
+                        let val = &options[*selected];
+                        if val != "quick" {
+                            config.verify_level = Some(val.clone());
                         }
                     }
                     "log_level" => {
@@ -1137,13 +1163,13 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 6 separators + 26 settings + 1 action = 33 items
+        // 6 separators + 28 settings + 1 action = 35 items
         let non_separator_count = state
             .items
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 27); // 26 settings + 1 action
+        assert_eq!(non_separator_count, 29); // 28 settings + 1 action
     }
 
     #[test]
