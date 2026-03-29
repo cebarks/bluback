@@ -92,6 +92,7 @@ Before every commit, you MUST run:
 10. `config.rs` loads TOML config with path resolution (`--config` flag → `BLUBACK_CONFIG` env → default), saves with commented-out defaults, resolves filename format priority, validates on load (unknown keys, numeric bounds, template syntax)
 11. `aacs.rs` — AACS backend preflight (library detection via ldconfig, makemkvcon availability, LIBAACS_PATH env var setup, zombie process reaping)
 12. `hooks.rs` — post-rip/post-session hook execution: template expansion, `sh -c` execution, blocking/non-blocking modes, output logging
+13. `verify.rs` — post-remux output validation: probe MKV headers (duration, stream counts, chapters), optional frame decode at seek points
 
 ### Two UI Modes
 
@@ -136,6 +137,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Setup validation** — `--check` validates environment without requiring a disc: FFmpeg libs, libbluray, libaacs, KEYDB.cfg, libmmbd, makemkvcon, udisksctl, optical drives, drive permissions, output directory, TMDb API key, config file. Exit code 0 (all required pass) or 2 (any required fail). Dispatches before AACS preflight.
 - **Headless progress** — Non-TTY stdout gets `println!` progress lines at 10-second wall-clock intervals instead of `\r` carriage returns. TTY keeps existing carriage return behavior.
 - **Post-rip hooks** — `[post_rip]` and `[post_session]` config tables with `command`, `on_failure`, `blocking`, `log_output` fields. Commands run via `sh -c` with `{var}` template expansion (TODO(debt): shell injection risk from unescaped values). Per-file hook fires after each playlist remux; per-session hook fires after all jobs complete. Both called from CLI (`cli.rs`) and TUI (`tui/dashboard.rs`). `--no-hooks` disables for the run. Hook failures are logged but never fail the rip.
+- **Rip verification** — Optional post-remux validation. `verify` config (default false) + `verify_level` ("quick" or "full"). Quick: probe output MKV headers — check duration (2% tolerance), stream counts, chapter count. Full: adds sample frame decode at 5 seek points. `--verify`, `--verify-level`, `--no-verify` CLI flags. TUI prompts on failure (delete & retry / keep / skip). CLI logs warning. Hook vars: `{verify}` (passed/failed/skipped), `{verify_detail}` (comma-separated failed check names).
 
 ## Testing
 
@@ -186,6 +188,9 @@ bluback [OPTIONS]
       --overwrite              Overwrite existing output files instead of skipping
       --no-metadata            Don't embed metadata tags in output MKV files
       --no-hooks               Disable post-rip/post-session hooks for this run
+      --verify                 Verify output files after ripping
+      --verify-level <LEVEL>   Verification level: quick or full
+      --no-verify              Disable verification (overrides config)
       --aacs-backend <BACKEND> AACS decryption backend: auto, libaacs, or libmmbd
       --check                  Validate environment setup and exit (no disc required)
       --settings               Open settings panel (no disc/ffmpeg required)

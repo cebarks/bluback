@@ -187,10 +187,15 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
   - TODO(debt): shell injection risk from template substitution
 - **Files:** `src/hooks.rs`, `src/config.rs`, `src/main.rs`, `src/cli.rs`, `src/tui/dashboard.rs`, `src/session.rs`, `src/tui/coordinator.rs`, `src/types.rs`
 
-### 19. Rip verification
+### 19. Rip verification ✓
 - Post-remux: probe output file, compare expected vs actual duration, verify streams present
-- Warn on mismatch; option to auto-delete failed files
-- **Files:** New `src/verify.rs`, `src/rip.rs`
+- **Two levels:** `quick` (header probe, milliseconds) and `full` (+ sample frame decode)
+- **Off by default**, opt-in via `--verify` / config toggle / settings panel
+- **Duration tolerance:** 2%
+- **TUI:** prompt on failure (delete & retry / keep / skip)
+- **CLI:** log warning, keep file
+- **Hook variables:** `{verify}`, `{verify_detail}`
+- **Files:** New `src/verify.rs`, `src/types.rs`, `src/config.rs`, `src/tui/dashboard.rs`, `src/cli.rs`, `src/session.rs`
 
 ### 20. Per-stream track selection
 - **TUI:** Track picker with codec, language, channels; checkboxes
