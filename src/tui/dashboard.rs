@@ -837,6 +837,121 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PlaylistStatus;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn make_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn make_test_session_with_verify_failure() -> crate::session::DriveSession {
+        let config = crate::config::Config::default();
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (msg_tx, _msg_rx) = std::sync::mpsc::channel();
+        let mut session = crate::session::DriveSession::new(
+            std::path::PathBuf::from("/dev/sr0"),
+            config,
+            cmd_rx,
+            msg_tx,
+        );
+        session.screen = Screen::Ripping;
+        session.output_dir = std::env::temp_dir();
+
+        // Set up a job in VerifyFailed state
+        let verify_result = crate::verify::VerifyResult {
+            passed: false,
+            level: crate::verify::VerifyLevel::Quick,
+            checks: vec![crate::verify::VerifyCheck {
+                name: "duration",
+                passed: false,
+                detail: "expected 3600s, got 3000s".into(),
+            }],
+        };
+        session.rip.jobs = vec![crate::types::RipJob {
+            playlist: crate::types::Playlist {
+                num: "00001".into(),
+                duration: "1:00:00".into(),
+                seconds: 3600,
+                video_streams: 1,
+                audio_streams: 2,
+                subtitle_streams: 3,
+            },
+            episode: vec![],
+            filename: "test_verify.mkv".into(),
+            status: PlaylistStatus::VerifyFailed(1_000_000, verify_result),
+        }];
+        session.rip.verify_failed_idx = Some(0);
+        session
+    }
+
+    #[test]
+    fn test_verify_prompt_keep() {
+        let mut session = make_test_session_with_verify_failure();
+        handle_input_session(&mut session, make_key(KeyCode::Char('k')));
+        assert!(session.rip.verify_failed_idx.is_none());
+        assert!(matches!(
+            session.rip.jobs[0].status,
+            PlaylistStatus::Done(1_000_000)
+        ));
+    }
+
+    #[test]
+    fn test_verify_prompt_keep_uppercase() {
+        let mut session = make_test_session_with_verify_failure();
+        handle_input_session(&mut session, make_key(KeyCode::Char('K')));
+        assert!(session.rip.verify_failed_idx.is_none());
+        assert!(matches!(
+            session.rip.jobs[0].status,
+            PlaylistStatus::Done(1_000_000)
+        ));
+    }
+
+    #[test]
+    fn test_verify_prompt_delete_resets_to_pending() {
+        let mut session = make_test_session_with_verify_failure();
+        handle_input_session(&mut session, make_key(KeyCode::Char('d')));
+        assert!(session.rip.verify_failed_idx.is_none());
+        assert!(matches!(
+            session.rip.jobs[0].status,
+            PlaylistStatus::Pending
+        ));
+    }
+
+    #[test]
+    fn test_verify_prompt_skip() {
+        let mut session = make_test_session_with_verify_failure();
+        handle_input_session(&mut session, make_key(KeyCode::Char('s')));
+        assert!(session.rip.verify_failed_idx.is_none());
+        assert!(matches!(
+            session.rip.jobs[0].status,
+            PlaylistStatus::Skipped(0)
+        ));
+    }
+
+    #[test]
+    fn test_verify_prompt_ignores_other_keys() {
+        let mut session = make_test_session_with_verify_failure();
+        handle_input_session(&mut session, make_key(KeyCode::Char('x')));
+        assert!(session.rip.verify_failed_idx.is_some()); // Still showing prompt
+        assert!(matches!(
+            session.rip.jobs[0].status,
+            PlaylistStatus::VerifyFailed(..)
+        ));
+    }
+
+    #[test]
+    fn test_verify_prompt_blocks_abort_confirmation() {
+        let mut session = make_test_session_with_verify_failure();
+        // 'q' should be swallowed by verify prompt, not trigger abort
+        handle_input_session(&mut session, make_key(KeyCode::Char('q')));
+        assert!(!session.rip.confirm_abort);
+        assert!(session.rip.verify_failed_idx.is_some());
+    }
+}
+
 fn active_rip_stats_view(view: &DashboardView) -> String {
     if let Some(job) = view.jobs.get(view.current_rip) {
         if let PlaylistStatus::Ripping(ref prog) = job.status {

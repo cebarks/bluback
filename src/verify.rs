@@ -473,6 +473,100 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_quick_with_fixture() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return; // Skip if fixtures not generated
+        }
+        let expected = VerifyExpected {
+            duration_secs: 0, // Skip duration check — synthetic fixture has unknown duration
+            video_streams: 1,
+            audio_streams: 1,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Quick);
+        assert!(
+            result
+                .checks
+                .iter()
+                .any(|c| c.name == "file_exists" && c.passed),
+            "file_exists check should pass"
+        );
+        assert!(
+            result
+                .checks
+                .iter()
+                .any(|c| c.name == "ffmpeg_open" && c.passed),
+            "ffmpeg_open check should pass"
+        );
+        assert!(
+            result
+                .checks
+                .iter()
+                .any(|c| c.name == "video_streams" && c.passed),
+            "video_streams check should pass"
+        );
+        assert!(
+            result
+                .checks
+                .iter()
+                .any(|c| c.name == "audio_streams" && c.passed),
+            "audio_streams check should pass"
+        );
+        assert!(result.passed, "all checks should pass: {:?}", result.checks);
+    }
+
+    #[test]
+    fn test_verify_quick_with_multi_audio_fixture() {
+        let fixture = Path::new("tests/fixtures/media/test_multi_audio.mkv");
+        if !fixture.exists() {
+            return; // Skip if fixtures not generated
+        }
+        let expected = VerifyExpected {
+            duration_secs: 0,
+            video_streams: 1,
+            audio_streams: 2,
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Quick);
+        assert!(result.passed, "all checks should pass: {:?}", result.checks);
+    }
+
+    #[test]
+    fn test_verify_stream_count_mismatch_with_fixture() {
+        let fixture = Path::new("tests/fixtures/media/test_video.mkv");
+        if !fixture.exists() {
+            return;
+        }
+        // Expect wrong stream counts to ensure mismatch is detected
+        let expected = VerifyExpected {
+            duration_secs: 0,
+            video_streams: 2, // wrong — fixture has 1
+            audio_streams: 3, // wrong — fixture has 1
+            subtitle_streams: 0,
+            chapters: 0,
+        };
+        let result = verify_output(fixture, &expected, VerifyLevel::Quick);
+        assert!(!result.passed);
+        assert!(
+            result
+                .checks
+                .iter()
+                .any(|c| c.name == "video_streams" && !c.passed),
+            "video_streams mismatch should be detected"
+        );
+        assert!(
+            result
+                .checks
+                .iter()
+                .any(|c| c.name == "audio_streams" && !c.passed),
+            "audio_streams mismatch should be detected"
+        );
+    }
+
+    #[test]
     fn test_verify_result_summary() {
         let result = VerifyResult {
             passed: false,

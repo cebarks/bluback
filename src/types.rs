@@ -1551,6 +1551,76 @@ mod tests {
     }
 
     #[test]
+    fn test_settings_verify_toggle_roundtrip() {
+        let config = crate::config::Config {
+            verify: Some(true),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+        let verify = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "verify"));
+        assert!(matches!(
+            verify,
+            Some(SettingItem::Toggle { value: true, .. })
+        ));
+        let restored = state.to_config();
+        assert_eq!(restored.verify, Some(true));
+    }
+
+    #[test]
+    fn test_settings_verify_toggle_default_false() {
+        let config = crate::config::Config::default();
+        let state = SettingsState::from_config(&config);
+        let verify = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "verify"));
+        assert!(matches!(
+            verify,
+            Some(SettingItem::Toggle { value: false, .. })
+        ));
+        let restored = state.to_config();
+        assert!(restored.verify.is_none()); // false is default, so not serialized
+    }
+
+    #[test]
+    fn test_settings_verify_level_roundtrip_full() {
+        let config = crate::config::Config {
+            verify_level: Some("full".into()),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+        let level = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "verify_level"));
+        assert!(matches!(
+            level,
+            Some(SettingItem::Choice { selected: 1, .. })
+        )); // full is index 1
+        let restored = state.to_config();
+        assert_eq!(restored.verify_level.as_deref(), Some("full"));
+    }
+
+    #[test]
+    fn test_settings_verify_level_default_quick() {
+        let config = crate::config::Config::default();
+        let state = SettingsState::from_config(&config);
+        let level = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Choice { key, .. } if key == "verify_level"));
+        assert!(matches!(
+            level,
+            Some(SettingItem::Choice { selected: 0, .. })
+        )); // quick is index 0
+        let restored = state.to_config();
+        assert!(restored.verify_level.is_none()); // quick is default, so not serialized
+    }
+
+    #[test]
     fn test_playlist_default_stream_counts() {
         let pl = Playlist {
             num: "00001".into(),
