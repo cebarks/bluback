@@ -2,7 +2,7 @@
 
 ## Context
 
-bluback is at v0.9.2 with solid core functionality, multi-drive support, cross-platform coverage (Linux + macOS), and 5-platform CI. Core features: FFmpeg-based Blu-ray remux, TUI wizard with multi-drive tab UI, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection, structured logging, MKV metadata embedding. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
+bluback is at v0.9.2 with solid core functionality, multi-drive support, cross-platform coverage (Linux + macOS), and 5-platform CI. Core features: FFmpeg-based Blu-ray remux, TUI wizard with multi-drive tab UI, headless CLI, chapter preservation, TMDb integration, AACS backend selection, signal handling, overwrite protection, structured logging, MKV metadata embedding, post-rip hooks. The goal is a feature-complete 1.0 release delivered through incremental milestone releases, with architecture that supports a future GUI frontend.
 
 ## Architectural Principles
 
@@ -18,7 +18,7 @@ bluback is at v0.9.2 with solid core functionality, multi-drive support, cross-p
 | **v0.7** | Architecture & CLI Completeness | Workflow extraction, specials CLI, headless progress, `--check`, `--list-playlists` stream info |
 | **v0.8** | macOS Support | Platform-specific disc ops, FFmpeg 7.0+ compat, fork-free scanning, Homebrew library discovery, macOS CI + release builds |
 | **v0.9** | Multi-Drive & CI | Multi-drive detection, parallel sessions, tab UI, drive monitor, inter-session linking, episode overlap detection, 5-platform CI |
-| **v0.10** | Quality of Life & Automation | ~~Log files~~, ~~MKV metadata~~, post-rip hooks, rip verification, per-stream track selection, continuous batch mode, disc history |
+| **v0.10** | Quality of Life & Automation | ~~Log files~~, ~~MKV metadata~~, ~~post-rip hooks~~, rip verification, per-stream track selection, continuous batch mode, disc history |
 | **v0.11** | DVD Support | Disc type abstraction, title enumeration, chapter extraction, CSS errors |
 | **v0.12** | UHD Blu-ray | AACS 2.0, HDR metadata verification |
 | **v0.13** | Intelligence & Distribution | TMDb S00 auto-matching, shell completions, man page |
@@ -174,10 +174,18 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
   - Uses `REMUXED_WITH` instead of `ENCODER` (FFmpeg overwrites `ENCODER` with its own version string)
 - **Files:** `src/types.rs`, `src/workflow.rs`, `src/media/remux.rs`, `src/config.rs`, `src/cli.rs`, `src/tui/dashboard.rs`, `src/session.rs`, `src/tui/settings.rs`
 
-### 18. Post-rip hooks
-- `post_rip_command` config with template variables (`{file}`, `{title}`, `{season}`, `{episode}`)
-- Run via `std::process::Command`; don't fail rip on hook failure
-- **Files:** `src/config.rs`, `src/workflow.rs`
+### 18. Post-rip hooks ✓
+- **Goal:** User-configurable shell commands after individual rips and session completion
+- **Implementation:**
+  - `HookConfig` struct with `command`, `on_failure`, `blocking`, `log_output` fields
+  - Two config tables: `[post_rip]` (per-file) and `[post_session]` (per-disc)
+  - `src/hooks.rs` — template expansion (`{var}` syntax), `sh -c` execution, blocking/non-blocking modes, output capture via `log`
+  - `--no-hooks` CLI flag to disable for a run
+  - Template variables: `{file}`, `{filename}`, `{dir}`, `{size}`, `{chapters}`, `{title}`, `{season}`, `{episode}`, `{episode_name}`, `{playlist}`, `{label}`, `{mode}`, `{device}`, `{status}`, `{error}` (per-file); `{total}`, `{succeeded}`, `{failed}`, `{skipped}` (per-session)
+  - Settings panel "Hooks" section with all options
+  - Hook failures logged but never fail the rip
+  - TODO(debt): shell injection risk from template substitution
+- **Files:** `src/hooks.rs`, `src/config.rs`, `src/main.rs`, `src/cli.rs`, `src/tui/dashboard.rs`, `src/session.rs`, `src/tui/coordinator.rs`, `src/types.rs`
 
 ### 19. Rip verification
 - Post-remux: probe output file, compare expected vs actual duration, verify streams present
