@@ -74,6 +74,8 @@ pub struct Config {
     /// If the actual Cues are larger, they fall back to EOF (default behavior).
     pub reserve_index_space: Option<u32>,
     pub overwrite: Option<bool>,
+    pub verify: Option<bool>,
+    pub verify_level: Option<String>,
     pub aacs_backend: Option<String>,
     pub multi_drive: Option<String>,
     pub log_file: Option<bool>,
@@ -169,6 +171,8 @@ impl Config {
         );
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
         emit_bool(&mut out, "overwrite", self.overwrite, false);
+        emit_bool(&mut out, "verify", self.verify, false);
+        emit_str(&mut out, "verify_level", &self.verify_level, "quick");
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
         emit_u32(
             &mut out,
@@ -323,6 +327,16 @@ impl Config {
         self.overwrite.unwrap_or(false)
     }
 
+    #[allow(dead_code)] // Used in CLI/TUI integration (task 6)
+    pub fn verify(&self) -> bool {
+        self.verify.unwrap_or(false)
+    }
+
+    #[allow(dead_code)] // Used in CLI/TUI integration (task 6)
+    pub fn verify_level(&self) -> &str {
+        self.verify_level.as_deref().unwrap_or("quick")
+    }
+
     pub fn reserve_index_space(&self) -> u32 {
         self.reserve_index_space
             .unwrap_or(DEFAULT_RESERVE_INDEX_SPACE)
@@ -414,6 +428,8 @@ const KNOWN_KEYS: &[&str] = &[
     "verbose_libbluray",
     "reserve_index_space",
     "overwrite",
+    "verify",
+    "verify_level",
     "aacs_backend",
     "multi_drive",
     "log_file",
@@ -493,6 +509,14 @@ pub fn validate_config(config: &Config) -> Vec<String> {
             warnings.push(format!(
                 "multi_drive must be \"auto\" or \"manual\", got \"{}\"",
                 md
+            ));
+        }
+    }
+    if let Some(ref level) = config.verify_level {
+        if !["quick", "full"].contains(&level.as_str()) {
+            warnings.push(format!(
+                "verify_level must be \"quick\" or \"full\", got \"{}\"",
+                level
             ));
         }
     }
@@ -1251,5 +1275,48 @@ also_unknown = 42"#;
         "#;
         let warnings = validate_raw_toml(raw);
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_parse_verify_config() {
+        let toml_str = r#"
+            verify = true
+            verify_level = "full"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.verify, Some(true));
+        assert_eq!(config.verify_level.as_deref(), Some("full"));
+    }
+
+    #[test]
+    fn test_verify_config_defaults() {
+        let config = Config::default();
+        assert!(!config.verify());
+        assert_eq!(config.verify_level(), "quick");
+    }
+
+    #[test]
+    fn test_verify_config_serialization_roundtrip() {
+        let config = Config {
+            verify: Some(true),
+            verify_level: Some("full".into()),
+            ..Default::default()
+        };
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains("verify = true"));
+        assert!(toml_str.contains(r#"verify_level = "full""#));
+        let reparsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(reparsed.verify, Some(true));
+        assert_eq!(reparsed.verify_level.as_deref(), Some("full"));
+    }
+
+    #[test]
+    fn test_validate_invalid_verify_level_warns() {
+        let config = Config {
+            verify_level: Some("deep".into()),
+            ..Default::default()
+        };
+        let warnings = validate_config(&config);
+        assert!(warnings.iter().any(|w| w.contains("verify_level")));
     }
 }

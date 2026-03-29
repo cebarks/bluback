@@ -152,6 +152,18 @@ pub struct Args {
     /// Disable post-rip and post-session hooks for this run
     #[arg(long)]
     no_hooks: bool,
+
+    /// Verify output files after ripping
+    #[arg(long)]
+    verify: bool,
+
+    /// Verification level: quick (header probe) or full (+ frame decode)
+    #[arg(long, value_parser = ["quick", "full"])]
+    verify_level: Option<String>,
+
+    /// Disable verification (overrides config)
+    #[arg(long)]
+    no_verify: bool,
 }
 
 impl Args {
