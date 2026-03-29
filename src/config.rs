@@ -327,12 +327,10 @@ impl Config {
         self.overwrite.unwrap_or(false)
     }
 
-    #[allow(dead_code)] // Used in CLI/TUI integration (task 6)
     pub fn verify(&self) -> bool {
         self.verify.unwrap_or(false)
     }
 
-    #[allow(dead_code)] // Used in CLI/TUI integration (task 6)
     pub fn verify_level(&self) -> &str {
         self.verify_level.as_deref().unwrap_or("quick")
     }

@@ -80,7 +80,6 @@ pub struct WizardState {
     pub media_infos: Vec<Option<MediaInfo>>,
 }
 
-#[derive(Default)]
 pub struct RipState {
     pub jobs: Vec<RipJob>,
     pub current_rip: usize,
@@ -89,6 +88,21 @@ pub struct RipState {
         Option<mpsc::Receiver<Result<crate::types::RipProgress, crate::media::MediaError>>>,
     pub confirm_abort: bool,
     pub confirm_rescan: bool,
+    pub chapters_added: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Default for RipState {
+    fn default() -> Self {
+        Self {
+            jobs: Vec::new(),
+            current_rip: 0,
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            progress_rx: None,
+            confirm_abort: false,
+            confirm_rescan: false,
+            chapters_added: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
 }
 
 #[allow(dead_code)] // Used by run_settings; most fields only needed for the old single-session run_app

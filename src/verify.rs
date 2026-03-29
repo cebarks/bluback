@@ -24,6 +24,7 @@ pub struct VerifyExpected {
 #[derive(Debug, Clone)]
 pub struct VerifyResult {
     pub passed: bool,
+    #[allow(dead_code)] // Part of verify API; read by CLI integration (Task 6)
     pub level: VerifyLevel,
     pub checks: Vec<VerifyCheck>,
 }

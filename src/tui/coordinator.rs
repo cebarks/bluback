@@ -84,6 +84,16 @@ impl Coordinator {
         session.overwrite = self.args.overwrite;
         session.no_metadata = self.args.no_metadata;
         session.no_hooks = self.args.no_hooks;
+        session.verify = self.args.verify || (!self.args.no_verify && self.config.verify());
+        session.verify_level = match self
+            .args
+            .verify_level
+            .as_deref()
+            .unwrap_or(self.config.verify_level())
+        {
+            "full" => crate::verify::VerifyLevel::Full,
+            _ => crate::verify::VerifyLevel::Quick,
+        };
 
         let session_id = session.id;
         let device_name = device
@@ -475,7 +485,14 @@ impl Coordinator {
                                     let done_count = d
                                         .jobs
                                         .iter()
-                                        .filter(|j| matches!(j.status, PlaylistStatus::Done(_)))
+                                        .filter(|j| {
+                                            matches!(
+                                                j.status,
+                                                PlaylistStatus::Done(_)
+                                                    | PlaylistStatus::Verified(..)
+                                                    | PlaylistStatus::VerifyFailed(..)
+                                            )
+                                        })
                                         .count();
                                     let current_pct = d
                                         .jobs
