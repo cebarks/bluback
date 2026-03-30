@@ -316,6 +316,20 @@ pub fn make_filename(
     render_template(fmt, &vars)
 }
 
+/// Count regular (non-special) episodes across all playlist assignments.
+/// Playlists in the `specials` set are excluded from the count.
+/// Used by CLI batch mode to auto-advance the starting episode number.
+pub fn count_assigned_episodes(
+    assignments: &HashMap<String, Vec<crate::types::Episode>>,
+    specials: &std::collections::HashSet<String>,
+) -> u32 {
+    assignments
+        .iter()
+        .filter(|(playlist_num, _)| !specials.contains(*playlist_num))
+        .map(|(_, eps)| eps.len() as u32)
+        .sum()
+}
+
 pub fn format_size(bytes: u64) -> String {
     let mut size = bytes as f64;
     for unit in &["B", "KiB", "MiB", "GiB"] {
@@ -1088,6 +1102,69 @@ mod tests {
             }),
         );
         assert_eq!(result, "Test Show S02SP01.mkv");
+    }
+
+    #[test]
+    fn test_count_assigned_regular_episodes() {
+        use crate::types::Episode;
+        let mut assignments = HashMap::new();
+        assignments.insert(
+            "00001".to_string(),
+            vec![
+                Episode {
+                    episode_number: 1,
+                    name: "Ep1".into(),
+                    runtime: None,
+                },
+                Episode {
+                    episode_number: 2,
+                    name: "Ep2".into(),
+                    runtime: None,
+                },
+            ],
+        );
+        assignments.insert(
+            "00002".to_string(),
+            vec![Episode {
+                episode_number: 3,
+                name: "Ep3".into(),
+                runtime: None,
+            }],
+        );
+        let specials = std::collections::HashSet::new();
+        assert_eq!(count_assigned_episodes(&assignments, &specials), 3);
+    }
+
+    #[test]
+    fn test_count_assigned_episodes_excludes_specials() {
+        use crate::types::Episode;
+        let mut assignments = HashMap::new();
+        assignments.insert(
+            "00001".to_string(),
+            vec![Episode {
+                episode_number: 1,
+                name: "Ep1".into(),
+                runtime: None,
+            }],
+        );
+        assignments.insert(
+            "00002".to_string(),
+            vec![Episode {
+                episode_number: 2,
+                name: "Ep2".into(),
+                runtime: None,
+            }],
+        );
+        let mut specials = std::collections::HashSet::new();
+        specials.insert("00001".to_string()); // playlist 00001 is a special
+        assert_eq!(count_assigned_episodes(&assignments, &specials), 1);
+    }
+
+    #[test]
+    fn test_count_assigned_episodes_empty() {
+        let assignments: HashMap<String, Vec<crate::types::Episode>> = HashMap::new();
+        let specials = std::collections::HashSet::new();
+        assert_eq!(count_assigned_episodes(&assignments, &specials), 0);
     }
 
     #[test]

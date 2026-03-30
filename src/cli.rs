@@ -248,7 +248,9 @@ pub fn run(
     headless: bool,
     stream_filter: &crate::streams::StreamFilter,
     tracks_spec: Option<&str>,
-) -> anyhow::Result<()> {
+    start_episode_override: Option<u32>,
+    skip_eject: bool,
+) -> anyhow::Result<(u32, u32)> {
     let device = args.device().to_string_lossy();
 
     let (label, label_info, episodes_pl, movie_mode) = scan_disc(args, config)?;
@@ -279,6 +281,7 @@ pub fn run(
         &episodes_pl,
         movie_mode,
         headless,
+        start_episode_override,
     )?;
 
     let selected = display_and_select(
@@ -359,7 +362,7 @@ pub fn run(
         })
         .collect();
 
-    rip_selected(
+    let (success_count, fail_count) = rip_selected(
         args,
         config,
         &device,
@@ -372,7 +375,21 @@ pub fn run(
         &tmdb_ctx,
         stream_filter,
         tracks_spec,
-    )
+        skip_eject,
+    )?;
+
+    let regular_episodes =
+        crate::util::count_assigned_episodes(&tmdb_ctx.episode_assignments, &specials_set);
+
+    if fail_count > 0 && start_episode_override.is_none() {
+        anyhow::bail!(
+            "{} of {} playlist(s) failed to rip",
+            fail_count,
+            selected.len()
+        );
+    }
+
+    Ok((success_count, regular_episodes))
 }
 
 fn scan_disc(
@@ -442,6 +459,7 @@ fn lookup_tmdb(
     episodes_pl: &[Playlist],
     movie_mode: bool,
     headless: bool,
+    start_episode_override: Option<u32>,
 ) -> anyhow::Result<TmdbContext> {
     let mut ctx = TmdbContext {
         episode_assignments: HashMap::new(),
@@ -470,10 +488,10 @@ fn lookup_tmdb(
             ctx.season_num = Some(season);
 
             let disc_number = label_info.as_ref().map(|l| l.disc);
-            let default_start = args
-                .start_episode
+            let effective_start = start_episode_override.or(args.start_episode);
+            let default_start = effective_start
                 .unwrap_or_else(|| guess_start_episode(disc_number, episodes_pl.len()));
-            let start_ep = if args.start_episode.is_none() && !headless {
+            let start_ep = if effective_start.is_none() && !headless {
                 prompt_number(
                     &format!("  Starting episode number [{}]: ", default_start),
                     Some(default_start),
@@ -542,11 +560,11 @@ fn lookup_tmdb(
                 ctx.date_released = lookup.first_air_date;
 
                 let disc_number = label_info.as_ref().map(|l| l.disc);
-                let default_start = args
-                    .start_episode
+                let effective_start = start_episode_override.or(args.start_episode);
+                let default_start = effective_start
                     .unwrap_or_else(|| guess_start_episode(disc_number, episodes_pl.len()));
 
-                let start_ep = if args.start_episode.is_none() && !headless {
+                let start_ep = if effective_start.is_none() && !headless {
                     prompt_number(
                         &format!("  Starting episode number [{}]: ", default_start),
                         Some(default_start),
@@ -679,8 +697,8 @@ fn lookup_tmdb(
         ctx.season_num = Some(season);
 
         let disc_number = label_info.as_ref().map(|l| l.disc);
-        let start_ep = args
-            .start_episode
+        let start_ep = start_episode_override
+            .or(args.start_episode)
             .unwrap_or_else(|| guess_start_episode(disc_number, episodes_pl.len()));
 
         let synthetic_count = episodes_pl.len() * 2;
@@ -953,7 +971,8 @@ fn rip_selected(
     tmdb_ctx: &TmdbContext,
     stream_filter: &crate::streams::StreamFilter,
     tracks_spec: Option<&str>,
-) -> anyhow::Result<()> {
+    skip_eject: bool,
+) -> anyhow::Result<(u32, u32)> {
     if args.dry_run {
         println!("\n[DRY RUN] Would rip:");
         for (i, &idx) in selected.iter().enumerate() {
@@ -968,7 +987,7 @@ fn rip_selected(
                     .to_string_lossy()
             );
         }
-        return Ok(());
+        return Ok((0, 0));
     }
 
     // Always mount for chapter extraction (MountGuard ensures unmount on exit)
@@ -1360,14 +1379,14 @@ fn rip_selected(
         args.output.display()
     );
 
-    if fail_count == 0 && config.should_eject(args.cli_eject()) {
+    if !skip_eject && fail_count == 0 && config.should_eject(args.cli_eject()) {
         println!("Ejecting disc...");
         if let Err(e) = disc::eject_disc(device) {
             println!("Warning: failed to eject disc: {}", e);
         }
     }
 
-    Ok(())
+    Ok((success_count, fail_count))
 }
 
 fn format_time(seconds: u32) -> String {
@@ -1680,6 +1699,79 @@ fn headless_tmdb_tv(
     }))
 }
 
+pub fn run_batch(
+    args: &Args,
+    config: &crate::config::Config,
+    headless: bool,
+    stream_filter: &crate::streams::StreamFilter,
+    tracks_spec: Option<&str>,
+) -> anyhow::Result<()> {
+    let mut disc_count: u32 = 0;
+    let mut total_files: u32 = 0;
+    let mut total_failures: u32 = 0;
+    let mut next_start_episode = args.start_episode.unwrap_or(1);
+    let device = args.device().to_string_lossy().to_string();
+
+    loop {
+        if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+
+        // Wait for disc if not the first iteration
+        if disc_count > 0 {
+            println!("\nWaiting for next disc...");
+            loop {
+                if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let label = disc::get_volume_label(&device);
+                if !label.is_empty() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+            if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+        }
+
+        disc_count += 1;
+        log::info!("=== Batch disc {} ===", disc_count);
+
+        match run(
+            args,
+            config,
+            headless,
+            stream_filter,
+            tracks_spec,
+            Some(next_start_episode),
+            true, // skip_eject: batch loop handles eject
+        ) {
+            Ok((files_ripped, regular_episodes_ripped)) => {
+                total_files += files_ripped;
+                next_start_episode += regular_episodes_ripped;
+            }
+            Err(e) => {
+                eprintln!("Disc {} failed: {}", disc_count, e);
+                total_failures += 1;
+            }
+        }
+
+        // Always eject in batch mode to prepare for next disc
+        println!("Ejecting disc...");
+        if let Err(e) = disc::eject_disc(&device) {
+            eprintln!("Warning: failed to eject disc: {}", e);
+        }
+    }
+
+    println!(
+        "\nBatch complete: {} disc(s), {} file(s), {} failure(s)",
+        disc_count, total_files, total_failures
+    );
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1858,5 +1950,26 @@ mod tests {
             "--prefer-surround should compose with --audio-lang: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn test_batch_summary_format() {
+        let summary = format!(
+            "Batch complete: {} disc(s), {} file(s), {} failure(s)",
+            3, 12, 1
+        );
+        assert_eq!(
+            summary,
+            "Batch complete: 3 disc(s), 12 file(s), 1 failure(s)"
+        );
+    }
+
+    #[test]
+    fn test_batch_summary_zero_failures() {
+        let summary = format!(
+            "Batch complete: {} disc(s), {} file(s), {} failure(s)",
+            2, 8, 0
+        );
+        assert!(summary.contains("0 failure(s)"));
     }
 }
