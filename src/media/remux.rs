@@ -6,7 +6,7 @@ use std::time::Instant;
 use ffmpeg_the_third::{self as ffmpeg, format, media, Dictionary, Packet, Rational};
 
 use super::error::{classify_aacs_error, MediaError};
-use crate::types::{AudioStream, ChapterMark, RipProgress, StreamInfo};
+use crate::types::{ChapterMark, RipProgress};
 
 /// How to select streams from the input for remuxing.
 #[derive(Debug, Clone, Default)]
@@ -15,8 +15,6 @@ pub enum StreamSelection {
     /// Map every stream from the input.
     #[default]
     All,
-    /// Video + surround audio (stereo as secondary) + all subtitles.
-    PreferSurround,
     /// Exact stream indices provided by the caller.
     Manual(Vec<usize>),
 }
@@ -38,52 +36,10 @@ pub struct RemuxOptions {
 /// Determine which input stream indices to include in the output.
 ///
 /// - `All` maps every stream index `0..total_streams`.
-/// - `PreferSurround` maps all video streams, surround audio (plus stereo
-///   as a secondary track), and all subtitle streams.
 /// - `Manual` passes through exactly the indices the caller specified.
-pub fn select_streams(
-    selection: &StreamSelection,
-    info: &StreamInfo,
-    total_streams: usize,
-) -> Vec<usize> {
+pub fn select_streams(selection: &StreamSelection, total_streams: usize) -> Vec<usize> {
     match selection {
         StreamSelection::All => (0..total_streams).collect(),
-
-        StreamSelection::PreferSurround => {
-            let mut indices = Vec::new();
-
-            // We don't know which indices are video/subtitle from StreamInfo alone,
-            // so include every index that isn't accounted for by audio_streams.
-            let audio_indices: Vec<usize> = info.audio_streams.iter().map(|s| s.index).collect();
-
-            // Add all non-audio streams (video, subtitle, data, etc.)
-            for i in 0..total_streams {
-                if !audio_indices.contains(&i) {
-                    indices.push(i);
-                }
-            }
-
-            // Add surround audio streams
-            let surround_idx = info.audio_streams.iter().position(|s| s.is_surround());
-            let stereo_idx = info.audio_streams.iter().position(|s| s.channels == 2);
-
-            if let Some(idx) = surround_idx {
-                indices.push(info.audio_streams[idx].index);
-                if let Some(si) = stereo_idx {
-                    if si != idx {
-                        indices.push(info.audio_streams[si].index);
-                    }
-                }
-            } else if !info.audio_streams.is_empty() {
-                // No surround found, take the first audio stream
-                indices.push(info.audio_streams[0].index);
-            }
-
-            indices.sort_unstable();
-            indices.dedup();
-            indices
-        }
-
         StreamSelection::Manual(indices) => indices.clone(),
     }
 }
@@ -210,9 +166,7 @@ where
         return Err(MediaError::NoStreams);
     }
 
-    // Build stream info for selection (we need to probe audio streams)
-    let stream_info = build_stream_info(&ictx);
-    let selected = select_streams(&options.stream_selection, &stream_info, nb_input_streams);
+    let selected = select_streams(&options.stream_selection, nb_input_streams);
 
     if selected.is_empty() {
         return Err(MediaError::NoStreams);
@@ -426,54 +380,6 @@ where
     Ok(chapters_added)
 }
 
-/// Build a StreamInfo from an open input context by inspecting codec parameters.
-#[allow(deprecated)] // Uses StreamInfo.subtitle_count — will be removed in later task
-fn build_stream_info(ictx: &format::context::Input) -> StreamInfo {
-    let mut audio_streams = Vec::new();
-    let mut subtitle_count = 0u32;
-
-    for stream in ictx.streams() {
-        let params = stream.parameters();
-        match params.medium() {
-            media::Type::Audio => {
-                let channels = params.ch_layout().channels() as u16;
-
-                let channel_layout = match channels {
-                    1 => "mono".into(),
-                    2 => "stereo".into(),
-                    6 => "5.1".into(),
-                    8 => "7.1".into(),
-                    n => format!("{} channels", n),
-                };
-
-                let codec_id = params.id();
-                let codec_name = codec_id.name();
-                let lang = stream.metadata().get("language").map(String::from);
-
-                audio_streams.push(AudioStream {
-                    index: stream.index(),
-                    codec: codec_name.to_string(),
-                    channels,
-                    channel_layout,
-                    language: lang,
-                    profile: None,
-                });
-            }
-            media::Type::Subtitle => {
-                subtitle_count += 1;
-            }
-            _ => {}
-        }
-    }
-
-    StreamInfo {
-        video_streams: Vec::new(),
-        audio_streams,
-        subtitle_streams: Vec::new(),
-        subtitle_count,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,71 +448,13 @@ mod tests {
 
     #[test]
     fn test_stream_selection_all_maps_everything() {
-        let info = StreamInfo::default();
-        let result = select_streams(&StreamSelection::All, &info, 5);
+        let result = select_streams(&StreamSelection::All, 5);
         assert_eq!(result, vec![0, 1, 2, 3, 4]);
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_stream_selection_prefer_surround() {
-        // Simulate: stream 0 = video, 1 = surround audio, 2 = stereo audio, 3 = subtitle
-        let info = StreamInfo {
-            video_streams: Vec::new(),
-            audio_streams: vec![
-                AudioStream {
-                    index: 1,
-                    codec: "truehd".into(),
-                    channels: 8,
-                    channel_layout: "7.1".into(),
-                    language: Some("eng".into()),
-                    profile: None,
-                },
-                AudioStream {
-                    index: 2,
-                    codec: "aac".into(),
-                    channels: 2,
-                    channel_layout: "stereo".into(),
-                    language: Some("eng".into()),
-                    profile: None,
-                },
-            ],
-            subtitle_streams: Vec::new(),
-            subtitle_count: 1,
-        };
-
-        let result = select_streams(&StreamSelection::PreferSurround, &info, 4);
-        // Should include: 0 (video), 1 (surround), 2 (stereo), 3 (subtitle)
-        assert_eq!(result, vec![0, 1, 2, 3]);
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_stream_selection_prefer_surround_no_surround() {
-        // Only stereo audio available
-        let info = StreamInfo {
-            video_streams: Vec::new(),
-            audio_streams: vec![AudioStream {
-                index: 1,
-                codec: "aac".into(),
-                channels: 2,
-                channel_layout: "stereo".into(),
-                language: None,
-                profile: None,
-            }],
-            subtitle_streams: Vec::new(),
-            subtitle_count: 0,
-        };
-
-        let result = select_streams(&StreamSelection::PreferSurround, &info, 2);
-        // Should include: 0 (video), 1 (first audio as fallback)
-        assert_eq!(result, vec![0, 1]);
-    }
-
-    #[test]
     fn test_stream_selection_manual() {
-        let info = StreamInfo::default();
-        let result = select_streams(&StreamSelection::Manual(vec![0, 2, 4]), &info, 5);
+        let result = select_streams(&StreamSelection::Manual(vec![0, 2, 4]), 5);
         assert_eq!(result, vec![0, 2, 4]);
     }
 
