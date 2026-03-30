@@ -94,6 +94,12 @@ bluback --format "S{season}E{episode}_{title}.mkv"
 # Plain text mode (no TUI)
 bluback --no-tui
 
+# List playlists with stream details (useful for --tracks)
+bluback --list-playlists -v
+
+# Keep only 5.1 audio and first subtitle from each playlist
+bluback --tracks "a:1;s:0" -o ~/rips
+
 # Open settings panel (no disc required)
 bluback --settings
 
@@ -120,6 +126,14 @@ bluback --config ~/my-config.toml
 | `--no-max-speed` | Don't set drive to maximum read speed |
 | `--settings` | Open settings panel (no disc/ffmpeg required) |
 | `--config <PATH>` | Path to config file (also: `BLUBACK_CONFIG` env var) |
+| `--audio-lang <LANGS>` | Filter audio by language, comma-separated (e.g. `eng,jpn`) |
+| `--subtitle-lang <LANGS>` | Filter subtitles by language (e.g. `eng`) |
+| `--tracks <SPEC>` | Select streams by type-local index (e.g. `a:0,2;s:0-1`) |
+| `--prefer-surround` | Prefer surround audio (select surround + one stereo) |
+| `--all-streams` | Include all streams, ignoring config filters |
+| `--verify` | Verify output files after ripping |
+| `--verify-level <LEVEL>` | Verification level: `quick` (header) or `full` (+ frame decode) |
+| `--no-verify` | Disable verification (overrides config) |
 
 ## Configuration
 
@@ -154,8 +168,11 @@ min_duration = 900
 # Show playlists below min_duration by default in Playlist Manager
 # show_filtered = false
 
-# Stream selection strategy: "all" (default) or "prefer_surround"
-# stream_selection = "all"
+# Stream selection — filter by language, prefer surround, etc.
+[streams]
+# audio_languages = ["eng", "jpn"]
+# subtitle_languages = ["eng"]
+# prefer_surround = false
 
 # Show libbluray debug output on stderr (default: false, suppressed to avoid TUI corruption)
 # verbose_libbluray = false
@@ -181,6 +198,9 @@ Settings can also be set via environment variables. When the settings panel open
 | `BLUBACK_SPECIAL_FORMAT` | `special_format` |
 | `BLUBACK_SHOW_FILTERED` | `show_filtered` |
 | `BLUBACK_VERBOSE_LIBBLURAY` | `verbose_libbluray` |
+| `BLUBACK_AUDIO_LANGUAGES` | `streams.audio_languages` |
+| `BLUBACK_SUBTITLE_LANGUAGES` | `streams.subtitle_languages` |
+| `BLUBACK_PREFER_SURROUND` | `streams.prefer_surround` |
 | `TMDB_API_KEY` | `tmdb_api_key` |
 
 Environment variables take precedence over config file values at runtime. When saving, a warning notes which env vars will override the saved config.
@@ -204,6 +224,7 @@ Bracket groups `[...]` auto-collapse when their contents are empty (useful for o
 | `Tab` | Toggle movie/TV mode (TMDb search) |
 | `e` | Edit episode assignment inline |
 | `s` | Toggle special (season 0) marking |
+| `t` | Expand/collapse track list (video/audio/subtitle streams) |
 | `r` / `R` | Reset current / all episode assignments |
 | `f` | Show/hide filtered (short) playlists |
 | `Ctrl+S` | Open settings panel |
@@ -217,6 +238,47 @@ Bracket groups `[...]` auto-collapse when their contents are empty (useful for o
 bluback automatically extracts chapter markers from the Blu-ray's MPLS playlist files and embeds them directly into the output MKV files during remux (via the FFmpeg AVChapter API). No external tools like `mkvpropedit` are needed.
 
 The disc is temporarily mounted via `udisksctl` to read the playlist data, then unmounted after extraction. Chapter counts are displayed alongside each playlist during selection in TUI mode.
+
+## Stream Selection
+
+By default, bluback includes all video, audio, and subtitle streams from each playlist. You can filter streams in three ways:
+
+**Config defaults** — Set language preferences in `config.toml` that apply to every rip:
+
+```toml
+[streams]
+audio_languages = ["eng", "jpn"]
+subtitle_languages = ["eng"]
+prefer_surround = true
+```
+
+**CLI flags** — Override config for a single run:
+
+```bash
+# Keep only English and Japanese audio, English subtitles
+bluback --audio-lang eng,jpn --subtitle-lang eng
+
+# Select specific streams by index (use --list-playlists -v to see indices)
+bluback --tracks "a:1;s:0-1"
+
+# Override config filters, include everything
+bluback --all-streams
+```
+
+**TUI track picker** — Press `t` on any playlist in the Playlist Manager to expand its stream list. Toggle individual streams with `Space`. Custom selections are shown in the Ch column as `1v 2a 3s*`.
+
+Language filters are preferences, not hard requirements: if no streams match a configured language, all streams of that type are included with a warning. Streams without language tags (`und`) are always included.
+
+## Rip Verification
+
+bluback can verify output files after ripping to catch corruption:
+
+```bash
+bluback --verify                    # Quick: probe headers (duration, streams, chapters)
+bluback --verify --verify-level full  # Full: headers + sample frame decode at 5 seek points
+```
+
+Enable by default in config: `verify = true`, `verify_level = "quick"`. In TUI mode, failed verification prompts to delete & retry, keep, or skip.
 
 ## AACS Decryption Notes
 
