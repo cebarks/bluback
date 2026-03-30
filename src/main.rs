@@ -164,6 +164,26 @@ pub struct Args {
     /// Disable verification (overrides config)
     #[arg(long)]
     no_verify: bool,
+
+    /// Filter audio streams by language (e.g. "eng,jpn")
+    #[arg(long)]
+    audio_lang: Option<String>,
+
+    /// Filter subtitle streams by language (e.g. "eng")
+    #[arg(long)]
+    subtitle_lang: Option<String>,
+
+    /// Prefer surround audio (select surround + one stereo)
+    #[arg(long)]
+    prefer_surround: bool,
+
+    /// Include all streams, ignoring config filters
+    #[arg(long, conflicts_with_all = ["audio_lang", "subtitle_lang", "prefer_surround"])]
+    all_streams: bool,
+
+    /// Select streams by type-local index (e.g. "a:0,2;s:0-1")
+    #[arg(long, conflicts_with_all = ["audio_lang", "subtitle_lang", "prefer_surround", "all_streams"])]
+    tracks: Option<String>,
 }
 
 impl Args {
@@ -354,6 +374,28 @@ fn run_inner() -> anyhow::Result<i32> {
             anyhow::bail!("No optical drives detected");
         }
     }
+
+    // Resolve stream filter: CLI flags > config
+    let _stream_filter = if args.all_streams {
+        crate::streams::StreamFilter::default() // empty = all streams
+    } else if args.audio_lang.is_some() || args.subtitle_lang.is_some() || args.prefer_surround {
+        crate::streams::StreamFilter {
+            audio_languages: args
+                .audio_lang
+                .as_deref()
+                .map(|s| s.split(',').map(|l| l.trim().to_string()).collect())
+                .unwrap_or_default(),
+            subtitle_languages: args
+                .subtitle_lang
+                .as_deref()
+                .map(|s| s.split(',').map(|l| l.trim().to_string()).collect())
+                .unwrap_or_default(),
+            prefer_surround: args.prefer_surround,
+        }
+    } else {
+        config.resolve_stream_filter()
+    };
+    let _tracks_spec = args.tracks.clone();
 
     if args.list_playlists {
         cli::list_playlists(&args, &config)?;
