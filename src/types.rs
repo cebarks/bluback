@@ -55,7 +55,6 @@ impl AudioStream {
         self.channels >= 6
     }
 
-    #[allow(dead_code)] // Public API
     pub fn display_line(&self) -> String {
         let lang = self.language.as_deref().unwrap_or("und");
         let codec_name = self.profile.as_deref().unwrap_or(&self.codec);
@@ -75,7 +74,6 @@ pub struct VideoStream {
 }
 
 impl VideoStream {
-    #[allow(dead_code)] // Public API
     pub fn display_line(&self) -> String {
         let hdr_part = if self.hdr.is_empty() || self.hdr == "SDR" {
             String::new()
@@ -102,7 +100,6 @@ pub struct SubtitleStream {
 }
 
 impl SubtitleStream {
-    #[allow(dead_code)] // Public API
     pub fn display_line(&self) -> String {
         let lang = self.language.as_deref().unwrap_or("und");
         let forced_tag = if self.forced { " FORCED" } else { "" };
@@ -459,11 +456,8 @@ pub struct PlaylistView {
     pub episodes: Vec<Episode>,
     pub label: String,
     pub filenames: HashMap<String, String>,
-    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
     pub stream_infos: HashMap<String, StreamInfo>,
-    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
     pub track_selections: HashMap<String, Vec<usize>>,
-    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
     pub expanded_playlist: Option<usize>,
 }
 

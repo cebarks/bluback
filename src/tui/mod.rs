@@ -38,7 +38,6 @@ pub enum InputFocus {
     /// Episode assignment editing (visible row index)
     InlineEdit(usize),
     /// Track selection editing (sub-row index within expanded tracks)
-    #[allow(dead_code)] // Used by Task 9 (TUI inline track expansion)
     TrackEdit(usize),
 }
 
