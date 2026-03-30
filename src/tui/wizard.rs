@@ -594,13 +594,11 @@ pub fn render_confirm_view(f: &mut Frame, view: &ConfirmView, _status: &str, are
         .playlists
         .iter()
         .zip(view.filenames.iter())
-        .enumerate()
-        .map(|(i, (pl, name))| {
+        .map(|(pl, name)| {
             total_seconds += pl.seconds;
             let byterate = view
                 .media_infos
-                .get(i)
-                .and_then(|info| info.as_ref())
+                .get(&pl.num)
                 .map(|info| info.bitrate_bps / 8)
                 .filter(|&br| br > 0)
                 .unwrap_or(FALLBACK_BYTERATE);
@@ -793,7 +791,7 @@ pub fn handle_tmdb_search_input_session(session: &mut crate::session::DriveSessi
                 _ => {}
             }
         }
-        InputFocus::InlineEdit(_) => {}
+        InputFocus::InlineEdit(_) | InputFocus::TrackEdit(_) => {}
     }
 }
 
@@ -1046,7 +1044,7 @@ pub fn handle_playlist_manager_input_session(
             }
         }
         KeyCode::Enter => {
-            let selected_nums: Vec<String> = session
+            let selected_indices: Vec<usize> = session
                 .disc
                 .playlists
                 .iter()
@@ -1059,29 +1057,27 @@ pub fn handle_playlist_manager_input_session(
                         .copied()
                         .unwrap_or(false)
                 })
-                .map(|(_, pl)| pl.num.clone())
+                .map(|(i, _)| i)
                 .collect();
 
-            if selected_nums.is_empty() {
+            let filenames: Vec<String> = selected_indices
+                .iter()
+                .map(|&idx| {
+                    let pl = &session.disc.playlists[idx];
+                    let media_info = session.wizard.media_infos.get(&pl.num);
+                    session.playlist_filename(idx, media_info)
+                })
+                .collect();
+
+            session.wizard.filenames = filenames;
+
+            if session.wizard.filenames.is_empty() {
                 session.status_message = "No playlists selected.".into();
-                return;
+            } else {
+                session.wizard.list_cursor = 0;
+                session.status_message.clear();
+                session.screen = Screen::Confirm;
             }
-
-            if session.pending_rx.is_some() {
-                return;
-            }
-
-            let device = session.device.to_string_lossy().to_string();
-            let (tx, rx) = mpsc::channel();
-            std::thread::spawn(move || {
-                let infos: Vec<Option<crate::types::MediaInfo>> = selected_nums
-                    .iter()
-                    .map(|num| crate::disc::probe_media_info(&device, num))
-                    .collect();
-                let _ = tx.send(BackgroundResult::MediaProbe(infos));
-            });
-            session.pending_rx = Some(rx);
-            session.status_message = "Probing media info...".into();
         }
         KeyCode::Esc => {
             session.wizard.list_cursor = 0;

@@ -35,7 +35,11 @@ pub enum InputFocus {
     #[default]
     TextInput,
     List,
+    /// Episode assignment editing (visible row index)
     InlineEdit(usize),
+    /// Track selection editing (sub-row index within expanded tracks)
+    #[allow(dead_code)] // Used by Task 9 (TUI inline track expansion)
+    TrackEdit(usize),
 }
 
 #[derive(Default)]
@@ -77,7 +81,10 @@ pub struct WizardState {
     pub specials: std::collections::HashSet<String>,
     pub show_filtered: bool,
     pub filenames: Vec<String>,
-    pub media_infos: Vec<Option<MediaInfo>>,
+    pub media_infos: std::collections::HashMap<String, MediaInfo>,
+    pub stream_infos: std::collections::HashMap<String, StreamInfo>,
+    pub track_selections: std::collections::HashMap<String, Vec<usize>>,
+    pub expanded_playlist: Option<usize>,
 }
 
 pub struct RipState {

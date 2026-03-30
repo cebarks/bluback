@@ -335,6 +335,9 @@ impl DriveSession {
             episodes: self.tmdb.episodes.clone(),
             label: self.disc.label.clone(),
             filenames: std::collections::HashMap::new(), // TODO: compute filenames
+            stream_infos: self.wizard.stream_infos.clone(),
+            track_selections: self.wizard.track_selections.clone(),
+            expanded_playlist: self.wizard.expanded_playlist,
         })
     }
 
@@ -368,6 +371,7 @@ impl DriveSession {
             output_dir: self.output_dir.display().to_string(),
             dry_run: false, // DriveSession doesn't support dry_run yet
             media_infos: self.wizard.media_infos.clone(),
+            track_summaries: Vec::new(),
         })
     }
 
@@ -694,37 +698,19 @@ impl DriveSession {
                 self.status_message = format!("Failed to fetch season: {}", e);
                 self.tmdb.episodes.clear();
             }
-            BackgroundResult::MediaProbe(infos) => {
-                let selected_indices: Vec<usize> = self
-                    .disc
-                    .playlists
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| {
-                        self.wizard
-                            .playlist_selected
-                            .get(*i)
-                            .copied()
-                            .unwrap_or(false)
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-
-                let filenames: Vec<String> = infos
-                    .iter()
-                    .zip(selected_indices.iter())
-                    .map(|(info, &idx)| self.playlist_filename(idx, info.as_ref()))
-                    .collect();
-
-                self.wizard.filenames = filenames;
-                self.wizard.media_infos = infos;
-
-                if self.wizard.filenames.is_empty() {
-                    self.status_message = "No playlists selected.".into();
-                } else {
-                    self.wizard.list_cursor = 0;
-                    self.status_message.clear();
-                    self.screen = Screen::Confirm;
+            BackgroundResult::MediaProbe(playlist_num, result) => {
+                if let Some((media_info, stream_info)) = *result {
+                    self.wizard
+                        .media_infos
+                        .insert(playlist_num.clone(), media_info);
+                    self.wizard.stream_infos.insert(playlist_num, stream_info);
+                }
+                self.status_message.clear();
+            }
+            BackgroundResult::BulkProbe(results) => {
+                for (num, (media, streams)) in results {
+                    self.wizard.media_infos.insert(num.clone(), media);
+                    self.wizard.stream_infos.insert(num, streams);
                 }
             }
         }
@@ -735,7 +721,7 @@ impl DriveSession {
     pub fn handle_key(&mut self, key: KeyEvent) {
         let input_active = matches!(
             self.wizard.input_focus,
-            InputFocus::TextInput | InputFocus::InlineEdit(_)
+            InputFocus::TextInput | InputFocus::InlineEdit(_) | InputFocus::TrackEdit(_)
         );
 
         // Ctrl+C handled by coordinator — session ignores it
