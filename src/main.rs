@@ -405,7 +405,7 @@ fn run_inner() -> anyhow::Result<i32> {
     let headless = args.yes || (!atty_stdin() && !use_tui);
 
     if use_tui {
-        tui::run(&args, &config, config_path)?;
+        tui::run(&args, &config, config_path, &stream_filter)?;
     } else {
         cli::run(
             &args,

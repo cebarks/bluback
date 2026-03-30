@@ -415,14 +415,6 @@ impl Config {
         self.max_log_files.unwrap_or(10)
     }
 
-    pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
-        // Deprecated: use resolve_stream_filter() instead.
-        // PreferSurround behavior is now handled by StreamFilter { prefer_surround: true }.
-        crate::media::StreamSelection::All
-    }
-
-    // TODO(task3): Remove dead_code allow once integrated in later tasks
-    #[allow(dead_code)]
     pub fn resolve_stream_filter(&self) -> crate::streams::StreamFilter {
         // New [streams] section takes priority
         if let Some(ref streams) = self.streams {

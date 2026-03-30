@@ -662,7 +662,19 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         }
     }
 
-    let stream_selection = session.config.resolve_stream_selection();
+    // Per-playlist stream selection: manual track picks > stream filter > all
+    let stream_selection =
+        if let Some(indices) = session.wizard.track_selections.get(&job_playlist.num) {
+            crate::media::StreamSelection::Manual(indices.clone())
+        } else if !session.stream_filter.is_empty() {
+            if let Some(info) = session.wizard.stream_infos.get(&job_playlist.num) {
+                crate::media::StreamSelection::Manual(session.stream_filter.apply(info))
+            } else {
+                crate::media::StreamSelection::All
+            }
+        } else {
+            crate::media::StreamSelection::All
+        };
     let cancel = session.rip.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
 

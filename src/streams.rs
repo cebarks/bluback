@@ -1,6 +1,3 @@
-// TODO(task2): Remove dead_code allow once integrated in later tasks
-#![allow(dead_code)]
-
 use crate::types::{AudioStream, StreamInfo};
 
 #[cfg(test)]

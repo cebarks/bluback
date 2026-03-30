@@ -27,6 +27,8 @@ pub struct DriveSession {
     pub status_message: String,
     pub spinner_frame: usize,
     pub pending_rx: Option<mpsc::Receiver<BackgroundResult>>,
+    /// Separate channel for upfront stream probing (doesn't block wizard interaction)
+    pub probe_rx: Option<mpsc::Receiver<BackgroundResult>>,
     pub disc_detected_label: Option<String>,
     pub tmdb_api_key: Option<String>,
 
@@ -48,12 +50,14 @@ pub struct DriveSession {
     pub no_hooks: bool,
     pub verify: bool,
     pub verify_level: crate::verify::VerifyLevel,
+    pub stream_filter: crate::streams::StreamFilter,
 }
 
 impl DriveSession {
     pub fn new(
         device: PathBuf,
         config: Config,
+        stream_filter: crate::streams::StreamFilter,
         input_rx: mpsc::Receiver<SessionCommand>,
         output_tx: mpsc::Sender<SessionMessage>,
     ) -> Self {
@@ -74,6 +78,7 @@ impl DriveSession {
             status_message: "Scanning for disc...".into(),
             spinner_frame: 0,
             pending_rx: None,
+            probe_rx: None,
             disc_detected_label: None,
             tmdb_api_key,
 
@@ -94,6 +99,7 @@ impl DriveSession {
             no_hooks: false,
             verify: false,
             verify_level: crate::verify::VerifyLevel::Quick,
+            stream_filter,
         }
     }
 
@@ -253,6 +259,7 @@ impl DriveSession {
         self.status_message = String::new();
         self.spinner_frame = 0;
         self.pending_rx = None;
+        self.probe_rx = None;
         self.disc_detected_label = None;
     }
 
@@ -446,7 +453,8 @@ impl DriveSession {
             }
 
             let changed = self.poll_background();
-            if changed {
+            let probe_changed = self.poll_probe();
+            if changed || probe_changed {
                 self.emit_snapshot();
             }
 
@@ -469,6 +477,65 @@ impl DriveSession {
         let _ = self
             .output_tx
             .send(SessionMessage::Snapshot(Box::new(self.snapshot())));
+    }
+
+    /// Poll the upfront probe channel (non-blocking, independent of pending_rx).
+    fn poll_probe(&mut self) -> bool {
+        let rx = match self.probe_rx {
+            Some(ref rx) => rx,
+            None => return false,
+        };
+
+        match rx.try_recv() {
+            Ok(BackgroundResult::BulkProbe(results)) => {
+                for (num, (media, streams)) in results {
+                    self.wizard.media_infos.insert(num.clone(), media);
+                    self.wizard.stream_infos.insert(num, streams);
+                }
+                self.probe_rx = None;
+                true
+            }
+            Ok(_) => {
+                self.probe_rx = None;
+                false
+            }
+            Err(mpsc::TryRecvError::Empty) => false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.probe_rx = None;
+                false
+            }
+        }
+    }
+
+    /// Spawn a background thread to probe stream info for episode-length playlists.
+    fn start_upfront_probe(&mut self) {
+        let device = self.device.to_string_lossy().to_string();
+        let episode_nums: Vec<String> = self
+            .disc
+            .episodes_pl
+            .iter()
+            .map(|pl| pl.num.clone())
+            .collect();
+        if episode_nums.is_empty() {
+            return;
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name(format!("probe-{}", self.device.display()))
+            .spawn(move || {
+                let mut results = std::collections::HashMap::new();
+                for num in &episode_nums {
+                    if let Ok((media, streams)) = crate::media::probe::probe_playlist(&device, num)
+                    {
+                        results.insert(num.clone(), (media, streams));
+                    }
+                }
+                let _ = tx.send(BackgroundResult::BulkProbe(results));
+            })
+            .expect("failed to spawn probe thread");
+
+        self.probe_rx = Some(rx);
     }
 
     /// Spawn a background thread to scan this session's device for a disc.
@@ -650,6 +717,9 @@ impl DriveSession {
                     self.status_message = "No episode-length playlists found.".into();
                     self.screen = Screen::Done;
                 } else {
+                    // Kick off upfront probing so stream info is ready by playlist manager
+                    self.start_upfront_probe();
+
                     self.screen = Screen::TmdbSearch;
                     self.wizard.input_focus = InputFocus::TextInput;
                     self.wizard.input_buffer = if self.tmdb_api_key.is_none() {
@@ -947,7 +1017,13 @@ mod tests {
         let config = Config::default();
         let (_cmd_tx, cmd_rx) = mpsc::channel();
         let (msg_tx, _msg_rx) = mpsc::channel();
-        DriveSession::new(PathBuf::from("/dev/sr0"), config, cmd_rx, msg_tx)
+        DriveSession::new(
+            PathBuf::from("/dev/sr0"),
+            config,
+            crate::streams::StreamFilter::default(),
+            cmd_rx,
+            msg_tx,
+        )
     }
 
     #[test]
