@@ -376,79 +376,45 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
     header_cells.push("Filename");
     let header = Row::new(header_cells).style(Style::default().fg(Color::White));
 
-    let rows: Vec<Row> = visible
-        .iter()
-        .enumerate()
-        .map(|(vis_idx, &(real_idx, pl))| {
-            let checked = if view
-                .playlist_selected
-                .get(real_idx)
-                .copied()
-                .unwrap_or(false)
-            {
-                "[x]"
-            } else {
-                "[ ]"
-            };
-            let cursor_marker = if vis_idx == view.list_cursor {
-                ">"
-            } else {
-                " "
-            };
-            let marker = format!("{} {}", cursor_marker, checked);
+    let num_cols = 4 + if has_ch { 1 } else { 0 } + if is_tv { 1 } else { 0 } + 1;
+    let mut rows: Vec<Row> = Vec::new();
+    for (vis_idx, &(real_idx, pl)) in visible.iter().enumerate() {
+        let checked = if view
+            .playlist_selected
+            .get(real_idx)
+            .copied()
+            .unwrap_or(false)
+        {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let cursor_marker = if vis_idx == view.list_cursor {
+            ">"
+        } else {
+            " "
+        };
+        let marker = format!("{} {}", cursor_marker, checked);
 
-            let is_episode_pl = view.episodes_pl.iter().any(|ep| ep.num == pl.num);
-            let is_special = view.specials.contains(&pl.num);
-            let is_editing = matches!(view.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
+        let is_episode_pl = view.episodes_pl.iter().any(|ep| ep.num == pl.num);
+        let is_special = view.specials.contains(&pl.num);
+        let is_editing = matches!(view.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
 
-            // Episode column
-            let ep_str = if is_editing {
-                format!("{}|", view.input_buffer)
-            } else if is_special {
-                if let Some(eps) = view.episode_assignments.get(&pl.num) {
-                    if eps.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        let season = view.season_num.unwrap_or(0);
-                        if eps.len() == 1 {
-                            if eps[0].name.is_empty() {
-                                format!("S{:02}SP{:02}", season, eps[0].episode_number)
-                            } else {
-                                format!(
-                                    "S{:02}SP{:02} - {}",
-                                    season, eps[0].episode_number, eps[0].name
-                                )
-                            }
-                        } else {
-                            let first = &eps[0];
-                            let last = &eps[eps.len() - 1];
-                            if first.name.is_empty() {
-                                format!(
-                                    "S{:02}SP{:02}-SP{:02}",
-                                    season, first.episode_number, last.episode_number
-                                )
-                            } else {
-                                format!(
-                                    "S{:02}SP{:02}-SP{:02} - {}",
-                                    season, first.episode_number, last.episode_number, first.name
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    "(none)".to_string()
-                }
-            } else if let Some(eps) = view.episode_assignments.get(&pl.num) {
+        // Episode column
+        let ep_str = if is_editing {
+            format!("{}|", view.input_buffer)
+        } else if is_special {
+            if let Some(eps) = view.episode_assignments.get(&pl.num) {
                 if eps.is_empty() {
                     "(none)".to_string()
                 } else {
                     let season = view.season_num.unwrap_or(0);
                     if eps.len() == 1 {
                         if eps[0].name.is_empty() {
-                            format!("S{:02}E{:02}", season, eps[0].episode_number)
+                            format!("S{:02}SP{:02}", season, eps[0].episode_number)
                         } else {
                             format!(
-                                "S{:02}E{:02} - {}",
+                                "S{:02}SP{:02} - {}",
                                 season, eps[0].episode_number, eps[0].name
                             )
                         }
@@ -457,12 +423,12 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
                         let last = &eps[eps.len() - 1];
                         if first.name.is_empty() {
                             format!(
-                                "S{:02}E{:02}-E{:02}",
+                                "S{:02}SP{:02}-SP{:02}",
                                 season, first.episode_number, last.episode_number
                             )
                         } else {
                             format!(
-                                "S{:02}E{:02}-E{:02} - {}",
+                                "S{:02}SP{:02}-SP{:02} - {}",
                                 season, first.episode_number, last.episode_number, first.name
                             )
                         }
@@ -470,45 +436,197 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
                 }
             } else {
                 "(none)".to_string()
-            };
+            }
+        } else if let Some(eps) = view.episode_assignments.get(&pl.num) {
+            if eps.is_empty() {
+                "(none)".to_string()
+            } else {
+                let season = view.season_num.unwrap_or(0);
+                if eps.len() == 1 {
+                    if eps[0].name.is_empty() {
+                        format!("S{:02}E{:02}", season, eps[0].episode_number)
+                    } else {
+                        format!(
+                            "S{:02}E{:02} - {}",
+                            season, eps[0].episode_number, eps[0].name
+                        )
+                    }
+                } else {
+                    let first = &eps[0];
+                    let last = &eps[eps.len() - 1];
+                    if first.name.is_empty() {
+                        format!(
+                            "S{:02}E{:02}-E{:02}",
+                            season, first.episode_number, last.episode_number
+                        )
+                    } else {
+                        format!(
+                            "S{:02}E{:02}-E{:02} - {}",
+                            season, first.episode_number, last.episode_number, first.name
+                        )
+                    }
+                }
+            }
+        } else {
+            "(none)".to_string()
+        };
 
-            let special_marker = if is_special { " [SP]" } else { "" };
-            let ep_display = format!("{}{}", ep_str, special_marker);
+        let special_marker = if is_special { " [SP]" } else { "" };
+        let ep_display = format!("{}{}", ep_str, special_marker);
 
-            let filename = view.filenames.get(&pl.num).cloned().unwrap_or_default();
-            let ch_str = view
-                .chapter_counts
+        let filename = view.filenames.get(&pl.num).cloned().unwrap_or_default();
+
+        let ch_str = if let Some(selections) = view.track_selections.get(&pl.num) {
+            if let Some(info) = view.stream_infos.get(&pl.num) {
+                let nv = info
+                    .video_streams
+                    .iter()
+                    .filter(|s| selections.contains(&s.index))
+                    .count();
+                let na = info
+                    .audio_streams
+                    .iter()
+                    .filter(|s| selections.contains(&s.index))
+                    .count();
+                let ns = info
+                    .subtitle_streams
+                    .iter()
+                    .filter(|s| selections.contains(&s.index))
+                    .count();
+                format!("{}v{}a{}s", nv, na, ns)
+            } else {
+                view.chapter_counts
+                    .get(&pl.num)
+                    .map(|c| c.to_string())
+                    .unwrap_or_default()
+            }
+        } else {
+            view.chapter_counts
                 .get(&pl.num)
                 .map(|c| c.to_string())
-                .unwrap_or_default();
+                .unwrap_or_default()
+        };
 
-            let mut cells = vec![
-                marker,
-                format!("{}", vis_idx + 1),
-                pl.num.clone(),
-                pl.duration.clone(),
-            ];
-            if has_ch {
-                cells.push(ch_str);
+        let mut cells = vec![
+            marker,
+            format!("{}", vis_idx + 1),
+            pl.num.clone(),
+            pl.duration.clone(),
+        ];
+        if has_ch {
+            cells.push(ch_str);
+        }
+        if is_tv {
+            cells.push(ep_display);
+        }
+        cells.push(filename);
+
+        let row_style = if is_editing {
+            Style::default().fg(Color::Yellow)
+        } else if vis_idx == view.list_cursor {
+            Style::default().fg(Color::White)
+        } else if !is_episode_pl {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
+
+        rows.push(Row::new(cells).style(row_style));
+
+        // Track expansion rows
+        if view.expanded_playlist == Some(real_idx) {
+            if let Some(info) = view.stream_infos.get(&pl.num) {
+                let selections = view.track_selections.get(&pl.num);
+                let mut sub_idx = 0usize;
+                let is_track_edit = matches!(view.input_focus, InputFocus::TrackEdit(_));
+                let track_cursor = if let InputFocus::TrackEdit(c) = &view.input_focus {
+                    *c
+                } else {
+                    0
+                };
+
+                let make_empty_cells = |label: String, style: Style| -> Row {
+                    let mut cells: Vec<String> = vec![String::new(); num_cols];
+                    // Put the label in the last column (spans widest)
+                    *cells.last_mut().unwrap() = label;
+                    Row::new(cells).style(style)
+                };
+
+                // Video streams
+                if !info.video_streams.is_empty() {
+                    rows.push(make_empty_cells(
+                        "  VIDEO".into(),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+
+                    for (type_idx, vs) in info.video_streams.iter().enumerate() {
+                        let selected = selections.map(|s| s.contains(&vs.index)).unwrap_or(true);
+                        let cursor = is_track_edit && track_cursor == sub_idx;
+                        let checkbox = if selected { "[X]" } else { "[ ]" };
+                        let label = format!("  {} v{}  {}", checkbox, type_idx, vs.display_line());
+                        let style = if cursor {
+                            Style::default().fg(Color::Yellow)
+                        } else if selected {
+                            Style::default().fg(Color::White)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        rows.push(make_empty_cells(label, style));
+                        sub_idx += 1;
+                    }
+                }
+
+                // Audio streams
+                if !info.audio_streams.is_empty() {
+                    rows.push(make_empty_cells(
+                        "  AUDIO".into(),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+
+                    for (type_idx, audio) in info.audio_streams.iter().enumerate() {
+                        let selected = selections.map(|s| s.contains(&audio.index)).unwrap_or(true);
+                        let cursor = is_track_edit && track_cursor == sub_idx;
+                        let checkbox = if selected { "[X]" } else { "[ ]" };
+                        let label =
+                            format!("  {} a{}  {}", checkbox, type_idx, audio.display_line());
+                        let style = if cursor {
+                            Style::default().fg(Color::Yellow)
+                        } else if selected {
+                            Style::default().fg(Color::White)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        rows.push(make_empty_cells(label, style));
+                        sub_idx += 1;
+                    }
+                }
+
+                // Subtitle streams
+                if !info.subtitle_streams.is_empty() {
+                    rows.push(make_empty_cells(
+                        "  SUBTITLES".into(),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+
+                    for (type_idx, sub) in info.subtitle_streams.iter().enumerate() {
+                        let selected = selections.map(|s| s.contains(&sub.index)).unwrap_or(true);
+                        let cursor = is_track_edit && track_cursor == sub_idx;
+                        let checkbox = if selected { "[X]" } else { "[ ]" };
+                        let label = format!("  {} s{}  {}", checkbox, type_idx, sub.display_line());
+                        let style = if cursor {
+                            Style::default().fg(Color::Yellow)
+                        } else if selected {
+                            Style::default().fg(Color::White)
+                        } else {
+                            Style::default().fg(Color::DarkGray)
+                        };
+                        rows.push(make_empty_cells(label, style));
+                        sub_idx += 1;
+                    }
+                }
             }
-            if is_tv {
-                cells.push(ep_display);
-            }
-            cells.push(filename);
-
-            let row_style = if is_editing {
-                Style::default().fg(Color::Yellow)
-            } else if vis_idx == view.list_cursor {
-                Style::default().fg(Color::White)
-            } else if !is_episode_pl {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default()
-            };
-
-            Row::new(cells).style(row_style)
-        })
-        .collect();
+        }
+    }
 
     let mut widths = vec![
         Constraint::Length(6),
@@ -517,7 +635,7 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         Constraint::Length(10),
     ];
     if has_ch {
-        widths.push(Constraint::Length(4));
+        widths.push(Constraint::Length(8));
     }
     if is_tv {
         widths.push(Constraint::Min(20));
@@ -529,10 +647,12 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         .block(Block::default().borders(Borders::ALL));
     f.render_widget(table, chunks[1]);
 
-    let hints_text = if matches!(view.input_focus, InputFocus::InlineEdit(_)) {
+    let hints_text = if matches!(view.input_focus, InputFocus::TrackEdit(_)) {
+        "Up/Down: Navigate | Space: Toggle | t/Esc: Close tracks".to_string()
+    } else if matches!(view.input_focus, InputFocus::InlineEdit(_)) {
         "Enter: Confirm | Esc: Cancel | Format: 3 or 3-4 or 3,5".to_string()
     } else {
-        let mut parts = vec!["Space: Toggle", "e: Edit"];
+        let mut parts = vec!["Space: Toggle", "e: Edit", "t: Tracks"];
         if is_tv {
             parts.push("s: Special");
         }
@@ -898,6 +1018,62 @@ pub fn handle_playlist_manager_input_session(
     session: &mut crate::session::DriveSession,
     key: KeyEvent,
 ) {
+    if let InputFocus::TrackEdit(sub_row) = session.wizard.input_focus {
+        match key.code {
+            KeyCode::Up if sub_row > 0 => {
+                session.wizard.input_focus = InputFocus::TrackEdit(sub_row - 1);
+            }
+            KeyCode::Down => {
+                if let Some(real_idx) = session.wizard.expanded_playlist {
+                    let pl_num = &session.disc.playlists[real_idx].num;
+                    if let Some(info) = session.wizard.stream_infos.get(pl_num) {
+                        let total = info.video_streams.len()
+                            + info.audio_streams.len()
+                            + info.subtitle_streams.len();
+                        if sub_row + 1 < total {
+                            session.wizard.input_focus = InputFocus::TrackEdit(sub_row + 1);
+                        }
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Some(real_idx) = session.wizard.expanded_playlist {
+                    let pl_num = session.disc.playlists[real_idx].num.clone();
+                    if let Some(info) = session.wizard.stream_infos.get(&pl_num) {
+                        let all_indices: Vec<usize> = info
+                            .video_streams
+                            .iter()
+                            .map(|s| s.index)
+                            .chain(info.audio_streams.iter().map(|s| s.index))
+                            .chain(info.subtitle_streams.iter().map(|s| s.index))
+                            .collect();
+
+                        if let Some(&abs_idx) = all_indices.get(sub_row) {
+                            let selections = session
+                                .wizard
+                                .track_selections
+                                .entry(pl_num)
+                                .or_insert_with(|| all_indices.clone());
+
+                            if let Some(pos) = selections.iter().position(|&i| i == abs_idx) {
+                                selections.remove(pos);
+                            } else {
+                                selections.push(abs_idx);
+                                selections.sort_unstable();
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('t') | KeyCode::Char('T') => {
+                session.wizard.expanded_playlist = None;
+                session.wizard.input_focus = InputFocus::List;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     if let InputFocus::InlineEdit(edit_vis_row) = session.wizard.input_focus {
         let visible = session.visible_playlists();
         match key.code {
@@ -1036,7 +1212,39 @@ pub fn handle_playlist_manager_input_session(
             session.wizard.episode_assignments.clear();
             session.wizard.specials.clear();
         }
+        KeyCode::Char('t') | KeyCode::Char('T') => {
+            if let Some(&(real_idx, _)) = visible.get(session.wizard.list_cursor) {
+                if session.wizard.expanded_playlist == Some(real_idx) {
+                    session.wizard.expanded_playlist = None;
+                    session.wizard.input_focus = InputFocus::List;
+                } else {
+                    session.wizard.expanded_playlist = Some(real_idx);
+                    let pl_num = &session.disc.playlists[real_idx].num;
+
+                    if !session.wizard.stream_infos.contains_key(pl_num) {
+                        let device = session.device.to_string_lossy().to_string();
+                        let num = pl_num.clone();
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        std::thread::spawn(move || {
+                            let result = crate::media::probe::probe_playlist(&device, &num).ok();
+                            let _ = tx.send(crate::types::BackgroundResult::MediaProbe(
+                                num,
+                                Box::new(result),
+                            ));
+                        });
+                        session.pending_rx = Some(rx);
+                        session.status_message = "Probing streams...".into();
+                    } else {
+                        session.wizard.input_focus = InputFocus::TrackEdit(0);
+                    }
+                }
+            }
+        }
         KeyCode::Char('f') => {
+            session.wizard.expanded_playlist = None;
+            if matches!(session.wizard.input_focus, InputFocus::TrackEdit(_)) {
+                session.wizard.input_focus = InputFocus::List;
+            }
             session.wizard.show_filtered = !session.wizard.show_filtered;
             let new_visible = session.visible_playlists();
             if session.wizard.list_cursor >= new_visible.len() {

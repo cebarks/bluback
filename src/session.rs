@@ -703,7 +703,17 @@ impl DriveSession {
                     self.wizard
                         .media_infos
                         .insert(playlist_num.clone(), media_info);
-                    self.wizard.stream_infos.insert(playlist_num, stream_info);
+                    self.wizard
+                        .stream_infos
+                        .insert(playlist_num.clone(), stream_info);
+                    // If this playlist is currently expanded, enter track edit mode
+                    if let Some(exp_idx) = self.wizard.expanded_playlist {
+                        if exp_idx < self.disc.playlists.len()
+                            && self.disc.playlists[exp_idx].num == playlist_num
+                        {
+                            self.wizard.input_focus = InputFocus::TrackEdit(0);
+                        }
+                    }
                 }
                 self.status_message.clear();
             }
