@@ -554,6 +554,146 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Result<MediaInfo, M
     Ok(info)
 }
 
+/// Probe both media info and detailed stream info from a single context open.
+pub fn probe_playlist(
+    device: &str,
+    playlist_num: &str,
+) -> Result<(MediaInfo, StreamInfo), MediaError> {
+    let ctx = open_bluray(device, Some(playlist_num))?;
+
+    let mut media_info = MediaInfo::default();
+    let mut video_streams = Vec::new();
+    let mut audio_streams = Vec::new();
+    let mut subtitle_streams = Vec::new();
+    let mut first_audio_done = false;
+
+    for stream in ctx.streams() {
+        let params = stream.parameters();
+        match params.medium() {
+            MediaType::Video => {
+                let codec_id = params.id();
+                let width = params.width();
+                let height = params.height();
+                let resolution = if height > 0 {
+                    format!("{}x{}", width, height)
+                } else {
+                    String::new()
+                };
+                let rate = stream.rate();
+                let framerate = format_framerate((rate.numerator(), rate.denominator()));
+
+                let bits_raw = params.bits_per_raw_sample();
+                let bit_depth = if bits_raw > 0 {
+                    bits_raw.to_string()
+                } else {
+                    let bits_coded = params.bits_per_coded_sample();
+                    if bits_coded > 0 {
+                        bits_coded.to_string()
+                    } else {
+                        String::new()
+                    }
+                };
+
+                let profile_raw = params.profile();
+                let profile = Profile::from((codec_id, profile_raw));
+                let color_trc = params.color_transfer_characteristic();
+                let color_transfer_str = color_trc.name().unwrap_or("").to_string();
+                let side_data_types = extract_side_data_types(&stream);
+                let side_data_refs: Vec<&str> =
+                    side_data_types.iter().map(|s| s.as_str()).collect();
+                let hdr = classify_hdr(&color_transfer_str, &side_data_refs);
+
+                // First video populates MediaInfo
+                if media_info.codec.is_empty() {
+                    media_info.codec = codec_id.name().to_string();
+                    media_info.width = width;
+                    media_info.height = height;
+                    media_info.resolution = if height > 0 {
+                        format!("{}p", height)
+                    } else {
+                        String::new()
+                    };
+                    media_info.aspect_ratio = format_aspect_ratio(width, height);
+                    media_info.framerate = framerate.clone();
+                    media_info.bit_depth = bit_depth.clone();
+                    media_info.profile = format_video_profile(profile);
+                    media_info.hdr = hdr.clone();
+                }
+
+                video_streams.push(crate::types::VideoStream {
+                    index: stream.index(),
+                    codec: codec_id.name().to_string(),
+                    resolution,
+                    hdr,
+                    framerate,
+                    bit_depth,
+                });
+            }
+            MediaType::Audio => {
+                let codec_id = params.id();
+                let codec_name = codec_id.name().to_string();
+                let ch_layout = params.ch_layout();
+                let channels = ch_layout.channels() as u16;
+                let layout_desc = ch_layout.description();
+                let channel_layout = format_channel_layout(channels, &layout_desc);
+                let language = stream.metadata().get("language").map(|s| s.to_string());
+                let profile_raw = params.profile();
+                let profile = format_codec_profile(Profile::from((codec_id, profile_raw)));
+
+                // First audio populates MediaInfo
+                if !first_audio_done {
+                    first_audio_done = true;
+                    let prof = Profile::from((codec_id, profile_raw));
+                    media_info.audio = match &prof {
+                        Profile::DTS(dts) => format_dts_profile(dts).to_string(),
+                        _ => codec_name.clone(),
+                    };
+                    media_info.channels = channel_layout.clone();
+                    media_info.audio_lang = language.clone().unwrap_or_default();
+                }
+
+                audio_streams.push(crate::types::AudioStream {
+                    index: stream.index(),
+                    codec: codec_name,
+                    channels,
+                    channel_layout,
+                    language,
+                    profile,
+                });
+            }
+            MediaType::Subtitle => {
+                let codec_id = params.id();
+                let language = stream.metadata().get("language").map(|s| s.to_string());
+
+                // TODO: extract AV_DISPOSITION_FORCED when API available
+                // ffmpeg-the-third may not expose disposition directly
+                let forced = false;
+
+                subtitle_streams.push(crate::types::SubtitleStream {
+                    index: stream.index(),
+                    codec: codec_id.name().to_string(),
+                    language,
+                    forced,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // Bitrate
+    let bitrate = ctx.bit_rate();
+    media_info.bitrate_bps = if bitrate > 0 { bitrate as u64 } else { 0 };
+
+    let stream_info = StreamInfo {
+        video_streams,
+        audio_streams,
+        subtitle_streams,
+        ..Default::default()
+    };
+
+    Ok((media_info, stream_info))
+}
+
 /// Extract side data type names from a stream via raw FFI.
 ///
 /// Checks both the AVStream side_data (FFmpeg < 8.0) and

@@ -312,7 +312,9 @@ pub fn filter_episodes(playlists: &[Playlist], min_duration: u32) -> Vec<&Playli
 }
 
 pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
-    crate::media::probe_media_info(device, playlist_num).ok()
+    crate::media::probe_playlist(device, playlist_num)
+        .ok()
+        .map(|(info, _)| info)
 }
 
 #[cfg(target_os = "linux")]
