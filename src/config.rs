@@ -416,10 +416,9 @@ impl Config {
     }
 
     pub fn resolve_stream_selection(&self) -> crate::media::StreamSelection {
-        match self.stream_selection.as_deref() {
-            Some("prefer_surround") => crate::media::StreamSelection::PreferSurround,
-            _ => crate::media::StreamSelection::All,
-        }
+        // Deprecated: use resolve_stream_filter() instead.
+        // PreferSurround behavior is now handled by StreamFilter { prefer_surround: true }.
+        crate::media::StreamSelection::All
     }
 
     // TODO(task3): Remove dead_code allow once integrated in later tasks
