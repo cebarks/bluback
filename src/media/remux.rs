@@ -427,6 +427,7 @@ where
 }
 
 /// Build a StreamInfo from an open input context by inspecting codec parameters.
+#[allow(deprecated)] // Uses StreamInfo.subtitle_count — will be removed in later task
 fn build_stream_info(ictx: &format::context::Input) -> StreamInfo {
     let mut audio_streams = Vec::new();
     let mut subtitle_count = 0u32;
@@ -466,7 +467,9 @@ fn build_stream_info(ictx: &format::context::Input) -> StreamInfo {
     }
 
     StreamInfo {
+        video_streams: Vec::new(),
         audio_streams,
+        subtitle_streams: Vec::new(),
         subtitle_count,
     }
 }
@@ -545,9 +548,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_stream_selection_prefer_surround() {
         // Simulate: stream 0 = video, 1 = surround audio, 2 = stereo audio, 3 = subtitle
         let info = StreamInfo {
+            video_streams: Vec::new(),
             audio_streams: vec![
                 AudioStream {
                     index: 1,
@@ -566,6 +571,7 @@ mod tests {
                     profile: None,
                 },
             ],
+            subtitle_streams: Vec::new(),
             subtitle_count: 1,
         };
 
@@ -575,9 +581,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_stream_selection_prefer_surround_no_surround() {
         // Only stereo audio available
         let info = StreamInfo {
+            video_streams: Vec::new(),
             audio_streams: vec![AudioStream {
                 index: 1,
                 codec: "aac".into(),
@@ -586,6 +594,7 @@ mod tests {
                 language: None,
                 profile: None,
             }],
+            subtitle_streams: Vec::new(),
             subtitle_count: 0,
         };
 

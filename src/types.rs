@@ -63,10 +63,72 @@ impl AudioStream {
     }
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Public API — fields read when media module is consumed directly
+pub struct VideoStream {
+    pub index: usize,
+    pub codec: String,
+    pub resolution: String,
+    pub hdr: String,
+    pub framerate: String,
+    pub bit_depth: String,
+}
+
+impl VideoStream {
+    #[allow(dead_code)] // Public API
+    pub fn display_line(&self) -> String {
+        let hdr_part = if self.hdr.is_empty() || self.hdr == "SDR" {
+            String::new()
+        } else {
+            format!("  {}", self.hdr)
+        };
+        format!(
+            "{} {}  {}fps{}",
+            self.codec.to_uppercase(),
+            self.resolution,
+            self.framerate,
+            hdr_part
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Public API — fields read when media module is consumed directly
+pub struct SubtitleStream {
+    pub index: usize,
+    pub codec: String,
+    pub language: Option<String>,
+    pub forced: bool,
+}
+
+impl SubtitleStream {
+    #[allow(dead_code)] // Public API
+    pub fn display_line(&self) -> String {
+        let lang = self.language.as_deref().unwrap_or("und");
+        let forced_tag = if self.forced { " FORCED" } else { "" };
+        format!("{} ({}){}", self.codec_display_name(), lang, forced_tag)
+    }
+
+    fn codec_display_name(&self) -> &str {
+        match self.codec.as_str() {
+            "hdmv_pgs_subtitle" => "PGS",
+            "subrip" | "srt" => "SRT",
+            "dvd_subtitle" => "VobSub",
+            "ass" => "ASS",
+            other => other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)] // Public API — fields read when media module is consumed directly
 pub struct StreamInfo {
+    pub video_streams: Vec<VideoStream>,
     pub audio_streams: Vec<AudioStream>,
+    pub subtitle_streams: Vec<SubtitleStream>,
+    #[deprecated(
+        note = "Use subtitle_streams.len() instead — will be removed after probe/remux migration"
+    )]
     pub subtitle_count: u32,
 }
 
@@ -1116,6 +1178,56 @@ mod tests {
             profile: None,
         };
         assert!(!stereo.is_surround());
+    }
+
+    #[test]
+    fn test_video_stream_display() {
+        let v = VideoStream {
+            index: 0,
+            codec: "hevc".into(),
+            resolution: "1920x1080".into(),
+            hdr: "HDR10".into(),
+            framerate: "23.976".into(),
+            bit_depth: "10".into(),
+        };
+        assert_eq!(v.display_line(), "HEVC 1920x1080  23.976fps  HDR10");
+
+        let sdr = VideoStream {
+            index: 0,
+            codec: "h264".into(),
+            resolution: "1920x1080".into(),
+            hdr: "SDR".into(),
+            framerate: "24".into(),
+            bit_depth: "8".into(),
+        };
+        assert_eq!(sdr.display_line(), "H264 1920x1080  24fps");
+    }
+
+    #[test]
+    fn test_subtitle_stream_display() {
+        let s = SubtitleStream {
+            index: 3,
+            codec: "hdmv_pgs_subtitle".into(),
+            language: Some("eng".into()),
+            forced: false,
+        };
+        assert_eq!(s.display_line(), "PGS (eng)");
+
+        let forced = SubtitleStream {
+            index: 4,
+            codec: "hdmv_pgs_subtitle".into(),
+            language: Some("eng".into()),
+            forced: true,
+        };
+        assert_eq!(forced.display_line(), "PGS (eng) FORCED");
+
+        let unknown_codec = SubtitleStream {
+            index: 5,
+            codec: "dvb_teletext".into(),
+            language: None,
+            forced: false,
+        };
+        assert_eq!(unknown_codec.display_line(), "dvb_teletext (und)");
     }
 
     #[test]
