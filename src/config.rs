@@ -33,6 +33,13 @@ pub struct MetadataConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct StreamsConfig {
+    pub audio_languages: Option<Vec<String>>,
+    pub subtitle_languages: Option<Vec<String>>,
+    pub prefer_surround: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct HookConfig {
     pub command: Option<String>,
     pub on_failure: Option<bool>,
@@ -83,6 +90,7 @@ pub struct Config {
     pub log_dir: Option<String>,
     pub max_log_files: Option<u32>,
     pub metadata: Option<MetadataConfig>,
+    pub streams: Option<StreamsConfig>,
     pub post_rip: Option<HookConfig>,
     pub post_session: Option<HookConfig>,
 }
@@ -211,6 +219,36 @@ impl Config {
             .is_none_or(|t| t.is_empty())
         {
             out.push_str("# tags = { }\n");
+        }
+
+        out.push('\n');
+        out.push_str("[streams]\n");
+        if let Some(ref streams) = self.streams {
+            if let Some(ref langs) = streams.audio_languages {
+                if !langs.is_empty() {
+                    let quoted: Vec<String> = langs.iter().map(|l| format!("{:?}", l)).collect();
+                    out.push_str(&format!("audio_languages = [{}]\n", quoted.join(", ")));
+                } else {
+                    out.push_str("# audio_languages = []\n");
+                }
+            } else {
+                out.push_str("# audio_languages = []\n");
+            }
+            if let Some(ref langs) = streams.subtitle_languages {
+                if !langs.is_empty() {
+                    let quoted: Vec<String> = langs.iter().map(|l| format!("{:?}", l)).collect();
+                    out.push_str(&format!("subtitle_languages = [{}]\n", quoted.join(", ")));
+                } else {
+                    out.push_str("# subtitle_languages = []\n");
+                }
+            } else {
+                out.push_str("# subtitle_languages = []\n");
+            }
+            emit_bool(&mut out, "prefer_surround", streams.prefer_surround, false);
+        } else {
+            out.push_str("# audio_languages = []\n");
+            out.push_str("# subtitle_languages = []\n");
+            out.push_str("# prefer_surround = false\n");
         }
 
         out.push('\n');
@@ -384,6 +422,32 @@ impl Config {
         }
     }
 
+    // TODO(task3): Remove dead_code allow once integrated in later tasks
+    #[allow(dead_code)]
+    pub fn resolve_stream_filter(&self) -> crate::streams::StreamFilter {
+        // New [streams] section takes priority
+        if let Some(ref streams) = self.streams {
+            return crate::streams::StreamFilter {
+                audio_languages: streams.audio_languages.clone().unwrap_or_default(),
+                subtitle_languages: streams.subtitle_languages.clone().unwrap_or_default(),
+                prefer_surround: streams.prefer_surround.unwrap_or(false),
+            };
+        }
+        // Fall back to old stream_selection key
+        match self.stream_selection.as_deref() {
+            Some("prefer_surround") => {
+                log::warn!(
+                    "Config key 'stream_selection' is deprecated, use [streams] section instead"
+                );
+                crate::streams::StreamFilter {
+                    prefer_surround: true,
+                    ..Default::default()
+                }
+            }
+            _ => crate::streams::StreamFilter::default(),
+        }
+    }
+
     pub fn metadata_enabled(&self) -> bool {
         self.metadata
             .as_ref()
@@ -437,6 +501,10 @@ const KNOWN_KEYS: &[&str] = &[
     "metadata",
     "metadata.enabled",
     "metadata.tags",
+    "streams",
+    "streams.audio_languages",
+    "streams.subtitle_languages",
+    "streams.prefer_surround",
     "post_rip",
     "post_rip.command",
     "post_rip.on_failure",
@@ -1316,5 +1384,101 @@ also_unknown = 42"#;
         };
         let warnings = validate_config(&config);
         assert!(warnings.iter().any(|w| w.contains("verify_level")));
+    }
+
+    #[test]
+    fn test_streams_config_parsing() {
+        let toml = r#"
+[streams]
+audio_languages = ["eng", "jpn"]
+subtitle_languages = ["eng"]
+prefer_surround = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let streams = config.streams.unwrap();
+        assert_eq!(
+            streams.audio_languages,
+            Some(vec!["eng".to_string(), "jpn".to_string()])
+        );
+        assert_eq!(streams.subtitle_languages, Some(vec!["eng".to_string()]));
+        assert_eq!(streams.prefer_surround, Some(true));
+    }
+
+    #[test]
+    fn test_streams_config_empty() {
+        let toml = "";
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.streams.is_none());
+    }
+
+    #[test]
+    fn test_resolve_stream_filter_from_streams() {
+        let toml = r#"
+[streams]
+audio_languages = ["eng"]
+prefer_surround = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let filter = config.resolve_stream_filter();
+        assert_eq!(filter.audio_languages, vec!["eng"]);
+        assert!(filter.prefer_surround);
+        assert!(filter.subtitle_languages.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_stream_filter_from_old_key() {
+        let toml = r#"stream_selection = "prefer_surround""#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let filter = config.resolve_stream_filter();
+        assert!(filter.prefer_surround);
+    }
+
+    #[test]
+    fn test_resolve_stream_filter_new_overrides_old() {
+        let toml = r#"
+stream_selection = "prefer_surround"
+[streams]
+prefer_surround = false
+audio_languages = ["fra"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let filter = config.resolve_stream_filter();
+        assert!(!filter.prefer_surround);
+        assert_eq!(filter.audio_languages, vec!["fra"]);
+    }
+
+    #[test]
+    fn test_streams_config_serialization_roundtrip() {
+        let config = Config {
+            streams: Some(StreamsConfig {
+                audio_languages: Some(vec!["eng".into(), "jpn".into()]),
+                subtitle_languages: Some(vec!["eng".into()]),
+                prefer_surround: Some(true),
+            }),
+            ..Default::default()
+        };
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains("[streams]"));
+        assert!(toml_str.contains(r#"audio_languages = ["eng", "jpn"]"#));
+        assert!(toml_str.contains(r#"subtitle_languages = ["eng"]"#));
+        assert!(toml_str.contains("prefer_surround = true"));
+        let reparsed: Config = toml::from_str(&toml_str).unwrap();
+        let streams = reparsed.streams.unwrap();
+        assert_eq!(
+            streams.audio_languages,
+            Some(vec!["eng".to_string(), "jpn".to_string()])
+        );
+        assert_eq!(streams.subtitle_languages, Some(vec!["eng".to_string()]));
+        assert_eq!(streams.prefer_surround, Some(true));
+    }
+
+    #[test]
+    fn test_streams_config_default_serialization_commented() {
+        let config = Config::default();
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains("[streams]"));
+        assert!(toml_str.contains("# audio_languages = []"));
+        assert!(toml_str.contains("# subtitle_languages = []"));
+        assert!(toml_str.contains("# prefer_surround = false"));
     }
 }
