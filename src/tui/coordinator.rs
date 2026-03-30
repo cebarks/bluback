@@ -433,18 +433,31 @@ impl Coordinator {
     fn poll_drive_events(&mut self) {
         while let Ok(event) = self.drive_event_rx.try_recv() {
             match event {
-                DriveEvent::DriveAppeared(device) | DriveEvent::DiscInserted(device, _) => {
+                DriveEvent::DriveAppeared(ref device) | DriveEvent::DiscInserted(ref device, _) => {
+                    // Clear "drive disconnected" error if the drive reappeared
+                    // (e.g., after a transient USB re-enumeration)
+                    for session in &mut self.sessions {
+                        if &session.device == device
+                            && !session.dead
+                            && session.tab_summary.error.as_deref() == Some("drive disconnected")
+                        {
+                            session.tab_summary.error = None;
+                        }
+                    }
                     // Auto-spawn session if no --device flag was given
                     if self.args.device.is_none() {
-                        self.spawn_session(device);
+                        self.spawn_session(device.clone());
                     }
                 }
                 DriveEvent::DriveDisappeared(ref device) => {
-                    // Find the session for this device and shut it down
+                    // Don't immediately kill sessions — the drive may reappear
+                    // after a brief USB/SCSI re-enumeration (e.g., hot-plugging
+                    // another drive on the same controller). Active rips will
+                    // fail naturally via FFmpeg I/O errors if the drive is truly
+                    // gone. When the drive reappears, spawn_session's dedup
+                    // guard skips creating a duplicate.
                     for session in &mut self.sessions {
                         if &session.device == device && !session.dead {
-                            let _ = session.input_tx.send(SessionCommand::Shutdown);
-                            session.tab_summary.state = TabState::Error;
                             session.tab_summary.error = Some("drive disconnected".to_string());
                         }
                     }
@@ -911,5 +924,136 @@ mod tests {
         assert_eq!(entries2.len(), 1);
         assert!(entries1.contains(&(session1, vec![1, 2, 3])));
         assert!(entries2.contains(&(session2, vec![1, 2, 3])));
+    }
+
+    fn make_test_session_handle(
+        device: &str,
+        state: TabState,
+    ) -> (SessionHandle, mpsc::Receiver<SessionCommand>) {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (_msg_tx, msg_rx) = mpsc::channel();
+        let id = crate::session::next_session_id();
+        let handle = SessionHandle {
+            id,
+            device: PathBuf::from(device),
+            input_tx: cmd_tx,
+            output_rx: msg_rx,
+            thread: None,
+            snapshot: None,
+            tab_summary: TabSummary {
+                session_id: id,
+                device_name: device.to_string(),
+                state,
+                rip_progress: None,
+                error: None,
+            },
+            dead: false,
+        };
+        (handle, cmd_rx)
+    }
+
+    #[test]
+    fn test_drive_disappeared_does_not_shutdown_session() {
+        let (drive_tx, drive_rx) = mpsc::channel();
+        let args = Args::parse_from(["bluback"]);
+        let mut coord = Coordinator {
+            sessions: Vec::new(),
+            active_tab: 0,
+            config: Config::default(),
+            config_path: PathBuf::from("/tmp/test.toml"),
+            args,
+            stream_filter: crate::streams::StreamFilter::default(),
+            quit: false,
+            overlay: None,
+            drive_event_rx: drive_rx,
+            assigned_episodes: HashMap::new(),
+        };
+
+        let (handle, cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
+        coord.sessions.push(handle);
+
+        // Simulate drive disappearing (e.g., USB re-enumeration)
+        let _ = drive_tx.send(DriveEvent::DriveDisappeared(PathBuf::from("/dev/sr0")));
+        coord.poll_drive_events();
+
+        // Session should NOT receive Shutdown
+        assert!(
+            cmd_rx.try_recv().is_err(),
+            "session should not receive Shutdown"
+        );
+        // But tab should show error
+        assert_eq!(
+            coord.sessions[0].tab_summary.error.as_deref(),
+            Some("drive disconnected")
+        );
+        // Session should still be alive
+        assert!(!coord.sessions[0].dead);
+    }
+
+    #[test]
+    fn test_drive_reappear_clears_disconnect_error() {
+        let (drive_tx, drive_rx) = mpsc::channel();
+        let args = Args::parse_from(["bluback"]);
+        let mut coord = Coordinator {
+            sessions: Vec::new(),
+            active_tab: 0,
+            config: Config::default(),
+            config_path: PathBuf::from("/tmp/test.toml"),
+            args,
+            stream_filter: crate::streams::StreamFilter::default(),
+            quit: false,
+            overlay: None,
+            drive_event_rx: drive_rx,
+            assigned_episodes: HashMap::new(),
+        };
+
+        let (handle, _cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
+        coord.sessions.push(handle);
+
+        // Drive disappears then reappears
+        let _ = drive_tx.send(DriveEvent::DriveDisappeared(PathBuf::from("/dev/sr0")));
+        coord.poll_drive_events();
+        assert!(coord.sessions[0].tab_summary.error.is_some());
+
+        let _ = drive_tx.send(DriveEvent::DriveAppeared(PathBuf::from("/dev/sr0")));
+        coord.poll_drive_events();
+        assert!(
+            coord.sessions[0].tab_summary.error.is_none(),
+            "drive reappear should clear disconnect error"
+        );
+        assert!(!coord.sessions[0].dead);
+    }
+
+    #[test]
+    fn test_drive_disappeared_no_duplicate_session_on_reappear() {
+        let (drive_tx, drive_rx) = mpsc::channel();
+        let args = Args::parse_from(["bluback"]);
+        let mut coord = Coordinator {
+            sessions: Vec::new(),
+            active_tab: 0,
+            config: Config::default(),
+            config_path: PathBuf::from("/tmp/test.toml"),
+            args,
+            stream_filter: crate::streams::StreamFilter::default(),
+            quit: false,
+            overlay: None,
+            drive_event_rx: drive_rx,
+            assigned_episodes: HashMap::new(),
+        };
+
+        let (handle, _cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
+        coord.sessions.push(handle);
+
+        // Drive disappears and reappears — should not create a duplicate session
+        let _ = drive_tx.send(DriveEvent::DriveDisappeared(PathBuf::from("/dev/sr0")));
+        let _ = drive_tx.send(DriveEvent::DriveAppeared(PathBuf::from("/dev/sr0")));
+        coord.poll_drive_events();
+
+        assert_eq!(
+            coord.sessions.len(),
+            1,
+            "should not spawn duplicate session"
+        );
+        assert!(!coord.sessions[0].dead);
     }
 }
