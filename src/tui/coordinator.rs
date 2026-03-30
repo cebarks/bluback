@@ -364,7 +364,9 @@ impl Coordinator {
                 if let Some(ref view) = snap.tmdb {
                     matches!(
                         view.input_focus,
-                        InputFocus::TextInput | InputFocus::InlineEdit(_)
+                        InputFocus::TextInput
+                            | InputFocus::InlineEdit(_)
+                            | InputFocus::TrackEdit(_)
                     )
                 } else {
                     false
@@ -379,7 +381,10 @@ impl Coordinator {
             }
             Screen::PlaylistManager => {
                 if let Some(ref view) = snap.playlist_mgr {
-                    matches!(view.input_focus, InputFocus::InlineEdit(_))
+                    matches!(
+                        view.input_focus,
+                        InputFocus::InlineEdit(_) | InputFocus::TrackEdit(_)
+                    )
                 } else {
                     false
                 }

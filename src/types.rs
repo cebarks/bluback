@@ -253,8 +253,12 @@ pub enum BackgroundResult {
     MovieSearch(anyhow::Result<Vec<TmdbMovie>>),
     /// TMDb season fetch completed
     SeasonFetch(anyhow::Result<Vec<Episode>>),
-    /// Media info probes completed (one per selected playlist)
-    MediaProbe(Vec<Option<MediaInfo>>),
+    /// Single playlist probe result (for lazy probe of filtered playlists)
+    #[allow(dead_code)] // Constructed by Task 12 (final wiring)
+    MediaProbe(String, Box<Option<(MediaInfo, StreamInfo)>>),
+    /// Bulk probe results for episode-length playlists
+    #[allow(dead_code)] // Constructed by Task 12 (final wiring)
+    BulkProbe(std::collections::HashMap<String, (MediaInfo, StreamInfo)>),
 }
 
 // =============================================================================
@@ -455,6 +459,12 @@ pub struct PlaylistView {
     pub episodes: Vec<Episode>,
     pub label: String,
     pub filenames: HashMap<String, String>,
+    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
+    pub stream_infos: HashMap<String, StreamInfo>,
+    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
+    pub track_selections: HashMap<String, Vec<usize>>,
+    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
+    pub expanded_playlist: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -469,7 +479,9 @@ pub struct ConfirmView {
     pub label: String,
     pub output_dir: String,
     pub dry_run: bool,
-    pub media_infos: Vec<Option<MediaInfo>>,
+    pub media_infos: HashMap<String, MediaInfo>,
+    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
+    pub track_summaries: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
