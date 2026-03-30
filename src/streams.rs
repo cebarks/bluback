@@ -529,4 +529,243 @@ mod tests {
         let errors = validate_track_selection(&[], &info);
         assert!(errors.contains(&"no streams selected".to_string()));
     }
+
+    // --- StreamFilter::apply() edge cases ---
+
+    #[test]
+    fn test_prefer_surround_without_language_filter() {
+        // prefer_surround alone, no audio_languages — should prefer surround from ALL audio
+        let filter = StreamFilter {
+            prefer_surround: true,
+            ..Default::default()
+        };
+        let info = make_stream_info();
+        let selected = filter.apply(&info);
+        // video(0) + first surround(1) + stereo(3) + all subs(6-9)
+        assert_eq!(selected, vec![0, 1, 3, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn test_filter_no_video_streams() {
+        // Audio-only source — should not crash, include all audio
+        let info = StreamInfo {
+            video_streams: vec![],
+            audio_streams: vec![AudioStream {
+                index: 0,
+                codec: "ac3".into(),
+                channels: 6,
+                channel_layout: "5.1".into(),
+                language: Some("eng".into()),
+                profile: None,
+            }],
+            subtitle_streams: vec![],
+            ..Default::default()
+        };
+        let filter = StreamFilter::default();
+        let selected = filter.apply(&info);
+        assert_eq!(selected, vec![0]);
+    }
+
+    #[test]
+    fn test_filter_multiple_languages() {
+        // Two audio languages — both should be included
+        let filter = StreamFilter {
+            audio_languages: vec!["eng".into(), "fra".into()],
+            ..Default::default()
+        };
+        let info = make_stream_info();
+        let selected = filter.apply(&info);
+        // video(0) + eng audio(1,2,3) + fra audio(4) + all subs(6-9)
+        assert_eq!(selected, vec![0, 1, 2, 3, 4, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn test_prefer_surround_no_surround_available() {
+        // All audio is stereo — prefer_surround should keep all (no surround to prefer)
+        let info = StreamInfo {
+            video_streams: vec![VideoStream {
+                index: 0,
+                codec: "h264".into(),
+                resolution: "1920x1080".into(),
+                hdr: "SDR".into(),
+                framerate: "24".into(),
+                bit_depth: "8".into(),
+            }],
+            audio_streams: vec![
+                AudioStream {
+                    index: 1,
+                    codec: "ac3".into(),
+                    channels: 2,
+                    channel_layout: "stereo".into(),
+                    language: Some("eng".into()),
+                    profile: None,
+                },
+                AudioStream {
+                    index: 2,
+                    codec: "ac3".into(),
+                    channels: 2,
+                    channel_layout: "stereo".into(),
+                    language: Some("fra".into()),
+                    profile: None,
+                },
+            ],
+            subtitle_streams: vec![],
+            ..Default::default()
+        };
+        let filter = StreamFilter {
+            prefer_surround: true,
+            ..Default::default()
+        };
+        let selected = filter.apply(&info);
+        // No surround -> keep all audio
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_filter_all_und_audio() {
+        // All audio streams have no language tag — language filter should include all (und always passes)
+        let info = StreamInfo {
+            video_streams: vec![VideoStream {
+                index: 0,
+                codec: "h264".into(),
+                resolution: "1920x1080".into(),
+                hdr: "SDR".into(),
+                framerate: "24".into(),
+                bit_depth: "8".into(),
+            }],
+            audio_streams: vec![
+                AudioStream {
+                    index: 1,
+                    codec: "ac3".into(),
+                    channels: 6,
+                    channel_layout: "5.1".into(),
+                    language: None,
+                    profile: None,
+                },
+                AudioStream {
+                    index: 2,
+                    codec: "ac3".into(),
+                    channels: 2,
+                    channel_layout: "stereo".into(),
+                    language: None,
+                    profile: None,
+                },
+            ],
+            subtitle_streams: vec![],
+            ..Default::default()
+        };
+        let filter = StreamFilter {
+            audio_languages: vec!["jpn".into()],
+            ..Default::default()
+        };
+        let selected = filter.apply(&info);
+        // All und -> all included (und always passes, even though "jpn" is the filter)
+        assert_eq!(selected, vec![0, 1, 2]);
+    }
+
+    // --- parse_track_spec() edge cases ---
+
+    #[test]
+    fn test_parse_track_spec_empty_string() {
+        let info = make_stream_info();
+        // Empty spec — all types default to all
+        let result = parse_track_spec("", &info).unwrap();
+        assert_eq!(result, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn test_parse_track_spec_out_of_range_fallback() {
+        let info = make_stream_info();
+        // a:99 is out of range — should warn and include all audio
+        let result = parse_track_spec("a:99", &info).unwrap();
+        // video(0) + all audio(1-5, fallback) + all subs(6-9)
+        assert_eq!(result, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn test_parse_track_spec_duplicates_deduped() {
+        let info = make_stream_info();
+        let result = parse_track_spec("a:0,0,1;a:0", &info).unwrap();
+        // Should dedup: video(0) + audio(1,2) + all subs(6-9)
+        assert_eq!(result, vec![0, 1, 2, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn test_parse_track_spec_whitespace_tolerance() {
+        let info = make_stream_info();
+        let result = parse_track_spec(" a : 0 ; s : 0 ", &info).unwrap();
+        assert_eq!(result, vec![0, 1, 6]);
+    }
+
+    // --- parse_zero_based_ranges() edge cases ---
+
+    #[test]
+    fn test_parse_zero_based_ranges_equal_bounds() {
+        // "1-1" should be valid, returns [1]
+        assert_eq!(parse_zero_based_ranges("1-1", 3), Some(vec![1]));
+    }
+
+    #[test]
+    fn test_parse_zero_based_ranges_reversed() {
+        // "2-0" should fail
+        assert_eq!(parse_zero_based_ranges("2-0", 3), None);
+    }
+
+    #[test]
+    fn test_parse_zero_based_ranges_max_boundary() {
+        // max_val=1, "0" should work, "1" should fail
+        assert_eq!(parse_zero_based_ranges("0", 1), Some(vec![0]));
+        assert_eq!(parse_zero_based_ranges("1", 1), None);
+    }
+
+    // --- validate_track_selection() edge cases ---
+
+    #[test]
+    fn test_validate_audio_only_source() {
+        // Audio-only source (no video) — should NOT complain about missing video
+        let info = StreamInfo {
+            video_streams: vec![],
+            audio_streams: vec![AudioStream {
+                index: 0,
+                codec: "ac3".into(),
+                channels: 2,
+                channel_layout: "stereo".into(),
+                language: Some("eng".into()),
+                profile: None,
+            }],
+            subtitle_streams: vec![],
+            ..Default::default()
+        };
+        let errors = validate_track_selection(&[0], &info);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_video_only_source() {
+        // Video-only source (no audio) — should NOT complain about missing audio
+        let info = StreamInfo {
+            video_streams: vec![VideoStream {
+                index: 0,
+                codec: "h264".into(),
+                resolution: "1920x1080".into(),
+                hdr: "SDR".into(),
+                framerate: "24".into(),
+                bit_depth: "8".into(),
+            }],
+            audio_streams: vec![],
+            subtitle_streams: vec![],
+            ..Default::default()
+        };
+        let errors = validate_track_selection(&[0], &info);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_both_missing_from_full_source() {
+        // Full source but selection has neither video nor audio
+        let info = make_stream_info();
+        let errors = validate_track_selection(&[6, 7], &info); // only subtitles
+        assert!(errors.contains(&"no video streams selected".to_string()));
+        assert!(errors.contains(&"no audio streams selected".to_string()));
+    }
 }

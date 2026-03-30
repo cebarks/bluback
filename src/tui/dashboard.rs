@@ -866,6 +866,7 @@ mod tests {
         let mut session = crate::session::DriveSession::new(
             std::path::PathBuf::from("/dev/sr0"),
             config,
+            crate::streams::StreamFilter::default(),
             cmd_rx,
             msg_tx,
         );
@@ -1509,6 +1510,7 @@ mod tests {
         let mut session = crate::session::DriveSession::new(
             std::path::PathBuf::from("/dev/sr0"),
             config,
+            crate::streams::StreamFilter::default(),
             cmd_rx,
             msg_tx,
         );

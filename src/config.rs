@@ -1472,4 +1472,39 @@ audio_languages = ["fra"]
         assert!(toml_str.contains("# subtitle_languages = []"));
         assert!(toml_str.contains("# prefer_surround = false"));
     }
+
+    #[test]
+    fn test_streams_config_partial_audio_only() {
+        let toml = r#"
+[streams]
+audio_languages = ["eng"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let filter = config.resolve_stream_filter();
+        assert_eq!(filter.audio_languages, vec!["eng"]);
+        assert!(filter.subtitle_languages.is_empty());
+        assert!(!filter.prefer_surround);
+    }
+
+    #[test]
+    fn test_streams_config_partial_prefer_surround_only() {
+        let toml = r#"
+[streams]
+prefer_surround = true
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let filter = config.resolve_stream_filter();
+        assert!(filter.prefer_surround);
+        assert!(filter.audio_languages.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_stream_filter_old_key_non_prefer_surround() {
+        // Old key with value "all" should return default filter
+        let toml = r#"stream_selection = "all""#;
+        let config: Config = toml::from_str(toml).unwrap();
+        let filter = config.resolve_stream_filter();
+        assert!(!filter.prefer_surround);
+        assert!(filter.audio_languages.is_empty());
+    }
 }
