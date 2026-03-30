@@ -165,6 +165,14 @@ pub struct Args {
     #[arg(long)]
     no_verify: bool,
 
+    /// Enable batch mode (rip → eject → wait → repeat)
+    #[arg(long, conflicts_with_all = ["no_batch", "dry_run", "list_playlists", "check", "settings", "no_eject"])]
+    batch: bool,
+
+    /// Disable batch mode (overrides config)
+    #[arg(long, conflicts_with = "batch")]
+    no_batch: bool,
+
     /// Filter audio streams by language (e.g. "eng,jpn")
     #[arg(long)]
     audio_lang: Option<String>,
@@ -195,6 +203,16 @@ impl Args {
         if self.eject {
             Some(true)
         } else if self.no_eject {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    pub fn cli_batch(&self) -> Option<bool> {
+        if self.batch {
+            Some(true)
+        } else if self.no_batch {
             Some(false)
         } else {
             None
@@ -403,16 +421,27 @@ fn run_inner() -> anyhow::Result<i32> {
     }
 
     let headless = args.yes || (!atty_stdin() && !use_tui);
+    let batch = config.should_batch(args.cli_batch());
 
     if use_tui {
         tui::run(&args, &config, config_path, &stream_filter)?;
-    } else {
-        cli::run(
+    } else if batch {
+        cli::run_batch(
             &args,
             &config,
             headless,
             &stream_filter,
             tracks_spec.as_deref(),
+        )?;
+    } else {
+        let _ = cli::run(
+            &args,
+            &config,
+            headless,
+            &stream_filter,
+            tracks_spec.as_deref(),
+            None,  // no start_episode override
+            false, // don't skip eject
         )?;
     }
 

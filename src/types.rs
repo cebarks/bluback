@@ -250,7 +250,6 @@ pub enum BackgroundResult {
     #[allow(dead_code)] // Constructed by Task 12 (final wiring)
     MediaProbe(String, Box<Option<(MediaInfo, StreamInfo)>>),
     /// Bulk probe results for episode-length playlists
-    #[allow(dead_code)] // Constructed by Task 12 (final wiring)
     BulkProbe(std::collections::HashMap<String, (MediaInfo, StreamInfo)>),
 }
 
@@ -480,6 +479,7 @@ pub struct DashboardView {
     pub confirm_rescan: bool,
     pub label: String,
     pub verify_failed_idx: Option<usize>,
+    pub batch_disc_count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -492,6 +492,7 @@ pub struct DoneView {
     pub eject: bool,
     pub status_message: String,
     pub filenames: Vec<String>,
+    pub batch_disc_count: u32,
 }
 
 pub enum Overlay {
@@ -624,6 +625,11 @@ impl SettingsState {
                 label: "Overwrite Existing Files".into(),
                 key: "overwrite".into(),
                 value: config.overwrite.unwrap_or(false),
+            },
+            SettingItem::Toggle {
+                label: "Batch Mode".into(),
+                key: "batch".into(),
+                value: config.batch.unwrap_or(false),
             },
             SettingItem::Toggle {
                 label: "Verify Rips".into(),
@@ -901,6 +907,7 @@ impl SettingsState {
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
+            ("BLUBACK_BATCH", "batch"),
             ("BLUBACK_VERIFY", "verify"),
             ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
@@ -1011,6 +1018,7 @@ impl SettingsState {
             ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
+            ("BLUBACK_BATCH", "batch"),
             ("BLUBACK_VERIFY", "verify"),
             ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
@@ -1092,6 +1100,7 @@ impl SettingsState {
                     "show_filtered" if *value => config.show_filtered = Some(true),
                     "verbose_libbluray" if *value => config.verbose_libbluray = Some(true),
                     "overwrite" if *value => config.overwrite = Some(true),
+                    "batch" if *value => config.batch = Some(true),
                     "verify" if *value => config.verify = Some(true),
                     "log_file" if !*value => config.log_file = Some(false),
                     "metadata.enabled" if !*value => {
@@ -1346,7 +1355,7 @@ mod tests {
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 32); // 31 settings + 1 action
+        assert_eq!(non_separator_count, 33); // 32 settings + 1 action
     }
 
     #[test]
@@ -1872,5 +1881,55 @@ mod tests {
             restored.streams.is_none(),
             "empty streams config should not create [streams] section"
         );
+    }
+
+    #[test]
+    fn test_settings_includes_batch_toggle() {
+        let config = crate::config::Config::default();
+        let state = SettingsState::from_config(&config);
+        let has_batch = state
+            .items
+            .iter()
+            .any(|item| matches!(item, SettingItem::Toggle { key, .. } if key == "batch"));
+        assert!(has_batch, "settings should include a batch toggle");
+    }
+
+    #[test]
+    fn test_settings_batch_default_false() {
+        let config = crate::config::Config::default();
+        let state = SettingsState::from_config(&config);
+        let batch_val = state.items.iter().find_map(|item| {
+            if let SettingItem::Toggle { key, value, .. } = item {
+                if key == "batch" {
+                    Some(*value)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        assert_eq!(batch_val, Some(false));
+    }
+
+    #[test]
+    fn test_settings_batch_from_config_true() {
+        let config = crate::config::Config {
+            batch: Some(true),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+        let batch_val = state.items.iter().find_map(|item| {
+            if let SettingItem::Toggle { key, value, .. } = item {
+                if key == "batch" {
+                    Some(*value)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        assert_eq!(batch_val, Some(true));
     }
 }

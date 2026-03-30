@@ -81,6 +81,7 @@ pub struct Config {
     /// If the actual Cues are larger, they fall back to EOF (default behavior).
     pub reserve_index_space: Option<u32>,
     pub overwrite: Option<bool>,
+    pub batch: Option<bool>,
     pub verify: Option<bool>,
     pub verify_level: Option<String>,
     pub aacs_backend: Option<String>,
@@ -179,6 +180,7 @@ impl Config {
         );
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
         emit_bool(&mut out, "overwrite", self.overwrite, false);
+        emit_bool(&mut out, "batch", self.batch, false);
         emit_bool(&mut out, "verify", self.verify, false);
         emit_str(&mut out, "verify_level", &self.verify_level, "quick");
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
@@ -365,6 +367,14 @@ impl Config {
         self.overwrite.unwrap_or(false)
     }
 
+    pub fn batch(&self) -> bool {
+        self.batch.unwrap_or(false)
+    }
+
+    pub fn should_batch(&self, cli_batch: Option<bool>) -> bool {
+        cli_batch.unwrap_or_else(|| self.batch())
+    }
+
     pub fn verify(&self) -> bool {
         self.verify.unwrap_or(false)
     }
@@ -481,6 +491,7 @@ const KNOWN_KEYS: &[&str] = &[
     "verbose_libbluray",
     "reserve_index_space",
     "overwrite",
+    "batch",
     "verify",
     "verify_level",
     "aacs_backend",
@@ -1506,5 +1517,88 @@ prefer_surround = true
         let filter = config.resolve_stream_filter();
         assert!(!filter.prefer_surround);
         assert!(filter.audio_languages.is_empty());
+    }
+
+    #[test]
+    fn test_parse_batch_true() {
+        let config: Config = toml::from_str("batch = true").unwrap();
+        assert_eq!(config.batch, Some(true));
+    }
+
+    #[test]
+    fn test_parse_batch_false() {
+        let config: Config = toml::from_str("batch = false").unwrap();
+        assert_eq!(config.batch, Some(false));
+    }
+
+    #[test]
+    fn test_parse_batch_absent() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.batch.is_none());
+    }
+
+    #[test]
+    fn test_batch_default_false() {
+        let config = Config::default();
+        assert!(!config.batch());
+    }
+
+    #[test]
+    fn test_batch_config_true() {
+        let config = Config {
+            batch: Some(true),
+            ..Default::default()
+        };
+        assert!(config.batch());
+    }
+
+    #[test]
+    fn test_toml_string_includes_batch() {
+        let config = Config::default();
+        let s = config.to_toml_string();
+        assert!(
+            s.contains("# batch = false"),
+            "default should be commented out"
+        );
+
+        let config = Config {
+            batch: Some(true),
+            ..Default::default()
+        };
+        let s = config.to_toml_string();
+        assert!(s.contains("batch = true"), "non-default should be active");
+    }
+
+    #[test]
+    fn test_should_batch_cli_true_overrides_config() {
+        let config = Config {
+            batch: Some(false),
+            ..Default::default()
+        };
+        assert!(config.should_batch(Some(true)));
+    }
+
+    #[test]
+    fn test_should_batch_cli_false_overrides_config() {
+        let config = Config {
+            batch: Some(true),
+            ..Default::default()
+        };
+        assert!(!config.should_batch(Some(false)));
+    }
+
+    #[test]
+    fn test_should_batch_no_cli_uses_config() {
+        let config = Config {
+            batch: Some(true),
+            ..Default::default()
+        };
+        assert!(config.should_batch(None));
+    }
+
+    #[test]
+    fn test_should_batch_no_cli_no_config_defaults_false() {
+        let config = Config::default();
+        assert!(!config.should_batch(None));
     }
 }
