@@ -1,6 +1,6 @@
 [package]
 name = "bluback"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 description = "Blu-ray backup tool with TUI"
 license = "AGPL-3.0-or-later"
