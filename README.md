@@ -134,6 +134,8 @@ bluback --config ~/my-config.toml
 | `--verify` | Verify output files after ripping |
 | `--verify-level <LEVEL>` | Verification level: `quick` (header) or `full` (+ frame decode) |
 | `--no-verify` | Disable verification (overrides config) |
+| `--batch` | Batch mode: rip → eject → wait → repeat |
+| `--no-batch` | Disable batch mode (overrides config) |
 
 ## Configuration
 

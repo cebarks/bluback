@@ -204,7 +204,7 @@ All items complete. See `docs/superpowers/specs/2026-03-24-v0.6-stability-safety
 - Infrastructure partially exists: `StreamSelection::Manual(Vec<usize>)` variant in `remux.rs`, but no user-facing selection UI
 - **Files:** `src/media/remux.rs`, `src/tui/wizard.rs`, `src/main.rs`, `src/config.rs`
 
-### 30. Continuous batch mode
+### 30. Continuous batch mode ✓
 - Rip → eject → wait for next disc → auto-start
 - TUI: "continuous mode" toggle; CLI: `--batch` flag
 - Disc history integration: skip already-ripped discs
