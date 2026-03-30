@@ -1078,6 +1078,22 @@ fn rip_selected(
             crate::media::StreamSelection::All
         };
 
+        // Compute expected stream counts for verification before stream_selection is moved.
+        // When manual selection is active, the output will have fewer streams than the source.
+        let (expected_video, expected_audio, expected_subtitle) = match &stream_selection {
+            crate::media::StreamSelection::Manual(indices) => {
+                let stream_info = probe_cache
+                    .get(&pl.num)
+                    .map(|(_, si)| si)
+                    .cloned()
+                    .unwrap_or_default();
+                crate::streams::count_selected_streams(indices, &stream_info)
+            }
+            crate::media::StreamSelection::All => {
+                (pl.video_streams, pl.audio_streams, pl.subtitle_streams)
+            }
+        };
+
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let options = crate::workflow::prepare_remux_options(
             device,
@@ -1168,9 +1184,9 @@ fn rip_selected(
                         };
                         let expected = crate::verify::VerifyExpected {
                             duration_secs: pl.seconds,
-                            video_streams: pl.video_streams,
-                            audio_streams: pl.audio_streams,
-                            subtitle_streams: pl.subtitle_streams,
+                            video_streams: expected_video,
+                            audio_streams: expected_audio,
+                            subtitle_streams: expected_subtitle,
                             chapters: chapters_added,
                         };
                         let result = crate::verify::verify_output(outfile, &expected, level);

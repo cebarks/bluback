@@ -7,7 +7,7 @@ use ffmpeg_the_third::media::Type as MediaType;
 use regex::Regex;
 
 use super::{ensure_init, MediaError};
-use crate::types::{AudioStream, MediaInfo, Playlist, StreamInfo};
+use crate::types::{MediaInfo, Playlist, StreamInfo};
 
 use crate::util::duration_to_seconds;
 
@@ -396,62 +396,6 @@ fn parse_playlist_log_line(re: &Regex, line: &str) -> Option<Playlist> {
     })
 }
 
-/// Probe stream information for a specific playlist on a Blu-ray device.
-///
-/// Opens the device with the given playlist number and iterates streams to build
-/// `AudioStream` entries and count subtitle streams.
-#[allow(dead_code)] // Public API — used when media module is consumed directly
-#[allow(deprecated)] // Uses StreamInfo.subtitle_count — will be removed in later task
-pub fn probe_streams(device: &str, playlist_num: &str) -> Result<StreamInfo, MediaError> {
-    let ctx = open_bluray(device, Some(playlist_num))?;
-
-    let mut audio_streams = Vec::new();
-    let mut subtitle_count = 0u32;
-
-    for stream in ctx.streams() {
-        let params = stream.parameters();
-        match params.medium() {
-            MediaType::Audio => {
-                let codec_id = params.id();
-                let codec_name = codec_id.name().to_string();
-
-                // Channel layout and count
-                let ch_layout = params.ch_layout();
-                let channels = ch_layout.channels() as u16;
-                let layout_desc = ch_layout.description();
-                let channel_layout = format_channel_layout(channels, &layout_desc);
-
-                // Language from stream metadata
-                let language = stream.metadata().get("language").map(|s| s.to_string());
-
-                // Profile
-                let profile_raw = params.profile();
-                let profile = format_codec_profile(Profile::from((codec_id, profile_raw)));
-
-                audio_streams.push(AudioStream {
-                    index: stream.index(),
-                    codec: codec_name,
-                    channels,
-                    channel_layout,
-                    language,
-                    profile,
-                });
-            }
-            MediaType::Subtitle => {
-                subtitle_count += 1;
-            }
-            _ => {}
-        }
-    }
-
-    Ok(StreamInfo {
-        video_streams: Vec::new(),
-        audio_streams,
-        subtitle_streams: Vec::new(),
-        subtitle_count,
-    })
-}
-
 /// Probe full media info for a specific playlist on a Blu-ray device.
 ///
 /// Extracts video codec, resolution, HDR status, frame rate, bit depth, profile,
@@ -689,7 +633,6 @@ pub fn probe_playlist(
         video_streams,
         audio_streams,
         subtitle_streams,
-        ..Default::default()
     };
 
     Ok((media_info, stream_info))
@@ -866,7 +809,6 @@ fn format_video_profile(profile: Profile) -> String {
 }
 
 /// Format a codec Profile enum for audio codec display.
-#[allow(dead_code)] // Called by probe_streams which is dead_code-allowed public API
 fn format_codec_profile(profile: Profile) -> Option<String> {
     match profile {
         Profile::Unknown | Profile::Reserved => None,

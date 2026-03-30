@@ -123,10 +123,6 @@ pub struct StreamInfo {
     pub video_streams: Vec<VideoStream>,
     pub audio_streams: Vec<AudioStream>,
     pub subtitle_streams: Vec<SubtitleStream>,
-    #[deprecated(
-        note = "Use subtitle_streams.len() instead — will be removed after probe/remux migration"
-    )]
-    pub subtitle_count: u32,
 }
 
 #[derive(Debug, Clone)]

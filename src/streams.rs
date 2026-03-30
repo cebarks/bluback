@@ -274,6 +274,30 @@ pub fn validate_track_selection(selected: &[usize], info: &StreamInfo) -> Vec<St
     errors
 }
 
+/// Count how many video, audio, and subtitle streams are in a selection.
+///
+/// Used by verify to compute expected stream counts when manual stream
+/// selection means the output has fewer streams than the source.
+/// Returns (video, audio, subtitle) counts.
+pub fn count_selected_streams(selected: &[usize], info: &StreamInfo) -> (u32, u32, u32) {
+    let video = info
+        .video_streams
+        .iter()
+        .filter(|s| selected.contains(&s.index))
+        .count() as u32;
+    let audio = info
+        .audio_streams
+        .iter()
+        .filter(|s| selected.contains(&s.index))
+        .count() as u32;
+    let subtitle = info
+        .subtitle_streams
+        .iter()
+        .filter(|s| selected.contains(&s.index))
+        .count() as u32;
+    (video, audio, subtitle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,7 +380,6 @@ mod tests {
                     forced: false,
                 },
             ],
-            ..Default::default()
         }
     }
 
@@ -559,7 +582,6 @@ mod tests {
                 profile: None,
             }],
             subtitle_streams: vec![],
-            ..Default::default()
         };
         let filter = StreamFilter::default();
         let selected = filter.apply(&info);
@@ -610,7 +632,6 @@ mod tests {
                 },
             ],
             subtitle_streams: vec![],
-            ..Default::default()
         };
         let filter = StreamFilter {
             prefer_surround: true,
@@ -652,7 +673,6 @@ mod tests {
                 },
             ],
             subtitle_streams: vec![],
-            ..Default::default()
         };
         let filter = StreamFilter {
             audio_languages: vec!["jpn".into()],
@@ -734,7 +754,6 @@ mod tests {
                 profile: None,
             }],
             subtitle_streams: vec![],
-            ..Default::default()
         };
         let errors = validate_track_selection(&[0], &info);
         assert!(errors.is_empty());
@@ -754,7 +773,6 @@ mod tests {
             }],
             audio_streams: vec![],
             subtitle_streams: vec![],
-            ..Default::default()
         };
         let errors = validate_track_selection(&[0], &info);
         assert!(errors.is_empty());
@@ -767,5 +785,37 @@ mod tests {
         let errors = validate_track_selection(&[6, 7], &info); // only subtitles
         assert!(errors.contains(&"no video streams selected".to_string()));
         assert!(errors.contains(&"no audio streams selected".to_string()));
+    }
+
+    // --- count_selected_streams() ---
+
+    #[test]
+    fn test_count_selected_streams_all() {
+        let info = make_stream_info();
+        // All streams: 1 video(0), 5 audio(1-5), 4 subtitle(6-9)
+        let all: Vec<usize> = (0..10).collect();
+        let (v, a, s) = count_selected_streams(&all, &info);
+        assert_eq!(v, 1);
+        assert_eq!(a, 5);
+        assert_eq!(s, 4);
+    }
+
+    #[test]
+    fn test_count_selected_streams_subset() {
+        let info = make_stream_info();
+        // Only video + first audio + first subtitle
+        let (v, a, s) = count_selected_streams(&[0, 1, 6], &info);
+        assert_eq!(v, 1);
+        assert_eq!(a, 1);
+        assert_eq!(s, 1);
+    }
+
+    #[test]
+    fn test_count_selected_streams_empty() {
+        let info = make_stream_info();
+        let (v, a, s) = count_selected_streams(&[], &info);
+        assert_eq!(v, 0);
+        assert_eq!(a, 0);
+        assert_eq!(s, 0);
     }
 }

@@ -1415,7 +1415,6 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    #[allow(deprecated)] // StreamInfo.subtitle_count is deprecated but required for construction
     fn make_test_stream_info() -> StreamInfo {
         StreamInfo {
             video_streams: vec![VideoStream {
@@ -1450,7 +1449,6 @@ mod tests {
                 language: Some("eng".into()),
                 forced: false,
             }],
-            subtitle_count: 0,
         }
     }
 
