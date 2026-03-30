@@ -1069,6 +1069,10 @@ fn rip_selected(
                 .map(|(_, si)| si.clone())
                 .unwrap_or_default();
             let indices = stream_filter.apply(&stream_info);
+            let errors = crate::streams::validate_track_selection(&indices, &stream_info);
+            if !errors.is_empty() {
+                eprintln!("Warning: Playlist {}: {}", pl.num, errors.join(", "));
+            }
             crate::media::StreamSelection::Manual(indices)
         } else {
             crate::media::StreamSelection::All

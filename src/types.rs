@@ -474,8 +474,6 @@ pub struct ConfirmView {
     pub output_dir: String,
     pub dry_run: bool,
     pub media_infos: HashMap<String, MediaInfo>,
-    #[allow(dead_code)] // Part of stream-tracking API; consumed by Task 9
-    pub track_summaries: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
