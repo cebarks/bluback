@@ -35,6 +35,7 @@ pub struct Coordinator {
     config: Config,
     config_path: PathBuf,
     args: Args,
+    stream_filter: crate::streams::StreamFilter,
     quit: bool,
     overlay: Option<Overlay>,
     drive_event_rx: mpsc::Receiver<DriveEvent>,
@@ -43,7 +44,12 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
-    pub fn new(args: Args, config: Config, config_path: PathBuf) -> Self {
+    pub fn new(
+        args: Args,
+        config: Config,
+        config_path: PathBuf,
+        stream_filter: crate::streams::StreamFilter,
+    ) -> Self {
         let (drive_tx, drive_rx) = mpsc::channel();
         DriveMonitor::spawn(Duration::from_secs(2), drive_tx);
 
@@ -53,6 +59,7 @@ impl Coordinator {
             config,
             config_path,
             args,
+            stream_filter,
             quit: false,
             overlay: None,
             drive_event_rx: drive_rx,
@@ -69,7 +76,13 @@ impl Coordinator {
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (msg_tx, msg_rx) = mpsc::channel();
 
-        let mut session = DriveSession::new(device.clone(), self.config.clone(), cmd_rx, msg_tx);
+        let mut session = DriveSession::new(
+            device.clone(),
+            self.config.clone(),
+            self.stream_filter.clone(),
+            cmd_rx,
+            msg_tx,
+        );
 
         // Copy CLI args to session
         session.movie_mode_arg = self.args.movie;
@@ -836,6 +849,7 @@ mod tests {
             config,
             config_path,
             args,
+            stream_filter: crate::streams::StreamFilter::default(),
             quit: false,
             overlay: None,
             drive_event_rx: drive_rx,

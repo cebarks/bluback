@@ -160,6 +160,7 @@ pub fn run(
     args: &Args,
     config: &crate::config::Config,
     config_path: std::path::PathBuf,
+    stream_filter: &crate::streams::StreamFilter,
 ) -> Result<()> {
     enable_raw_mode()?;
     // Save terminal title, enter alternate screen
@@ -168,7 +169,7 @@ pub fn run(
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, args, config, config_path);
+    let result = run_app(&mut terminal, args, config, config_path, stream_filter);
 
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
@@ -285,7 +286,13 @@ fn run_app(
     args: &Args,
     config: &crate::config::Config,
     config_path: std::path::PathBuf,
+    stream_filter: &crate::streams::StreamFilter,
 ) -> Result<()> {
-    let mut coord = coordinator::Coordinator::new(args.clone(), config.clone(), config_path);
+    let mut coord = coordinator::Coordinator::new(
+        args.clone(),
+        config.clone(),
+        config_path,
+        stream_filter.clone(),
+    );
     coord.run(terminal)
 }
