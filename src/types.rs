@@ -757,6 +757,38 @@ impl SettingsState {
                 value: config.metadata_enabled(),
             },
             SettingItem::Separator {
+                label: Some("Streams".into()),
+            },
+            SettingItem::Text {
+                label: "Audio Languages".into(),
+                key: "audio_languages".into(),
+                value: config
+                    .streams
+                    .as_ref()
+                    .and_then(|s| s.audio_languages.as_ref())
+                    .map(|v| v.join(","))
+                    .unwrap_or_default(),
+            },
+            SettingItem::Text {
+                label: "Subtitle Languages".into(),
+                key: "subtitle_languages".into(),
+                value: config
+                    .streams
+                    .as_ref()
+                    .and_then(|s| s.subtitle_languages.as_ref())
+                    .map(|v| v.join(","))
+                    .unwrap_or_default(),
+            },
+            SettingItem::Toggle {
+                label: "Prefer Surround".into(),
+                key: "prefer_surround".into(),
+                value: config
+                    .streams
+                    .as_ref()
+                    .and_then(|s| s.prefer_surround)
+                    .unwrap_or(false),
+            },
+            SettingItem::Separator {
                 label: Some("Hooks".into()),
             },
             SettingItem::Text {
@@ -879,6 +911,9 @@ impl SettingsState {
             ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("BLUBACK_METADATA", "metadata.enabled"),
+            ("BLUBACK_AUDIO_LANGUAGES", "audio_languages"),
+            ("BLUBACK_SUBTITLE_LANGUAGES", "subtitle_languages"),
+            ("BLUBACK_PREFER_SURROUND", "prefer_surround"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -986,6 +1021,9 @@ impl SettingsState {
             ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
             ("BLUBACK_METADATA", "metadata.enabled"),
+            ("BLUBACK_AUDIO_LANGUAGES", "audio_languages"),
+            ("BLUBACK_SUBTITLE_LANGUAGES", "subtitle_languages"),
+            ("BLUBACK_PREFER_SURROUND", "prefer_surround"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -1030,6 +1068,28 @@ impl SettingsState {
                         let hook = config.post_session.get_or_insert_with(Default::default);
                         hook.command = Some(value.clone());
                     }
+                    "audio_languages" if !value.is_empty() => {
+                        let langs: Vec<String> = value
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        if !langs.is_empty() {
+                            let streams = config.streams.get_or_insert_with(Default::default);
+                            streams.audio_languages = Some(langs);
+                        }
+                    }
+                    "subtitle_languages" if !value.is_empty() => {
+                        let langs: Vec<String> = value
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        if !langs.is_empty() {
+                            let streams = config.streams.get_or_insert_with(Default::default);
+                            streams.subtitle_languages = Some(langs);
+                        }
+                    }
                     _ => {}
                 },
                 SettingItem::Toggle { key, value, .. } => match key.as_str() {
@@ -1067,6 +1127,10 @@ impl SettingsState {
                     "post_session.log_output" if !*value => {
                         let hook = config.post_session.get_or_insert_with(Default::default);
                         hook.log_output = Some(false);
+                    }
+                    "prefer_surround" if *value => {
+                        let streams = config.streams.get_or_insert_with(Default::default);
+                        streams.prefer_surround = Some(true);
                     }
                     _ => {}
                 },
@@ -1281,13 +1345,14 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 6 separators + 28 settings + 1 action = 35 items
+        // 7 separators + 31 settings + 1 action = 39 items
+        // (28 base + 1 verify + 2 verify settings from upstream + 3 streams from this branch)
         let non_separator_count = state
             .items
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 29); // 28 settings + 1 action
+        assert_eq!(non_separator_count, 32); // 31 settings + 1 action
     }
 
     #[test]
