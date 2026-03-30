@@ -51,6 +51,11 @@ pub struct DriveSession {
     pub verify: bool,
     pub verify_level: crate::verify::VerifyLevel,
     pub stream_filter: crate::streams::StreamFilter,
+
+    /// Whether batch mode is active (auto-restart on new disc detection).
+    pub batch: bool,
+    /// Number of discs processed in this session (0 until first scan completes).
+    pub batch_disc_count: u32,
 }
 
 impl DriveSession {
@@ -100,6 +105,9 @@ impl DriveSession {
             verify: false,
             verify_level: crate::verify::VerifyLevel::Quick,
             stream_filter,
+
+            batch: false,
+            batch_disc_count: 0,
         }
     }
 
@@ -392,6 +400,7 @@ impl DriveSession {
             confirm_rescan: self.rip.confirm_rescan,
             label: self.disc.label.clone(),
             verify_failed_idx: self.rip.verify_failed_idx,
+            batch_disc_count: self.batch_disc_count,
         })
     }
 
@@ -406,6 +415,7 @@ impl DriveSession {
             eject: self.eject,
             status_message: self.status_message.clone(),
             filenames: self.wizard.filenames.clone(),
+            batch_disc_count: self.batch_disc_count,
         })
     }
 
@@ -442,6 +452,7 @@ impl DriveSession {
                 Ok(SessionCommand::ConfigChanged(config)) => {
                     self.config = *config;
                     self.eject = self.config.should_eject(self.cli_eject);
+                    self.batch = self.config.batch();
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
@@ -630,6 +641,17 @@ impl DriveSession {
             }
             BackgroundResult::DiscFound(ref device) => {
                 if self.screen == Screen::Done {
+                    if self.batch {
+                        // Batch mode: auto-restart without popup
+                        self.batch_disc_count += 1;
+                        self.disc_detected_label = None;
+                        self.reset_for_rescan();
+                        self.tmdb_api_key = crate::tmdb::get_api_key(&self.config);
+                        self.start_disc_scan();
+                        log::info!("=== Batch disc {} ===", self.batch_disc_count);
+                        return true;
+                    }
+                    // Non-batch: show popup, wait for Enter
                     let label = crate::disc::get_volume_label(device);
                     self.disc_detected_label = Some(if label.is_empty() {
                         device.clone()
@@ -718,6 +740,11 @@ impl DriveSession {
                     Err(_) => {
                         self.disc.chapter_counts.clear();
                     }
+                }
+
+                // Count first disc in batch mode
+                if self.batch && self.batch_disc_count == 0 {
+                    self.batch_disc_count = 1;
                 }
 
                 self.status_message.clear();
@@ -1163,6 +1190,24 @@ mod tests {
         assert!(session.disc_detected_label.is_none());
         // tmdb_api_key at session level is preserved
         // (it's not part of TmdbState reset)
+
+        // batch fields survive reset
+        assert!(!session.batch);
+        assert_eq!(session.batch_disc_count, 0);
+    }
+
+    #[test]
+    fn test_batch_fields_survive_reset() {
+        let mut session = make_test_session();
+        session.batch = true;
+        session.batch_disc_count = 3;
+        session.disc.label = "DISC_4".into();
+        session.screen = Screen::PlaylistManager;
+
+        session.reset_for_rescan();
+
+        assert!(session.batch);
+        assert_eq!(session.batch_disc_count, 3);
     }
 
     #[test]

@@ -133,10 +133,19 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
             done_count, total, stats_text
         )
     };
-    let block_title = if view.label.is_empty() {
+    let block_title = if view.batch_disc_count > 0 {
+        if view.label.is_empty() {
+            format!("bluback \u{2014} Disc {} | Batch", view.batch_disc_count)
+        } else {
+            format!(
+                "bluback \u{2014} {} \u{2014} Disc {} | Batch",
+                view.label, view.batch_disc_count
+            )
+        }
+    } else if view.label.is_empty() {
         "bluback".to_string()
     } else {
-        format!("bluback — {}", view.label)
+        format!("bluback \u{2014} {}", view.label)
     };
     let title =
         Paragraph::new(title_text).block(Block::default().borders(Borders::ALL).title(block_title));
@@ -364,8 +373,25 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
         format!("All done! Backed up {} playlist(s)", completed.len())
     };
 
-    let title =
-        Paragraph::new(summary).block(Block::default().borders(Borders::ALL).title("bluback"));
+    let done_block_title = if view.batch_disc_count > 0 {
+        if view.label.is_empty() {
+            format!("bluback \u{2014} Disc {} | Batch", view.batch_disc_count)
+        } else {
+            format!(
+                "bluback \u{2014} {} \u{2014} Disc {} | Batch",
+                view.label, view.batch_disc_count
+            )
+        }
+    } else if view.label.is_empty() {
+        "bluback".to_string()
+    } else {
+        format!("bluback \u{2014} {}", view.label)
+    };
+    let title = Paragraph::new(summary).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(done_block_title),
+    );
     f.render_widget(title, chunks[0]);
 
     let mut lines: Vec<Line> = Vec::new();
@@ -608,6 +634,16 @@ fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
             vars.insert("failed", failed.to_string());
             vars.insert("skipped", skipped.to_string());
             crate::hooks::run_post_session(&session.config, &vars, session.no_hooks);
+        }
+
+        // Auto-eject in batch mode
+        if session.batch {
+            let device = session.device.to_string_lossy();
+            log::info!("Batch mode: ejecting disc {}", device);
+            if let Err(e) = crate::disc::eject_disc(&device) {
+                log::warn!("Failed to eject disc: {}", e);
+                session.status_message = format!("Eject failed: {}", e);
+            }
         }
 
         // Start scanning for next disc
@@ -1073,6 +1109,7 @@ mod tests {
             confirm_rescan: false,
             label: String::new(),
             verify_failed_idx: None,
+            batch_disc_count: 0,
         }
     }
 
@@ -1084,6 +1121,7 @@ mod tests {
             eject: false,
             status_message: String::new(),
             filenames: vec![],
+            batch_disc_count: 0,
         }
     }
 
@@ -1481,6 +1519,7 @@ mod tests {
             eject: false,
             status_message: "AACS: decryption failed for this disc".into(),
             filenames: vec![],
+            batch_disc_count: 0,
         };
         let text = render_done(&view);
         assert!(text.contains("AACS"), "should show error in body: {}", text);
@@ -1500,6 +1539,7 @@ mod tests {
             eject: false,
             status_message: String::new(),
             filenames: vec!["S01E01_Pilot.mkv".into(), "S01E02_Second.mkv".into()],
+            batch_disc_count: 0,
         };
         let text = render_done(&view);
         assert!(
