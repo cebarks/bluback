@@ -124,18 +124,33 @@ bluback --config ~/my-config.toml
 | `--eject` | Eject disc after successful rip |
 | `--no-eject` | Don't eject disc after rip (overrides config) |
 | `--no-max-speed` | Don't set drive to maximum read speed |
-| `--settings` | Open settings panel (no disc/ffmpeg required) |
-| `--config <PATH>` | Path to config file (also: `BLUBACK_CONFIG` env var) |
+| `-y, --yes` | Accept all defaults without prompting (auto if stdin not a TTY) |
+| `--title <STRING>` | Set show/movie title directly (skips TMDb) |
+| `--year <STRING>` | Movie release year (with `--title` in `--movie` mode) |
+| `--playlists <SEL>` | Select specific playlists (e.g. `1,2,3` or `1-3` or `all`) |
+| `--specials <SEL>` | Mark playlists as specials (uses filtered indices, e.g. `1,3`) |
+| `--list-playlists` | Print playlist info and exit |
+| `-v, --verbose` | Verbose output (with `--list-playlists`: show stream details) |
+| `--overwrite` | Overwrite existing output files instead of skipping |
+| `--no-metadata` | Don't embed metadata tags in output MKV files |
+| `--no-hooks` | Disable post-rip/post-session hooks for this run |
 | `--audio-lang <LANGS>` | Filter audio by language, comma-separated (e.g. `eng,jpn`) |
 | `--subtitle-lang <LANGS>` | Filter subtitles by language (e.g. `eng`) |
 | `--tracks <SPEC>` | Select streams by type-local index (e.g. `a:0,2;s:0-1`) |
 | `--prefer-surround` | Prefer surround audio (select surround + one stereo) |
 | `--all-streams` | Include all streams, ignoring config filters |
+| `--aacs-backend <BACKEND>` | AACS decryption backend: `auto`, `libaacs`, or `libmmbd` |
 | `--verify` | Verify output files after ripping |
 | `--verify-level <LEVEL>` | Verification level: `quick` (header) or `full` (+ frame decode) |
 | `--no-verify` | Disable verification (overrides config) |
 | `--batch` | Batch mode: rip → eject → wait → repeat |
 | `--no-batch` | Disable batch mode (overrides config) |
+| `--check` | Validate environment setup and exit (no disc required) |
+| `--settings` | Open settings panel (no disc/ffmpeg required) |
+| `--log-level <LEVEL>` | Stderr log verbosity: `error`, `warn`, `info`, `debug`, `trace` |
+| `--no-log` | Disable log file output |
+| `--log-file <PATH>` | Custom log file path (overrides default location) |
+| `--config <PATH>` | Path to config file (also: `BLUBACK_CONFIG` env var) |
 
 ## Configuration
 
@@ -200,6 +215,13 @@ Settings can also be set via environment variables. When the settings panel open
 | `BLUBACK_SPECIAL_FORMAT` | `special_format` |
 | `BLUBACK_SHOW_FILTERED` | `show_filtered` |
 | `BLUBACK_VERBOSE_LIBBLURAY` | `verbose_libbluray` |
+| `BLUBACK_RESERVE_INDEX_SPACE` | `reserve_index_space` |
+| `BLUBACK_AACS_BACKEND` | `aacs_backend` |
+| `BLUBACK_OVERWRITE` | `overwrite` |
+| `BLUBACK_BATCH` | `batch` |
+| `BLUBACK_VERIFY` | `verify` |
+| `BLUBACK_VERIFY_LEVEL` | `verify_level` |
+| `BLUBACK_METADATA` | `metadata.enabled` |
 | `BLUBACK_AUDIO_LANGUAGES` | `streams.audio_languages` |
 | `BLUBACK_SUBTITLE_LANGUAGES` | `streams.subtitle_languages` |
 | `BLUBACK_PREFER_SURROUND` | `streams.prefer_surround` |

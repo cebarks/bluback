@@ -128,7 +128,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
 - **Settings overlay** — `App.overlay: Option<Overlay>` renders on top of the current screen. When active, all global key handlers except `Ctrl+C` are blocked; input routes to the overlay handler. `SettingsState` holds typed `SettingItem` variants (Toggle, Choice, Text, Number, Separator, Action). Choice variant has optional `custom_value` for the "Custom..." option (used by device dropdown). `Ctrl+S` in the overlay saves to `config.toml` with commented-out defaults and triggers workflow reset (rescan) unless mid-rip. Toggle/Choice changes apply to the session immediately without saving.
 - **Config path resolution** — Priority: `--config` CLI flag → `BLUBACK_CONFIG` env var → `~/.config/bluback/config.toml`. The resolved path is stored as `config_path: PathBuf` on `App`.
-- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `BLUBACK_AACS_BACKEND`, `BLUBACK_OVERWRITE`, `BLUBACK_METADATA`, `BLUBACK_BATCH`, `TMDB_API_KEY`.
+- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `BLUBACK_AACS_BACKEND`, `BLUBACK_OVERWRITE`, `BLUBACK_BATCH`, `BLUBACK_VERIFY`, `BLUBACK_VERIFY_LEVEL`, `BLUBACK_METADATA`, `BLUBACK_AUDIO_LANGUAGES`, `BLUBACK_SUBTITLE_LANGUAGES`, `BLUBACK_PREFER_SURROUND`, `TMDB_API_KEY`.
 - **`--settings` standalone mode** — Opens settings panel without disc detection or dependency checks. Dirty close prompts to save. Exits after panel close.
 - **Signal handling** — `ctrlc` crate registers handler for SIGINT/SIGTERM. First signal sets global `AtomicBool` cancel flag (propagated to remux cancel). Second signal within 2 seconds force-exits with code 130. Partial MKV files are deleted on cancel or error in both CLI and TUI modes.
 - **MountGuard** — RAII struct in `disc.rs` with both explicit `cleanup()` and `Drop` impl for disc unmount. Primary cleanup is explicit (called before `std::process::exit()`); `Drop` is a safety net for panics.
@@ -145,19 +145,35 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 
 Unit tests live in `#[cfg(test)] mod tests` blocks within each module. Integration tests in `tests/` directory. No tests require hardware or network access.
 
-**Unit tests (234):**
-- `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering
+**Unit tests (483):**
+- `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering, episode counting for batch auto-advance
 - `disc.rs` — volume label parsing, playlist filtering
 - `media/probe.rs` — HDR classification, channel layout formatting, framerate/aspect ratio formatting, playlist log line parsing, GCD, DTS profile formatting
 - `media/remux.rs` — stream selection logic (all, prefer_surround, manual), map arg building, progress line parsing, size/ETA estimation, chapter OGM formatting
-- `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output, validation (unknown keys, numeric bounds, template braces), aacs_backend parsing, overwrite option
-- `types.rs` — MediaInfo field mapping, ChapterMark struct, SettingsState construction/roundtrip, cursor navigation, env var overrides
+- `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output, validation (unknown keys, numeric bounds, template braces), aacs_backend parsing, overwrite/batch option, should_batch resolution
+- `types.rs` — MediaInfo field mapping, ChapterMark struct, SettingsState construction/roundtrip, cursor navigation, env var overrides, batch toggle
 - `tui/settings.rs` — truncate/mask helpers, input handling (toggle, choice, text edit, number validation, cursor movement, confirm close prompt)
+- `tui/dashboard.rs` — rendering modes, key hints, progress display, done screen layout
+- `tui/wizard.rs` — playlist manager rendering, key handling, focus states
+- `tui/coordinator.rs` — session lifecycle, tab management
+- `tui/tab_bar.rs` — tab rendering, active tab switching
+- `cli.rs` — stream selection integration, batch summary formatting
+- `streams.rs` — stream filtering by language, surround preference, track spec parsing
+- `hooks.rs` — template expansion, hook execution config, command building
+- `logging.rs` — session header formatting, log level parsing
+- `verify.rs` — verification level config, result classification, check logic
+- `workflow.rs` — filename building, overwrite handling, remux option setup
+- `rip.rs` — progress tracking, job status transitions
+- `session.rs` — state machine transitions, rescan preservation, batch field survival
 - `aacs.rs` — command_exists, is_libmmbd path detection
 - `chapters.rs` — chapter extraction with missing paths/playlists
+- `drive_monitor.rs` — drive detection, event classification
+- `check.rs` — environment validation
 
-**Integration tests (3):**
+**Integration tests (11):**
 - `tests/tmdb_parsing.rs` — TMDb JSON deserialization from fixture files (`tests/fixtures/tmdb/`)
+- `tests/cli_batch_conflicts.rs` — clap argument conflict validation for --batch
+- `tests/cli_flag_conflicts.rs` — clap argument conflict validation for stream flags
 
 **Test fixtures:**
 - `tests/fixtures/media/` — synthetic MKV files generated via `tests/generate_fixtures.sh`
@@ -199,6 +215,9 @@ bluback [OPTIONS]
       --prefer-surround        Prefer surround audio over stereo
       --all-streams            Include all streams, ignoring config filters
       --aacs-backend <BACKEND> AACS decryption backend: auto, libaacs, or libmmbd
+      --log-level <LEVEL>      Stderr log verbosity: error, warn, info, debug, trace [default: warn]
+      --no-log                 Disable log file output
+      --log-file <PATH>        Custom log file path (overrides default location)
       --check                  Validate environment setup and exit (no disc required)
       --settings               Open settings panel (no disc/ffmpeg required)
       --batch                  Batch mode: rip → eject → wait → repeat
