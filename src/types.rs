@@ -1815,4 +1815,66 @@ mod tests {
         assert_eq!(pl.audio_streams, 0);
         assert_eq!(pl.subtitle_streams, 0);
     }
+
+    // --- Settings roundtrip tests for stream fields ---
+
+    #[test]
+    fn test_settings_streams_roundtrip() {
+        let config = crate::config::Config {
+            streams: Some(crate::config::StreamsConfig {
+                audio_languages: Some(vec!["eng".into(), "jpn".into()]),
+                subtitle_languages: Some(vec!["eng".into()]),
+                prefer_surround: Some(true),
+            }),
+            ..Default::default()
+        };
+        let state = SettingsState::from_config(&config);
+
+        let audio_lang = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Text { key, .. } if key == "audio_languages"));
+        assert!(
+            matches!(audio_lang, Some(SettingItem::Text { value, .. }) if value == "eng,jpn"),
+            "audio_languages should be 'eng,jpn'"
+        );
+
+        let sub_lang = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Text { key, .. } if key == "subtitle_languages"));
+        assert!(
+            matches!(sub_lang, Some(SettingItem::Text { value, .. }) if value == "eng"),
+            "subtitle_languages should be 'eng'"
+        );
+
+        let surround = state
+            .items
+            .iter()
+            .find(|i| matches!(i, SettingItem::Toggle { key, .. } if key == "prefer_surround"));
+        assert!(
+            matches!(surround, Some(SettingItem::Toggle { value: true, .. })),
+            "prefer_surround should be true"
+        );
+
+        let restored = state.to_config();
+        let streams = restored.streams.unwrap();
+        assert_eq!(
+            streams.audio_languages,
+            Some(vec!["eng".into(), "jpn".into()])
+        );
+        assert_eq!(streams.subtitle_languages, Some(vec!["eng".into()]));
+        assert_eq!(streams.prefer_surround, Some(true));
+    }
+
+    #[test]
+    fn test_settings_streams_empty_roundtrip() {
+        let config = crate::config::Config::default();
+        let state = SettingsState::from_config(&config);
+        let restored = state.to_config();
+        assert!(
+            restored.streams.is_none(),
+            "empty streams config should not create [streams] section"
+        );
+    }
 }
