@@ -93,6 +93,7 @@ Before every commit, you MUST run:
 11. `aacs.rs` — AACS backend preflight (library detection via ldconfig, makemkvcon availability, LIBAACS_PATH env var setup, zombie process reaping)
 12. `hooks.rs` — post-rip/post-session hook execution: template expansion, `sh -c` execution, blocking/non-blocking modes, output logging
 13. `verify.rs` — post-remux output validation: probe MKV headers (duration, stream counts, chapters), optional frame decode at seek points
+14. `streams.rs` — stream filtering (`StreamFilter::apply()`) and CLI track spec parsing (`parse_track_spec()`)
 
 ### Two UI Modes
 
@@ -118,7 +119,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Blocking I/O** — no async runtime. Remux progress via callback + mpsc channel.
 - **Chapter preservation** — During remux, bluback mounts the disc via `udisksctl`, reads MPLS playlist files from `BDMV/PLAYLIST/` to extract chapter marks, and injects them as AVChapter entries in the output MKV. The disc is unmounted afterward if bluback mounted it. Chapter counts are displayed on the playlist selection screen in TUI mode.
 - **MKV metadata embedding** — Auto-generated tags (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, REMUXED_WITH) are embedded during remux via `octx.set_metadata()`. Uses `REMUXED_WITH` instead of `ENCODER` because FFmpeg's Matroska muxer overwrites `ENCODER` with its own version string. Configurable via `[metadata]` config section (`enabled` bool, `tags` table for custom key-value pairs). Disabled per-run with `--no-metadata`. Custom tags override auto-generated ones on conflict. Empty values are never written. Per-stream titles (e.g. track names) are a future enhancement alongside per-stream track selection.
-- **Stream selection** — Configurable via `stream_selection` in config: `all` (default, maps every stream) or `prefer_surround` (prefers 5.1/7.1, includes stereo as secondary). All subtitle streams always included.
+- **Per-stream track selection** — Two-layer filtering: `[streams]` config section provides language/format defaults (`audio_languages`, `subtitle_languages`, `prefer_surround`), TUI inline track picker (`t` key in Playlist Manager) allows per-playlist manual overrides. Both resolve to `StreamSelection::Manual(Vec<usize>)` before remux. `StreamFilter` in `src/streams.rs` handles the filtering logic. Deprecated `stream_selection` config key auto-migrates on save.
 - **MKV index reservation** — `reserve_index_space` config option (default 500 KB) reserves void space after the MKV header for the seek index (Cues) and in-place metadata edits. Cues at the front of the file enable faster seeking over HTTP byte-range requests, and the extra void space allows tools like `mkvpropedit` to update metadata without rewriting the entire file. If the actual Cues exceed the reserved space, they fall back to EOF (standard behavior). Passed to FFmpeg via `write_header_with` dictionary option.
 - **libbluray stderr suppression** — `BD_DEBUG_MASK=0` set by default to prevent libbluray debug output from corrupting TUI. Controlled by `verbose_libbluray` config option.
 - **Episode assignment** — Default: sequential with multi-episode detection (uses median playlist duration with 1.5x threshold to detect double-episode playlists). Volume label parsing guesses the starting episode from disc number. The Playlist Manager screen allows overriding individual playlist assignments inline (`e` hotkey), including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
@@ -191,6 +192,11 @@ bluback [OPTIONS]
       --verify                 Verify output files after ripping
       --verify-level <LEVEL>   Verification level: quick or full
       --no-verify              Disable verification (overrides config)
+      --audio-lang <LANGS>     Filter audio by language (e.g. "eng,jpn")
+      --subtitle-lang <LANGS>  Filter subtitles by language (e.g. "eng")
+      --tracks <SPEC>          Select streams by type-local index (e.g. "a:0,2;s:0-1")
+      --prefer-surround        Prefer surround audio over stereo
+      --all-streams            Include all streams, ignoring config filters
       --aacs-backend <BACKEND> AACS decryption backend: auto, libaacs, or libmmbd
       --check                  Validate environment setup and exit (no disc required)
       --settings               Open settings panel (no disc/ffmpeg required)
@@ -236,6 +242,7 @@ bluback [OPTIONS]
 - `s` — Toggle special (season 0) marking (TV mode only)
 - `r` — Reset current row's assignment
 - `R` — Reset all episode assignments
+- `t` — Expand/collapse track list (shows video/audio/subtitle streams)
 - `f` — Show/hide filtered (short) playlists
 - `Enter` — Confirm and proceed
 - `Esc` — Go back

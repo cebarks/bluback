@@ -807,11 +807,45 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                             .rip
                             .chapters_added
                             .load(std::sync::atomic::Ordering::Relaxed);
+
+                        // Compute expected stream counts accounting for manual
+                        // stream selection (output may have fewer streams than source)
+                        let (exp_video, exp_audio, exp_subtitle) = if let Some(indices) =
+                            session.wizard.track_selections.get(&playlist.num)
+                        {
+                            if let Some(info) = session.wizard.stream_infos.get(&playlist.num) {
+                                crate::streams::count_selected_streams(indices, info)
+                            } else {
+                                (
+                                    playlist.video_streams,
+                                    playlist.audio_streams,
+                                    playlist.subtitle_streams,
+                                )
+                            }
+                        } else if !session.stream_filter.is_empty() {
+                            if let Some(info) = session.wizard.stream_infos.get(&playlist.num) {
+                                let indices = session.stream_filter.apply(info);
+                                crate::streams::count_selected_streams(&indices, info)
+                            } else {
+                                (
+                                    playlist.video_streams,
+                                    playlist.audio_streams,
+                                    playlist.subtitle_streams,
+                                )
+                            }
+                        } else {
+                            (
+                                playlist.video_streams,
+                                playlist.audio_streams,
+                                playlist.subtitle_streams,
+                            )
+                        };
+
                         let expected = crate::verify::VerifyExpected {
                             duration_secs: playlist.seconds,
-                            video_streams: playlist.video_streams,
-                            audio_streams: playlist.audio_streams,
-                            subtitle_streams: playlist.subtitle_streams,
+                            video_streams: exp_video,
+                            audio_streams: exp_audio,
+                            subtitle_streams: exp_subtitle,
                             chapters,
                         };
                         let result =

@@ -50,15 +50,13 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 
 ## In Progress: v0.10 — Quality of Life & Automation
 
-- [x] Log files
+- [x] Log files (structured logging with fern, rotation, session headers)
 - [x] MKV metadata embedding (TITLE, SHOW, SEASON_NUMBER, EPISODE_SORT, DATE_RELEASED, REMUXED_WITH + custom tags)
-- [ ] Pause/resume during ripping
-- [ ] Per-stream track titles (alongside per-stream track selection)
-- [ ] Post-rip hooks
-- [ ] Rip verification
-- [ ] Per-stream track selection
-- [ ] Continuous batch mode
-- [ ] Disc history / rip database
+- [x] Post-rip hooks (`[post_rip]` / `[post_session]` config, template vars, `--no-hooks`)
+- [x] Rip verification (quick header probe + full frame decode, `--verify` / `--verify-level`)
+- [x] Per-stream track selection (TUI track picker, CLI `--audio-lang`/`--subtitle-lang`/`--tracks` flags, `[streams]` config)
+- [ ] Continuous batch mode (rip → eject → wait → auto-start, `--batch`)
+- [ ] Disc history / rip database (`history.json`, `--history`, duplicate detection)
 
 ## Upcoming Milestones
 - **v0.11** — DVD Support: disc type abstraction, title enumeration, chapter extraction, CSS errors
