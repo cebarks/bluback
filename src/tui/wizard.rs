@@ -493,7 +493,7 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
                     .iter()
                     .filter(|s| selections.contains(&s.index))
                     .count();
-                format!("{}v{}a{}s", nv, na, ns)
+                format!("{}v {}a {}s*", nv, na, ns)
             } else {
                 view.chapter_counts
                     .get(&pl.num)
@@ -1226,13 +1226,15 @@ pub fn handle_playlist_manager_input_session(
                         let num = pl_num.clone();
                         let (tx, rx) = std::sync::mpsc::channel();
                         std::thread::spawn(move || {
-                            let result = crate::media::probe::probe_playlist(&device, &num).ok();
-                            let _ = tx.send(crate::types::BackgroundResult::MediaProbe(
-                                num,
-                                Box::new(result),
-                            ));
+                            let mut results = std::collections::HashMap::new();
+                            if let Ok((media, streams)) =
+                                crate::media::probe::probe_playlist(&device, &num)
+                            {
+                                results.insert(num, (media, streams));
+                            }
+                            let _ = tx.send(crate::types::BackgroundResult::BulkProbe(results));
                         });
-                        session.pending_rx = Some(rx);
+                        session.probe_rx = Some(rx);
                         session.status_message = "Probing streams...".into();
                     } else {
                         session.wizard.input_focus = InputFocus::TrackEdit(0);
@@ -1282,6 +1284,21 @@ pub fn handle_playlist_manager_input_session(
             if session.wizard.filenames.is_empty() {
                 session.status_message = "No playlists selected.".into();
             } else {
+                // Validate track selections before transitioning
+                for &idx in &selected_indices {
+                    let pl = &session.disc.playlists[idx];
+                    if let Some(selections) = session.wizard.track_selections.get(&pl.num) {
+                        if let Some(info) = session.wizard.stream_infos.get(&pl.num) {
+                            let errors = crate::streams::validate_track_selection(selections, info);
+                            if !errors.is_empty() {
+                                session.status_message =
+                                    format!("Playlist {}: {}", pl.num, errors.join(", "));
+                                return;
+                            }
+                        }
+                    }
+                }
+
                 session.wizard.list_cursor = 0;
                 session.status_message.clear();
                 session.screen = Screen::Confirm;

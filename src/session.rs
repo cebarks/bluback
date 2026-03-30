@@ -378,7 +378,6 @@ impl DriveSession {
             output_dir: self.output_dir.display().to_string(),
             dry_run: false, // DriveSession doesn't support dry_run yet
             media_infos: self.wizard.media_infos.clone(),
-            track_summaries: Vec::new(),
         })
     }
 
@@ -490,7 +489,17 @@ impl DriveSession {
             Ok(BackgroundResult::BulkProbe(results)) => {
                 for (num, (media, streams)) in results {
                     self.wizard.media_infos.insert(num.clone(), media);
-                    self.wizard.stream_infos.insert(num, streams);
+                    self.wizard.stream_infos.insert(num.clone(), streams);
+                    // If this was a lazy probe for the expanded playlist, enter track edit mode
+                    if self
+                        .wizard
+                        .expanded_playlist
+                        .and_then(|idx| self.disc.playlists.get(idx))
+                        .map(|pl| &pl.num)
+                        == Some(&num)
+                    {
+                        self.wizard.input_focus = InputFocus::TrackEdit(0);
+                    }
                 }
                 self.probe_rx = None;
                 true
