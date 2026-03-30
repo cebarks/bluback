@@ -401,6 +401,7 @@ fn parse_playlist_log_line(re: &Regex, line: &str) -> Option<Playlist> {
 /// Opens the device with the given playlist number and iterates streams to build
 /// `AudioStream` entries and count subtitle streams.
 #[allow(dead_code)] // Public API — used when media module is consumed directly
+#[allow(deprecated)] // Uses StreamInfo.subtitle_count — will be removed in later task
 pub fn probe_streams(device: &str, playlist_num: &str) -> Result<StreamInfo, MediaError> {
     let ctx = open_bluray(device, Some(playlist_num))?;
 
@@ -444,7 +445,9 @@ pub fn probe_streams(device: &str, playlist_num: &str) -> Result<StreamInfo, Med
     }
 
     Ok(StreamInfo {
+        video_streams: Vec::new(),
         audio_streams,
+        subtitle_streams: Vec::new(),
         subtitle_count,
     })
 }
