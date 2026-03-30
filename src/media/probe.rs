@@ -456,6 +456,7 @@ pub fn probe_streams(device: &str, playlist_num: &str) -> Result<StreamInfo, Med
 ///
 /// Extracts video codec, resolution, HDR status, frame rate, bit depth, profile,
 /// and first audio stream info.
+#[allow(dead_code)] // Public API — used when media module is consumed directly
 pub fn probe_media_info(device: &str, playlist_num: &str) -> Result<MediaInfo, MediaError> {
     let ctx = open_bluray(device, Some(playlist_num))?;
 

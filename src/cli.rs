@@ -38,9 +38,23 @@ fn format_video_column(info: &crate::types::MediaInfo) -> String {
 fn format_audio_column(streams: &[crate::types::AudioStream]) -> String {
     streams
         .iter()
-        .map(|s| {
+        .enumerate()
+        .map(|(i, s)| {
             let codec = s.profile.as_deref().unwrap_or(&s.codec);
-            format!("{} {}", codec, s.channel_layout)
+            format!("a{}:{} {}", i, codec, s.channel_layout)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_subtitle_column(streams: &[crate::types::SubtitleStream]) -> String {
+    streams
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let lang = s.language.as_deref().unwrap_or("und");
+            let forced = if s.forced { " FORCED" } else { "" };
+            format!("s{}:{}{}", i, lang, forced)
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -128,14 +142,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
             println!("Probing streams...");
             playlists
                 .iter()
-                .map(|pl| {
-                    let media = crate::media::probe::probe_media_info(&device, &pl.num).ok();
-                    let streams = crate::media::probe::probe_streams(&device, &pl.num).ok();
-                    match (media, streams) {
-                        (Some(m), Some(s)) => Some((m, s)),
-                        _ => None,
-                    }
-                })
+                .map(|pl| crate::media::probe::probe_playlist(&device, &pl.num).ok())
                 .collect()
         } else {
             vec![None; playlists.len()]
@@ -143,11 +150,11 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
 
     if args.verbose {
         println!(
-            "  {:<4}  {:<10}  {:<10}{}  {:<18}  Audio  Sel",
+            "  {:<4}  {:<10}  {:<10}{}  {:<18}  Audio  Subtitles  Sel",
             "#", "Playlist", "Duration", header_ch, "Video"
         );
         println!(
-            "  {:<4}  {:<10}  {:<10}{}  {:<18}  -----  ---",
+            "  {:<4}  {:<10}  {:<10}{}  {:<18}  -----  ---------  ---",
             "---",
             "--------",
             "--------",
@@ -188,23 +195,26 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         };
 
         if args.verbose {
-            let (video_str, audio_str) = if let Some((ref media, ref streams)) = verbose_info[i] {
-                (
-                    format_video_column(media),
-                    format_audio_column(&streams.audio_streams),
-                )
-            } else {
-                ("".to_string(), "".to_string())
-            };
+            let (video_str, audio_str, sub_str) =
+                if let Some((ref media, ref streams)) = verbose_info[i] {
+                    (
+                        format_video_column(media),
+                        format_audio_column(&streams.audio_streams),
+                        format_subtitle_column(&streams.subtitle_streams),
+                    )
+                } else {
+                    ("".to_string(), "".to_string(), "".to_string())
+                };
 
             println!(
-                "  {:<4}  {:<10}  {:<10}{}  {:<18}  {}{}",
+                "  {:<4}  {:<10}  {:<10}{}  {:<18}  {}  {}{}",
                 i + 1,
                 pl.num,
                 pl.duration,
                 ch_str,
                 video_str,
                 audio_str,
+                sub_str,
                 sel_str,
             );
         } else {
@@ -232,7 +242,13 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     Ok(())
 }
 
-pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyhow::Result<()> {
+pub fn run(
+    args: &Args,
+    config: &crate::config::Config,
+    headless: bool,
+    stream_filter: &crate::streams::StreamFilter,
+    tracks_spec: Option<&str>,
+) -> anyhow::Result<()> {
     let device = args.device().to_string_lossy();
 
     let (label, label_info, episodes_pl, movie_mode) = scan_disc(args, config)?;
@@ -354,6 +370,8 @@ pub fn run(args: &Args, config: &crate::config::Config, headless: bool) -> anyho
         args.no_hooks,
         &label,
         &tmdb_ctx,
+        stream_filter,
+        tracks_spec,
     )
 }
 
@@ -933,6 +951,8 @@ fn rip_selected(
     no_hooks: bool,
     label: &str,
     tmdb_ctx: &TmdbContext,
+    stream_filter: &crate::streams::StreamFilter,
+    tracks_spec: Option<&str>,
 ) -> anyhow::Result<()> {
     if args.dry_run {
         println!("\n[DRY RUN] Would rip:");
@@ -970,7 +990,20 @@ fn rip_selected(
         }
     }
 
-    let stream_selection = config.resolve_stream_selection();
+    // Probe all selected playlists upfront for per-playlist stream resolution
+    let probe_cache: HashMap<String, (crate::types::MediaInfo, crate::types::StreamInfo)> = {
+        let mut cache = HashMap::new();
+        if tracks_spec.is_some() || !stream_filter.is_empty() {
+            for &idx in selected {
+                let pl = &episodes_pl[idx];
+                if let Ok(result) = crate::media::probe::probe_playlist(device, &pl.num) {
+                    cache.insert(pl.num.clone(), result);
+                }
+            }
+        }
+        cache
+    };
+
     let mut success_count = 0u32;
     let mut fail_count = 0u32;
     let mut skip_count = 0u32;
@@ -1012,13 +1045,42 @@ fn rip_selected(
             pl.num, pl.duration, filename
         );
 
+        // Resolve stream selection per-playlist
+        let stream_selection = if let Some(tracks) = tracks_spec {
+            let stream_info = probe_cache
+                .get(&pl.num)
+                .map(|(_, si)| si.clone())
+                .unwrap_or_default();
+            match crate::streams::parse_track_spec(tracks, &stream_info) {
+                Ok(indices) => {
+                    let errors = crate::streams::validate_track_selection(&indices, &stream_info);
+                    if !errors.is_empty() {
+                        eprintln!("Warning: Playlist {}: {}", pl.num, errors.join(", "));
+                    }
+                    crate::media::StreamSelection::Manual(indices)
+                }
+                Err(e) => {
+                    anyhow::bail!("Invalid --tracks spec: {}", e);
+                }
+            }
+        } else if !stream_filter.is_empty() {
+            let stream_info = probe_cache
+                .get(&pl.num)
+                .map(|(_, si)| si.clone())
+                .unwrap_or_default();
+            let indices = stream_filter.apply(&stream_info);
+            crate::media::StreamSelection::Manual(indices)
+        } else {
+            crate::media::StreamSelection::All
+        };
+
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let options = crate::workflow::prepare_remux_options(
             device,
             pl,
             outfile,
             mount_point.as_deref(),
-            stream_selection.clone(),
+            stream_selection,
             cancel,
             config.reserve_index_space(),
             metadata_per_playlist[i].clone(),
@@ -1674,11 +1736,38 @@ mod tests {
                 profile: None,
             },
         ];
-        assert_eq!(format_audio_column(&streams), "TrueHD 7.1, ac3 stereo");
+        assert_eq!(
+            format_audio_column(&streams),
+            "a0:TrueHD 7.1, a1:ac3 stereo"
+        );
     }
 
     #[test]
     fn test_format_audio_column_empty() {
         assert_eq!(format_audio_column(&[]), "");
+    }
+
+    #[test]
+    fn test_format_subtitle_column() {
+        let streams = vec![
+            crate::types::SubtitleStream {
+                index: 6,
+                codec: "hdmv_pgs_subtitle".into(),
+                language: Some("eng".into()),
+                forced: false,
+            },
+            crate::types::SubtitleStream {
+                index: 7,
+                codec: "hdmv_pgs_subtitle".into(),
+                language: Some("eng".into()),
+                forced: true,
+            },
+        ];
+        assert_eq!(format_subtitle_column(&streams), "s0:eng, s1:eng FORCED");
+    }
+
+    #[test]
+    fn test_format_subtitle_column_empty() {
+        assert_eq!(format_subtitle_column(&[]), "");
     }
 }

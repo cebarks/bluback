@@ -376,7 +376,7 @@ fn run_inner() -> anyhow::Result<i32> {
     }
 
     // Resolve stream filter: CLI flags > config
-    let _stream_filter = if args.all_streams {
+    let stream_filter = if args.all_streams {
         crate::streams::StreamFilter::default() // empty = all streams
     } else if args.audio_lang.is_some() || args.subtitle_lang.is_some() || args.prefer_surround {
         crate::streams::StreamFilter {
@@ -395,7 +395,7 @@ fn run_inner() -> anyhow::Result<i32> {
     } else {
         config.resolve_stream_filter()
     };
-    let _tracks_spec = args.tracks.clone();
+    let tracks_spec = args.tracks.clone();
 
     if args.list_playlists {
         cli::list_playlists(&args, &config)?;
@@ -407,7 +407,13 @@ fn run_inner() -> anyhow::Result<i32> {
     if use_tui {
         tui::run(&args, &config, config_path)?;
     } else {
-        cli::run(&args, &config, headless)?;
+        cli::run(
+            &args,
+            &config,
+            headless,
+            &stream_filter,
+            tracks_spec.as_deref(),
+        )?;
     }
 
     Ok(EXIT_SUCCESS)
