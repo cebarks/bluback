@@ -1774,4 +1774,73 @@ mod tests {
     fn test_format_subtitle_column_empty() {
         assert_eq!(format_subtitle_column(&[]), "");
     }
+
+    // --- CLI flag conflict tests for stream selection ---
+
+    #[test]
+    fn test_tracks_conflicts_with_audio_lang() {
+        use clap::Parser;
+        let result =
+            crate::Args::try_parse_from(["bluback", "--tracks", "a:0", "--audio-lang", "eng"]);
+        assert!(
+            result.is_err(),
+            "--tracks should conflict with --audio-lang"
+        );
+    }
+
+    #[test]
+    fn test_tracks_conflicts_with_all_streams() {
+        use clap::Parser;
+        let result = crate::Args::try_parse_from(["bluback", "--tracks", "a:0", "--all-streams"]);
+        assert!(
+            result.is_err(),
+            "--tracks should conflict with --all-streams"
+        );
+    }
+
+    #[test]
+    fn test_all_streams_conflicts_with_audio_lang() {
+        use clap::Parser;
+        let result =
+            crate::Args::try_parse_from(["bluback", "--all-streams", "--audio-lang", "eng"]);
+        assert!(
+            result.is_err(),
+            "--all-streams should conflict with --audio-lang"
+        );
+    }
+
+    #[test]
+    fn test_audio_lang_and_subtitle_lang_compose() {
+        use clap::Parser;
+        let result = crate::Args::try_parse_from([
+            "bluback",
+            "--audio-lang",
+            "eng,jpn",
+            "--subtitle-lang",
+            "eng",
+            "--no-tui",
+        ]);
+        assert!(
+            result.is_ok(),
+            "--audio-lang and --subtitle-lang should compose: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_prefer_surround_composes_with_lang_flags() {
+        use clap::Parser;
+        let result = crate::Args::try_parse_from([
+            "bluback",
+            "--audio-lang",
+            "eng",
+            "--prefer-surround",
+            "--no-tui",
+        ]);
+        assert!(
+            result.is_ok(),
+            "--prefer-surround should compose with --audio-lang: {:?}",
+            result.err()
+        );
+    }
 }

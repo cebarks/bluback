@@ -1389,3 +1389,336 @@ pub fn handle_confirm_input_session(session: &mut crate::session::DriveSession, 
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use std::collections::HashMap;
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        let buf = terminal.backend().buffer();
+        let mut text = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                text.push_str(buf[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    fn make_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[allow(deprecated)] // StreamInfo.subtitle_count is deprecated but required for construction
+    fn make_test_stream_info() -> StreamInfo {
+        StreamInfo {
+            video_streams: vec![VideoStream {
+                index: 0,
+                codec: "hevc".into(),
+                resolution: "1920x1080".into(),
+                hdr: "SDR".into(),
+                framerate: "23.976".into(),
+                bit_depth: "8".into(),
+            }],
+            audio_streams: vec![
+                AudioStream {
+                    index: 1,
+                    codec: "truehd".into(),
+                    channels: 8,
+                    channel_layout: "7.1".into(),
+                    language: Some("eng".into()),
+                    profile: Some("TrueHD".into()),
+                },
+                AudioStream {
+                    index: 2,
+                    codec: "ac3".into(),
+                    channels: 2,
+                    channel_layout: "stereo".into(),
+                    language: Some("eng".into()),
+                    profile: None,
+                },
+            ],
+            subtitle_streams: vec![SubtitleStream {
+                index: 3,
+                codec: "hdmv_pgs_subtitle".into(),
+                language: Some("eng".into()),
+                forced: false,
+            }],
+            subtitle_count: 0,
+        }
+    }
+
+    fn make_test_playlist_view() -> PlaylistView {
+        let mut stream_infos = HashMap::new();
+        stream_infos.insert("00001".to_string(), make_test_stream_info());
+
+        let playlist = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 1,
+            audio_streams: 2,
+            subtitle_streams: 1,
+        };
+
+        PlaylistView {
+            movie_mode: false,
+            show_name: "Test Show".into(),
+            season_num: Some(1),
+            playlists: vec![playlist.clone()],
+            episodes_pl: vec![playlist],
+            playlist_selected: vec![true],
+            episode_assignments: HashMap::new(),
+            specials: std::collections::HashSet::new(),
+            show_filtered: false,
+            list_cursor: 0,
+            input_focus: InputFocus::List,
+            input_buffer: String::new(),
+            chapter_counts: HashMap::new(),
+            episodes: vec![],
+            label: "TEST_DISC".into(),
+            filenames: HashMap::new(),
+            stream_infos,
+            track_selections: HashMap::new(),
+            expanded_playlist: None,
+        }
+    }
+
+    fn make_test_session() -> crate::session::DriveSession {
+        let config = crate::config::Config::default();
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (msg_tx, _msg_rx) = std::sync::mpsc::channel();
+        let mut session = crate::session::DriveSession::new(
+            std::path::PathBuf::from("/dev/sr0"),
+            config,
+            crate::streams::StreamFilter::default(),
+            cmd_rx,
+            msg_tx,
+        );
+        session.screen = Screen::PlaylistManager;
+        session.disc.playlists = vec![Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 1,
+            audio_streams: 2,
+            subtitle_streams: 1,
+        }];
+        session.disc.episodes_pl = session.disc.playlists.clone();
+        session.wizard.playlist_selected = vec![true];
+        session.wizard.input_focus = InputFocus::List;
+        session
+            .wizard
+            .stream_infos
+            .insert("00001".to_string(), make_test_stream_info());
+        session
+    }
+
+    // --- Rendering tests ---
+
+    #[test]
+    fn test_render_playlist_view_no_expansion() {
+        let view = make_test_playlist_view();
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_playlist_manager_view(f, &view, "", f.area());
+            })
+            .unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("00001"),
+            "should show playlist number: {}",
+            text
+        );
+        assert!(text.contains("1:00:00"), "should show duration: {}", text);
+        assert!(
+            !text.contains("VIDEO"),
+            "should not show track sections when collapsed: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_playlist_view_with_expansion() {
+        let mut view = make_test_playlist_view();
+        view.expanded_playlist = Some(0);
+        view.input_focus = InputFocus::TrackEdit(0);
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_playlist_manager_view(f, &view, "", f.area());
+            })
+            .unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("VIDEO"),
+            "should show VIDEO section: {}",
+            text
+        );
+        assert!(
+            text.contains("AUDIO"),
+            "should show AUDIO section: {}",
+            text
+        );
+        assert!(
+            text.contains("SUBTITLES"),
+            "should show SUBTITLES section: {}",
+            text
+        );
+        assert!(text.contains("[X]"), "should show checkboxes: {}", text);
+        assert!(
+            text.contains("v0"),
+            "should show type-local index v0: {}",
+            text
+        );
+        assert!(
+            text.contains("a0"),
+            "should show type-local index a0: {}",
+            text
+        );
+        assert!(
+            text.contains("s0"),
+            "should show type-local index s0: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_playlist_view_custom_track_summary() {
+        let mut view = make_test_playlist_view();
+        // Custom track selections: only video + first audio (indices 0, 1)
+        view.track_selections
+            .insert("00001".to_string(), vec![0, 1]);
+        // Ch column only renders when chapter_counts is non-empty
+        view.chapter_counts.insert("00001".to_string(), 5);
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_playlist_manager_view(f, &view, "", f.area());
+            })
+            .unwrap();
+        let text = buffer_text(&terminal);
+        // The Ch column is Length(8) so the trailing * may be truncated, but the counts render
+        assert!(
+            text.contains("1v 1a 0s"),
+            "should show custom track summary: {}",
+            text
+        );
+    }
+
+    // --- Input handling tests ---
+
+    #[test]
+    fn test_t_expands_playlist() {
+        let mut session = make_test_session();
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('t')));
+        assert_eq!(session.wizard.expanded_playlist, Some(0));
+        assert!(matches!(
+            session.wizard.input_focus,
+            InputFocus::TrackEdit(0)
+        ));
+    }
+
+    #[test]
+    fn test_t_collapses_expanded_playlist() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        session.wizard.input_focus = InputFocus::TrackEdit(0);
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('t')));
+        assert_eq!(session.wizard.expanded_playlist, None);
+        assert_eq!(session.wizard.input_focus, InputFocus::List);
+    }
+
+    #[test]
+    fn test_space_toggles_track() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        session.wizard.input_focus = InputFocus::TrackEdit(0); // cursor on video stream (index 0)
+                                                               // Space toggles — should deselect video stream
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char(' ')));
+        let selections = session.wizard.track_selections.get("00001").unwrap();
+        assert!(
+            !selections.contains(&0),
+            "video stream should be deselected"
+        );
+        assert!(
+            selections.contains(&1),
+            "first audio stream should still be selected"
+        );
+    }
+
+    #[test]
+    fn test_esc_collapses_track_edit() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        session.wizard.input_focus = InputFocus::TrackEdit(1);
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Esc));
+        assert_eq!(session.wizard.expanded_playlist, None);
+        assert_eq!(session.wizard.input_focus, InputFocus::List);
+    }
+
+    #[test]
+    fn test_f_collapses_expansion_before_toggle() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        session.wizard.input_focus = InputFocus::List;
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('f')));
+        assert_eq!(
+            session.wizard.expanded_playlist, None,
+            "f should collapse expansion"
+        );
+        assert!(
+            session.wizard.show_filtered,
+            "f should toggle show_filtered"
+        );
+    }
+
+    #[test]
+    fn test_down_navigates_tracks() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        session.wizard.input_focus = InputFocus::TrackEdit(0);
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Down));
+        assert!(matches!(
+            session.wizard.input_focus,
+            InputFocus::TrackEdit(1)
+        ));
+    }
+
+    #[test]
+    fn test_down_stops_at_last_track() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        // Total streams: 1 video + 2 audio + 1 subtitle = 4, last index = 3
+        session.wizard.input_focus = InputFocus::TrackEdit(3);
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Down));
+        assert!(matches!(
+            session.wizard.input_focus,
+            InputFocus::TrackEdit(3)
+        ));
+    }
+
+    #[test]
+    fn test_up_stops_at_first_track() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        session.wizard.input_focus = InputFocus::TrackEdit(0);
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Up));
+        assert!(matches!(
+            session.wizard.input_focus,
+            InputFocus::TrackEdit(0)
+        ));
+    }
+}
