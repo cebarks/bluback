@@ -10,6 +10,7 @@ mod logging;
 mod media;
 mod rip;
 mod session;
+mod streams;
 mod tmdb;
 mod tui;
 mod types;
