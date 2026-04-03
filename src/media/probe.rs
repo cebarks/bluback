@@ -178,6 +178,8 @@ fn scan_with_log_capture(
 
     if child_pid == 0 {
         // === CHILD PROCESS ===
+        // New process group so parent can kill makemkvcon along with us
+        unsafe { libc::setpgid(0, 0) };
         unsafe { libc::close(pipe_read) };
 
         THREAD_LOG_BUFFER.with(|buf| {
@@ -232,8 +234,9 @@ fn scan_with_log_capture(
         std::thread::sleep(poll_interval);
         let elapsed = start.elapsed().as_secs();
         if elapsed >= SCAN_TIMEOUT_SECS {
+            // Kill entire process group (child + makemkvcon)
             unsafe {
-                libc::kill(child_pid, libc::SIGKILL);
+                libc::kill(-child_pid, libc::SIGKILL);
             }
             unsafe { libc::close(pipe_read) };
             return Err(MediaError::AacsTimeout);
@@ -243,6 +246,9 @@ fn scan_with_log_capture(
         }
     };
     unsafe { libc::close(pipe_read) };
+
+    // Kill any remaining processes in the child's process group (e.g., makemkvcon)
+    unsafe { libc::kill(-child_pid, libc::SIGTERM) };
 
     let (lines_str, status, error_msg) = parse_child_output(&child_result);
 
