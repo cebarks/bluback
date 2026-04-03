@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 
@@ -7,7 +8,7 @@ use ffmpeg_the_third::media::Type as MediaType;
 use regex::Regex;
 
 use super::{ensure_init, MediaError};
-use crate::types::{MediaInfo, Playlist, StreamInfo};
+use crate::types::{MediaInfo, Playlist, ProbeCache, StreamInfo};
 
 use crate::util::duration_to_seconds;
 
@@ -47,28 +48,13 @@ fn open_bluray(
     }
 }
 
-/// Count streams by type for a single playlist.
-/// Returns (video, audio, subtitle) counts. Returns (0, 0, 0) on error.
-fn count_streams(device: &str, playlist_num: &str) -> (u32, u32, u32) {
-    let ctx = match open_bluray(device, Some(playlist_num)) {
-        Ok(ctx) => ctx,
-        Err(_) => return (0, 0, 0),
-    };
-    let mut video = 0u32;
-    let mut audio = 0u32;
-    let mut subtitle = 0u32;
-    for stream in ctx.streams() {
-        match stream.parameters().medium() {
-            MediaType::Video => video += 1,
-            MediaType::Audio => audio += 1,
-            MediaType::Subtitle => subtitle += 1,
-            _ => {}
-        }
-    }
-    (video, audio, subtitle)
-}
-
-/// Scan a Blu-ray device for available playlists.
+/// Scan a Blu-ray device for available playlists, probing full stream info
+/// for episode-length playlists (those meeting `min_duration`).
+///
+/// Returns the playlist list and a probe cache mapping playlist number to
+/// `(MediaInfo, StreamInfo)` for every playlist that was successfully probed.
+/// Playlists below `min_duration` are left with zero stream counts and are
+/// not in the cache.
 ///
 /// Because the FFmpeg API doesn't expose playlist enumeration directly, libbluray
 /// prints playlist info to stderr at AV_LOG_INFO level. We install a custom log
@@ -82,8 +68,9 @@ fn count_streams(device: &str, playlist_num: &str) -> (u32, u32, u32) {
 /// through a pipe.
 pub fn scan_playlists_with_progress(
     device: &str,
+    min_duration: u32,
     on_progress: Option<&dyn Fn(u64, u64)>,
-) -> Result<Vec<Playlist>, MediaError> {
+) -> Result<(Vec<Playlist>, ProbeCache), MediaError> {
     ensure_init();
 
     let playlist_re = Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").expect("valid regex");
@@ -102,27 +89,40 @@ pub fn scan_playlists_with_progress(
     if let Some(err_msg) = scan_error {
         if !playlists.is_empty() {
             log::info!("Scan complete: found {} playlists", playlists.len());
-            return Ok(playlists);
+            return Ok((playlists, HashMap::new()));
         }
         return Err(MediaError::AacsAuthFailed(err_msg));
     }
 
-    // Probe stream counts for each discovered playlist
+    // Probe full stream info for episode-length playlists (above min_duration).
+    // This replaces the old count_streams loop — a single probe_playlist call
+    // gets both stream counts and full MediaInfo/StreamInfo, avoiding redundant
+    // device opens downstream.
+    let mut probe_cache = HashMap::new();
     for pl in &mut playlists {
-        let (v, a, s) = count_streams(device, &pl.num);
-        pl.video_streams = v;
-        pl.audio_streams = a;
-        pl.subtitle_streams = s;
+        if pl.seconds >= min_duration {
+            match probe_playlist(device, &pl.num) {
+                Ok((media, streams)) => {
+                    pl.video_streams = streams.video_streams.len() as u32;
+                    pl.audio_streams = streams.audio_streams.len() as u32;
+                    pl.subtitle_streams = streams.subtitle_streams.len() as u32;
+                    probe_cache.insert(pl.num.clone(), (media, streams));
+                }
+                Err(e) => {
+                    log::warn!("Failed to probe playlist {}: {}", pl.num, e);
+                }
+            }
+        }
     }
 
-    // Each count_streams call opens the device via libbluray, which may spawn
+    // Each probe_playlist call opens the device via libbluray, which may spawn
     // makemkvcon when using the libmmbd backend. These child processes aren't
     // killed when the FFmpeg context is dropped, so clean them up now to
     // prevent interference with subsequent device opens (e.g., remux).
     crate::aacs::kill_makemkvcon_children();
 
     log::info!("Scan complete: found {} playlists", playlists.len());
-    Ok(playlists)
+    Ok((playlists, probe_cache))
 }
 
 /// Run the disc scan with log capture. Returns (captured_lines, optional_error_message).
@@ -412,7 +412,7 @@ fn parse_playlist_log_line(re: &Regex, line: &str) -> Option<Playlist> {
 ///
 /// Extracts video codec, resolution, HDR status, frame rate, bit depth, profile,
 /// and first audio stream info.
-#[allow(dead_code)] // Public API — used when media module is consumed directly
+#[allow(dead_code)] // Retained for potential future use (e.g., GUI frontend)
 pub fn probe_media_info(device: &str, playlist_num: &str) -> Result<MediaInfo, MediaError> {
     let ctx = open_bluray(device, Some(playlist_num))?;
 

@@ -223,6 +223,9 @@ impl MediaInfo {
 
 pub type EpisodeAssignments = HashMap<String, Vec<Episode>>;
 
+/// Cached probe results from disc scanning: playlist number -> (MediaInfo, StreamInfo).
+pub type ProbeCache = HashMap<String, (MediaInfo, StreamInfo)>;
+
 pub struct TmdbLookupResult {
     pub episodes: Vec<Episode>,
     pub season: u32,
@@ -238,8 +241,8 @@ pub enum BackgroundResult {
     DiscFound(String),
     /// Scan progress: (elapsed_secs, timeout_secs)
     ScanProgress(u64, u64),
-    /// Disc scan completed: (device, label, playlists)
-    DiscScan(anyhow::Result<(String, String, Vec<Playlist>)>),
+    /// Disc scan completed: (device, label, playlists, probe_cache)
+    DiscScan(anyhow::Result<(String, String, Vec<Playlist>, ProbeCache)>),
     /// TMDb show search completed
     ShowSearch(anyhow::Result<Vec<TmdbShow>>),
     /// TMDb movie search completed

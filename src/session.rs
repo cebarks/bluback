@@ -499,6 +499,12 @@ impl DriveSession {
         match rx.try_recv() {
             Ok(BackgroundResult::BulkProbe(results)) => {
                 for (num, (media, streams)) in results {
+                    // Update playlist stream counts
+                    if let Some(pl) = self.disc.playlists.iter_mut().find(|p| p.num == num) {
+                        pl.video_streams = streams.video_streams.len() as u32;
+                        pl.audio_streams = streams.audio_streams.len() as u32;
+                        pl.subtitle_streams = streams.subtitle_streams.len() as u32;
+                    }
                     self.wizard.media_infos.insert(num.clone(), media);
                     self.wizard.stream_infos.insert(num.clone(), streams);
                     // If this was a lazy probe for the expanded playlist, enter track edit mode
@@ -527,16 +533,18 @@ impl DriveSession {
         }
     }
 
-    /// Spawn a background thread to probe stream info for episode-length playlists.
-    fn start_upfront_probe(&mut self) {
+    /// Spawn a background thread to probe stream info for playlists not already cached.
+    /// This handles short/filtered playlists that weren't probed during the scan.
+    fn start_unfiltered_probe(&mut self, probe_cache: &ProbeCache) {
         let device = self.device.to_string_lossy().to_string();
-        let episode_nums: Vec<String> = self
+        let uncached_nums: Vec<String> = self
             .disc
-            .episodes_pl
+            .playlists
             .iter()
+            .filter(|pl| !probe_cache.contains_key(&pl.num))
             .map(|pl| pl.num.clone())
             .collect();
-        if episode_nums.is_empty() {
+        if uncached_nums.is_empty() {
             return;
         }
 
@@ -545,7 +553,7 @@ impl DriveSession {
             .name(format!("probe-{}", self.device.display()))
             .spawn(move || {
                 let mut results = std::collections::HashMap::new();
-                for num in &episode_nums {
+                for num in &uncached_nums {
                     if let Ok((media, streams)) = crate::media::probe::probe_playlist(&device, num)
                     {
                         results.insert(num.clone(), (media, streams));
@@ -562,6 +570,9 @@ impl DriveSession {
     pub fn start_disc_scan(&mut self) {
         let device = self.device.clone();
         let max_speed = self.config.should_max_speed(self.no_max_speed);
+        let min_duration = self
+            .config
+            .min_duration(self.min_duration_arg.unwrap_or(900));
         let (tx, rx) = std::sync::mpsc::channel();
 
         std::thread::Builder::new()
@@ -587,16 +598,17 @@ impl DriveSession {
                     crate::disc::set_max_speed(&dev_str);
                 }
                 let tx_progress = tx.clone();
-                let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>)> {
-                    let playlists = crate::media::scan_playlists_with_progress(
+                let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>, ProbeCache)> {
+                    let (playlists, probe_cache) = crate::media::scan_playlists_with_progress(
                         &dev_str,
+                        min_duration,
                         Some(&move |elapsed, timeout| {
                             let _ =
                                 tx_progress.send(BackgroundResult::ScanProgress(elapsed, timeout));
                         }),
                     )
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
-                    Ok((dev_str, label, playlists))
+                    Ok((dev_str, label, playlists, probe_cache))
                 })();
                 let _ = tx.send(BackgroundResult::DiscScan(result));
             })
@@ -685,7 +697,7 @@ impl DriveSession {
             {
                 // Ignore full scan results on Done screen
             }
-            BackgroundResult::DiscScan(Ok((device, label, playlists))) => {
+            BackgroundResult::DiscScan(Ok((device, label, playlists, probe_cache))) => {
                 self.device = PathBuf::from(device);
                 self.disc.label_info = crate::disc::parse_volume_label(&label);
                 self.disc.label = label;
@@ -753,8 +765,15 @@ impl DriveSession {
                     self.status_message = "No episode-length playlists found.".into();
                     self.screen = Screen::Done;
                 } else {
-                    // Kick off upfront probing so stream info is ready by playlist manager
-                    self.start_upfront_probe();
+                    // Populate wizard caches from the scan's probe results
+                    for (num, (media, streams)) in &probe_cache {
+                        self.wizard.media_infos.insert(num.clone(), media.clone());
+                        self.wizard
+                            .stream_infos
+                            .insert(num.clone(), streams.clone());
+                    }
+                    // Probe any playlists not already in the cache (filtered/short ones)
+                    self.start_unfiltered_probe(&probe_cache);
 
                     self.screen = Screen::TmdbSearch;
                     self.wizard.input_focus = InputFocus::TextInput;

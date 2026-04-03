@@ -8,7 +8,7 @@ use std::io::{Read as _, Seek, SeekFrom, Write as _};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
-use crate::types::{LabelInfo, MediaInfo, Playlist};
+use crate::types::{LabelInfo, Playlist};
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     [
@@ -314,12 +314,6 @@ pub fn filter_episodes(playlists: &[Playlist], min_duration: u32) -> Vec<&Playli
         .iter()
         .filter(|pl| pl.seconds >= min_duration)
         .collect()
-}
-
-pub fn probe_media_info(device: &str, playlist_num: &str) -> Option<MediaInfo> {
-    crate::media::probe_playlist(device, playlist_num)
-        .ok()
-        .map(|(info, _)| info)
 }
 
 #[cfg(target_os = "linux")]

@@ -84,9 +84,12 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         println!("Volume label: {}", label);
     }
 
+    let min_duration = config.min_duration(args.min_duration);
+
     eprint!("Scanning disc at {}...", device);
-    let playlists = crate::media::scan_playlists_with_progress(
+    let (playlists, probe_cache) = crate::media::scan_playlists_with_progress(
         &device,
+        min_duration,
         Some(&|elapsed, timeout| {
             eprint!(
                 "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
@@ -99,8 +102,6 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     if playlists.is_empty() {
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
-
-    let min_duration = config.min_duration(args.min_duration);
 
     // Extract chapter counts from MPLS files
     let chapter_counts = {
@@ -135,14 +136,17 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         }
     }
 
-    // Verbose mode: probe stream info for each playlist
+    // Verbose mode: use cached probe results, only probe on the spot if not cached
     let verbose_info: Vec<Option<(crate::types::MediaInfo, crate::types::StreamInfo)>> =
         if args.verbose {
-            log::info!("Probing streams...");
-            println!("Probing streams...");
             playlists
                 .iter()
-                .map(|pl| crate::media::probe::probe_playlist(&device, &pl.num).ok())
+                .map(|pl| {
+                    probe_cache
+                        .get(&pl.num)
+                        .cloned()
+                        .or_else(|| crate::media::probe::probe_playlist(&device, &pl.num).ok())
+                })
                 .collect()
         } else {
             vec![None; playlists.len()]
@@ -253,7 +257,7 @@ pub fn run(
 ) -> anyhow::Result<(u32, u32)> {
     let device = args.device().to_string_lossy();
 
-    let (label, label_info, episodes_pl, movie_mode) = scan_disc(args, config)?;
+    let (label, label_info, episodes_pl, movie_mode, probe_cache) = scan_disc(args, config)?;
 
     // Extract chapter counts from MPLS files
     let chapter_counts = {
@@ -327,7 +331,6 @@ pub fn run(
     let outfiles = build_filenames(
         args,
         config,
-        &device,
         &label,
         &label_info,
         &episodes_pl,
@@ -336,6 +339,7 @@ pub fn run(
         &specials_set,
         movie_mode,
         headless,
+        &probe_cache,
     )?;
 
     let metadata_enabled = config.metadata_enabled() && !args.no_metadata;
@@ -376,6 +380,7 @@ pub fn run(
         stream_filter,
         tracks_spec,
         skip_eject,
+        &probe_cache,
     )?;
 
     let regular_episodes =
@@ -392,10 +397,17 @@ pub fn run(
     Ok((success_count, regular_episodes))
 }
 
+#[allow(clippy::type_complexity)] // 5-tuple is clear in context; a struct for one call site is over-engineering
 fn scan_disc(
     args: &Args,
     config: &crate::config::Config,
-) -> anyhow::Result<(String, Option<LabelInfo>, Vec<Playlist>, bool)> {
+) -> anyhow::Result<(
+    String,
+    Option<LabelInfo>,
+    Vec<Playlist>,
+    bool,
+    crate::types::ProbeCache,
+)> {
     let device = args.device().to_string_lossy();
 
     if !args.device().exists() {
@@ -412,9 +424,12 @@ fn scan_disc(
         println!("Volume label: {}", label);
     }
 
+    let min_duration = config.min_duration(args.min_duration);
+
     eprint!("Scanning disc at {}...", device);
-    let playlists = crate::media::scan_playlists_with_progress(
+    let (playlists, probe_cache) = crate::media::scan_playlists_with_progress(
         &device,
+        min_duration,
         Some(&|elapsed, timeout| {
             eprint!(
                 "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
@@ -449,7 +464,7 @@ fn scan_disc(
         println!("  (Single playlist detected — using movie mode. Use --season to force TV mode.)");
     }
 
-    Ok((label, label_info, episodes_pl, movie_mode))
+    Ok((label, label_info, episodes_pl, movie_mode, probe_cache))
 }
 
 fn lookup_tmdb(
@@ -828,7 +843,6 @@ fn display_and_select(
 fn build_filenames(
     args: &Args,
     config: &crate::config::Config,
-    device: &str,
     label: &str,
     label_info: &Option<LabelInfo>,
     episodes_pl: &[Playlist],
@@ -837,6 +851,7 @@ fn build_filenames(
     specials: &std::collections::HashSet<String>,
     movie_mode: bool,
     headless: bool,
+    probe_cache: &crate::types::ProbeCache,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let show_name_str = if movie_mode {
         tmdb_ctx
@@ -869,9 +884,9 @@ fn build_filenames(
             let pl = &episodes_pl[idx];
             let is_special = specials.contains(&pl.num);
 
-            // Probe media info if needed for custom format or special
+            // Use cached probe data for media info (format templates, specials)
             let media_info = if use_custom_format || is_special {
-                disc::probe_media_info(device, &pl.num)
+                probe_cache.get(&pl.num).map(|(m, _)| m.clone())
             } else {
                 None
             };
@@ -972,6 +987,7 @@ fn rip_selected(
     stream_filter: &crate::streams::StreamFilter,
     tracks_spec: Option<&str>,
     skip_eject: bool,
+    probe_cache: &crate::types::ProbeCache,
 ) -> anyhow::Result<(u32, u32)> {
     if args.dry_run {
         println!("\n[DRY RUN] Would rip:");
@@ -1008,20 +1024,6 @@ fn rip_selected(
             std::fs::create_dir_all(parent)?;
         }
     }
-
-    // Probe all selected playlists upfront for per-playlist stream resolution
-    let probe_cache: HashMap<String, (crate::types::MediaInfo, crate::types::StreamInfo)> = {
-        let mut cache = HashMap::new();
-        if tracks_spec.is_some() || !stream_filter.is_empty() {
-            for &idx in selected {
-                let pl = &episodes_pl[idx];
-                if let Ok(result) = crate::media::probe::probe_playlist(device, &pl.num) {
-                    cache.insert(pl.num.clone(), result);
-                }
-            }
-        }
-        cache
-    };
 
     let mut success_count = 0u32;
     let mut fail_count = 0u32;
