@@ -1157,6 +1157,7 @@ mod tests {
                     out_time_secs: 1800,
                     bitrate: "20Mbps".into(),
                     speed: 2.0,
+                    ..Default::default()
                 }),
             },
             RipJob {

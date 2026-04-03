@@ -1138,8 +1138,14 @@ fn rip_selected(
         crate::aacs::kill_makemkvcon_children();
 
         let result = crate::media::remux::remux(options, |progress| {
+            // Use actual stream duration from FFmpeg when available,
+            // falling back to libbluray's parsed playlist duration
+            let duration = if progress.duration_secs > 0 {
+                progress.duration_secs
+            } else {
+                pl_seconds
+            };
             if is_tty {
-                // Existing TTY path unchanged
                 let size = format_size(progress.total_size);
                 let time = format_time(progress.out_time_secs);
                 let mut parts = vec![
@@ -1150,10 +1156,10 @@ fn rip_selected(
                     format!("bitrate={}", progress.bitrate),
                     format!("speed={:.1}x", progress.speed),
                 ];
-                if let Some(est) = rip::estimate_final_size(progress, pl_seconds) {
+                if let Some(est) = rip::estimate_final_size(progress, duration) {
                     parts.push(format!("est=~{}", format_size(est)));
                 }
-                if let Some(eta_secs) = rip::estimate_eta(progress, pl_seconds) {
+                if let Some(eta_secs) = rip::estimate_eta(progress, duration) {
                     parts.push(format!("eta={}", rip::format_eta(eta_secs)));
                 }
                 print!("\r  {:<100}", parts.join(" "));
@@ -1162,10 +1168,10 @@ fn rip_selected(
                 // Non-TTY: line-based progress at 10-second intervals
                 if !started.get() {
                     started.set(true);
-                    println!("  {}", format_progress_line(&pl_num, progress, pl_seconds));
+                    println!("  {}", format_progress_line(&pl_num, progress, duration));
                     last_print.set(std::time::Instant::now());
                 } else if last_print.get().elapsed() >= std::time::Duration::from_secs(10) {
-                    println!("  {}", format_progress_line(&pl_num, progress, pl_seconds));
+                    println!("  {}", format_progress_line(&pl_num, progress, duration));
                     last_print.set(std::time::Instant::now());
                 }
             }
@@ -1794,6 +1800,7 @@ mod tests {
             out_time_secs: 300,
             bitrate: "25000".into(),
             speed: 2.0,
+            ..Default::default()
         };
         let line = format_progress_line("00001", &progress, 2500);
         assert!(line.starts_with("[00001] 12%"));
@@ -1810,6 +1817,7 @@ mod tests {
             out_time_secs: 2500,
             bitrate: String::new(),
             speed: 1.0,
+            ..Default::default()
         };
         let line = format_progress_line("00001", &progress, 2500);
         assert!(line.starts_with("[00001] 100%"));

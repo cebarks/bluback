@@ -335,6 +335,7 @@ where
                 fps,
                 total_size: total_bytes,
                 out_time_secs: last_pts_secs as u32,
+                duration_secs: total_duration_secs as u32,
                 bitrate,
                 speed,
             });
@@ -372,6 +373,7 @@ where
         fps,
         total_size: total_bytes,
         out_time_secs: last_pts_secs as u32,
+        duration_secs: total_duration_secs as u32,
         bitrate,
         speed,
     });

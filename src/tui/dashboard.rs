@@ -182,15 +182,21 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
             let (status, size, eta) = match &job.status {
                 PlaylistStatus::Pending => ("Pending".to_string(), String::new(), String::new()),
                 PlaylistStatus::Ripping(prog) => {
-                    let pct = if job.playlist.seconds > 0 {
-                        (prog.out_time_secs as f64 / job.playlist.seconds as f64 * 100.0).min(100.0)
-                            as u32
+                    // Use the actual stream duration from FFmpeg when available,
+                    // falling back to the playlist duration from libbluray log
+                    let duration = if prog.duration_secs > 0 {
+                        prog.duration_secs
+                    } else {
+                        job.playlist.seconds
+                    };
+                    let pct = if duration > 0 {
+                        (prog.out_time_secs as f64 / duration as f64 * 100.0).min(100.0) as u32
                     } else {
                         0
                     };
                     let bar = render_progress_bar(pct, 20);
                     let size_str = format_size(prog.total_size);
-                    let eta_str = rip::estimate_eta(prog, job.playlist.seconds)
+                    let eta_str = rip::estimate_eta(prog, duration)
                         .map(rip::format_eta)
                         .unwrap_or_default();
                     (format!("{} {}%", bar, pct), size_str, eta_str)
@@ -1151,6 +1157,7 @@ mod tests {
             out_time_secs: 1800,
             bitrate: "30000".into(),
             speed: 1.5,
+            ..Default::default()
         };
         let view = default_dashboard_view(vec![make_job(PlaylistStatus::Ripping(prog))]);
         let text = render_dashboard(&view);
@@ -1331,6 +1338,7 @@ mod tests {
             out_time_secs: 1800,
             bitrate: "30000".into(),
             speed: 1.5,
+            ..Default::default()
         };
         let view = default_dashboard_view(vec![make_job(PlaylistStatus::Ripping(prog))]);
         let text = render_dashboard(&view);

@@ -144,6 +144,9 @@ pub struct RipProgress {
     pub fps: f64,
     pub total_size: u64,
     pub out_time_secs: u32,
+    /// Actual stream duration from FFmpeg format context (more precise than
+    /// the playlist duration parsed from libbluray's HH:MM:SS log output).
+    pub duration_secs: u32,
     pub bitrate: String,
     pub speed: f64,
 }
