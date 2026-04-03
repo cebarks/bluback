@@ -376,7 +376,7 @@ fn run_inner() -> anyhow::Result<i32> {
     // Device resolution: in TUI multi-drive auto mode, leave args.device as None
     // so the coordinator's DriveMonitor can detect and manage all drives.
     // In CLI mode or TUI manual mode, resolve a single device.
-    let multi_drive_auto = use_tui && config.multi_drive_mode() == "auto";
+    let multi_drive_auto = use_tui && !args.list_playlists && config.multi_drive_mode() == "auto";
     if args.device.is_none() && !multi_drive_auto {
         if let Some(ref dev) = config.device {
             if dev != "auto-detect" {
