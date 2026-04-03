@@ -393,6 +393,13 @@ fn run_inner() -> anyhow::Result<i32> {
         }
     }
 
+    // Acquire per-device lock to prevent multiple bluback processes from contending
+    let _device_lock = if let Some(ref dev) = args.device {
+        Some(disc::try_lock_device(&dev.to_string_lossy())?)
+    } else {
+        None
+    };
+
     // Resolve stream filter: CLI flags > config
     let stream_filter = if args.all_streams {
         crate::streams::StreamFilter::default() // empty = all streams

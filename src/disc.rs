@@ -3,6 +3,11 @@ use regex::Regex;
 use std::process::Command;
 use std::sync::LazyLock;
 
+use std::fs::File;
+use std::io::{Read as _, Seek, SeekFrom, Write as _};
+use std::os::unix::io::AsRawFd;
+use std::path::PathBuf;
+
 use crate::types::{LabelInfo, MediaInfo, Playlist};
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
@@ -375,6 +380,52 @@ pub fn eject_disc(device: &str) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// Acquire an exclusive per-device lock so only one bluback process accesses a drive at a time.
+/// Returns a File guard — the lock is held until the guard is dropped (or the process exits).
+pub fn try_lock_device(device: &str) -> anyhow::Result<File> {
+    let device_name = std::path::Path::new(device)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+
+    let lock_dir = std::env::var("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+
+    let lock_path = lock_dir.join(format!("bluback-{}.lock", device_name));
+
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|e| anyhow::anyhow!("Failed to open lock file {}: {}", lock_path.display(), e))?;
+
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        let mut contents = String::new();
+        let _ = file.read_to_string(&mut contents);
+        let detail = contents
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .map(|pid| format!(" (PID {pid})"))
+            .unwrap_or_default();
+        bail!(
+            "Another bluback process{detail} is already using {device}. \
+             Only one instance can access a device at a time."
+        );
+    }
+
+    // Write our PID so other instances can report it
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    let _ = writeln!(file, "{}", std::process::id());
+
+    Ok(file)
 }
 
 #[cfg(test)]
