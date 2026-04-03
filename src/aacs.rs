@@ -177,6 +177,63 @@ pub fn reap_children() {
     }
 }
 
+/// Kill any orphaned makemkvcon child processes of the current process.
+///
+/// When using the libmmbd AACS backend, libbluray spawns makemkvcon via IPC
+/// each time a bluray device is opened (count_streams, probe_playlist, remux).
+/// These processes aren't always cleaned up when the FFmpeg context is dropped,
+/// leaving orphans that can interfere with subsequent device opens and survive
+/// past bluback's exit.
+#[cfg(target_os = "linux")]
+pub fn kill_makemkvcon_children() {
+    let our_pid = std::process::id();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Ok(pid) = name.to_string_lossy().parse::<i32>() else {
+            continue;
+        };
+
+        let status_path = format!("/proc/{}/status", pid);
+        let Ok(status) = std::fs::read_to_string(&status_path) else {
+            continue;
+        };
+
+        let is_our_child = status.lines().any(|line| {
+            line.strip_prefix("PPid:")
+                .and_then(|rest| rest.trim().parse::<u32>().ok())
+                == Some(our_pid)
+        });
+
+        if !is_our_child {
+            continue;
+        }
+
+        let comm_path = format!("/proc/{}/comm", pid);
+        let Ok(comm) = std::fs::read_to_string(&comm_path) else {
+            continue;
+        };
+
+        if comm.trim() == "makemkvcon" {
+            log::debug!("Killing orphaned makemkvcon child (pid {})", pid);
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn kill_makemkvcon_children() {
+    // No /proc filesystem on macOS; makemkvcon orphan cleanup is not
+    // needed since macOS doesn't use the fork-based scan path and
+    // libbluray/libmmbd behavior differs.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

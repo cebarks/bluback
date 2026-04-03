@@ -115,6 +115,12 @@ pub fn scan_playlists_with_progress(
         pl.subtitle_streams = s;
     }
 
+    // Each count_streams call opens the device via libbluray, which may spawn
+    // makemkvcon when using the libmmbd backend. These child processes aren't
+    // killed when the FFmpeg context is dropped, so clean them up now to
+    // prevent interference with subsequent device opens (e.g., remux).
+    crate::aacs::kill_makemkvcon_children();
+
     log::info!("Scan complete: found {} playlists", playlists.len());
     Ok(playlists)
 }

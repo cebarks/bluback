@@ -244,6 +244,7 @@ fn run() -> i32 {
             classify_exit_code(&e)
         }
     };
+    aacs::kill_makemkvcon_children();
     aacs::reap_children();
     code
 }

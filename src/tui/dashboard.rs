@@ -770,10 +770,18 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
 
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
+        // Kill stale makemkvcon from prior device opens (scan, probe) so they
+        // don't interfere with the remux's libbluray/AACS initialization.
+        crate::aacs::kill_makemkvcon_children();
+
         let tx_progress = tx.clone();
         let result = crate::media::remux::remux(options, |progress| {
             let _ = tx_progress.send(Ok(progress.clone()));
         });
+
+        // Clean up makemkvcon spawned during this remux.
+        crate::aacs::kill_makemkvcon_children();
+
         match result {
             Ok(added) => {
                 chapters_added_arc.store(added, std::sync::atomic::Ordering::Relaxed);
