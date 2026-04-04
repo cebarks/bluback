@@ -122,8 +122,31 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         }
     };
 
+    // Resolve auto_detect setting
+    let auto_detect = config.should_auto_detect(if args.auto_detect {
+        Some(true)
+    } else if args.no_auto_detect {
+        Some(false)
+    } else {
+        None
+    });
+
+    // Run detection if enabled
+    let detection_results = if auto_detect {
+        crate::detection::run_detection_with_chapters(
+            &playlists,
+            min_duration,
+            None, // No TMDb context in --list-playlists
+            None,
+            &chapter_counts,
+        )
+    } else {
+        Vec::new()
+    };
+
     let has_ch = !chapter_counts.is_empty();
     let header_ch = if has_ch { "  Ch" } else { "" };
+    let header_det = if auto_detect { "  Det  " } else { "" };
 
     // Build filtered index mapping: episode-length playlists get sequential numbers
     let mut filtered_index: std::collections::HashMap<String, usize> =
@@ -154,28 +177,30 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
 
     if args.verbose {
         println!(
-            "  {:<4}  {:<10}  {:<10}{}  {:<18}  Audio  Subtitles  Sel",
-            "#", "Playlist", "Duration", header_ch, "Video"
+            "  {:<4}  {:<10}  {:<10}{}{}  {:<18}  Audio  Subtitles  Sel",
+            "#", "Playlist", "Duration", header_ch, header_det, "Video"
         );
         println!(
-            "  {:<4}  {:<10}  {:<10}{}  {:<18}  -----  ---------  ---",
+            "  {:<4}  {:<10}  {:<10}{}{}  {:<18}  -----  ---------  ---",
             "---",
             "--------",
             "--------",
             if has_ch { "  --" } else { "" },
+            if auto_detect { "  ---  " } else { "" },
             "------------------"
         );
     } else {
         println!(
-            "  {:<4}  {:<10}  {:<10}{}  Sel",
-            "#", "Playlist", "Duration", header_ch
+            "  {:<4}  {:<10}  {:<10}{}{}  Sel",
+            "#", "Playlist", "Duration", header_ch, header_det
         );
         println!(
-            "  {:<4}  {:<10}  {:<10}{}  ---",
+            "  {:<4}  {:<10}  {:<10}{}{}  ---",
             "---",
             "--------",
             "--------",
             if has_ch { "  --" } else { "" },
+            if auto_detect { "  ---  " } else { "" },
         );
     }
 
@@ -198,6 +223,31 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
             "  *".to_string()
         };
 
+        let det_str = if auto_detect {
+            detection_results
+                .iter()
+                .find(|d| d.playlist_num == pl.num)
+                .map(|d| match (d.suggested_type, d.confidence) {
+                    (
+                        crate::detection::SuggestedType::Special,
+                        crate::detection::Confidence::High,
+                    ) => " [S!] ",
+                    (
+                        crate::detection::SuggestedType::Special,
+                        crate::detection::Confidence::Medium,
+                    ) => " [S?] ",
+                    (
+                        crate::detection::SuggestedType::Special,
+                        crate::detection::Confidence::Low,
+                    ) => " [s.] ",
+                    (crate::detection::SuggestedType::MultiEpisode, _) => " [M!] ",
+                    _ => "      ",
+                })
+                .unwrap_or("      ")
+        } else {
+            ""
+        };
+
         if args.verbose {
             let (video_str, audio_str, sub_str) =
                 if let Some((ref media, ref streams)) = verbose_info[i] {
@@ -211,11 +261,12 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
                 };
 
             println!(
-                "  {:<4}  {:<10}  {:<10}{}  {:<18}  {}  {}{}",
+                "  {:<4}  {:<10}  {:<10}{}{}  {:<18}  {}  {}{}",
                 i + 1,
                 pl.num,
                 pl.duration,
                 ch_str,
+                det_str,
                 video_str,
                 audio_str,
                 sub_str,
@@ -223,11 +274,12 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
             );
         } else {
             println!(
-                "  {:<4}  {:<10}  {:<10}{}{}",
+                "  {:<4}  {:<10}  {:<10}{}{}{}",
                 i + 1,
                 pl.num,
                 pl.duration,
                 ch_str,
+                det_str,
                 sel_str,
             );
         }
@@ -257,14 +309,15 @@ pub fn run(
 ) -> anyhow::Result<(u32, u32)> {
     let device = args.device().to_string_lossy();
 
-    let (label, label_info, episodes_pl, movie_mode, probe_cache) = scan_disc(args, config)?;
+    let (label, label_info, all_playlists, episodes_pl, movie_mode, probe_cache) =
+        scan_disc(args, config)?;
 
-    // Extract chapter counts from MPLS files
+    // Extract chapter counts from MPLS files (for ALL playlists, not just episode-length)
     let chapter_counts = {
         let device_str = device.to_string();
         match disc::ensure_mounted(&device_str) {
             Ok((mount, did_mount)) => {
-                let nums: Vec<&str> = episodes_pl.iter().map(|pl| pl.num.as_str()).collect();
+                let nums: Vec<&str> = all_playlists.iter().map(|pl| pl.num.as_str()).collect();
                 let counts = crate::chapters::count_chapters_for_playlists(
                     std::path::Path::new(&mount),
                     &nums,
@@ -297,36 +350,131 @@ pub fn run(
         headless,
     )?;
 
-    // Resolve --specials flag to playlist numbers
-    let specials_set: std::collections::HashSet<String> = if let Some(ref sel_str) = args.specials {
-        match parse_selection(sel_str, episodes_pl.len()) {
-            Some(indices) => {
-                let selected_set: std::collections::HashSet<usize> =
-                    selected.iter().copied().collect();
-                let mut specials = std::collections::HashSet::new();
-                for idx in indices {
-                    if selected_set.contains(&idx) {
-                        specials.insert(episodes_pl[idx].num.clone());
-                    } else {
-                        log::warn!(
-                            "--specials index {} is not in the selected playlists, skipping",
-                            idx + 1
+    // Resolve auto_detect setting
+    let auto_detect = config.should_auto_detect(if args.auto_detect {
+        Some(true)
+    } else if args.no_auto_detect {
+        Some(false)
+    } else {
+        None
+    });
+
+    // Resolve --specials flag to playlist numbers, or run auto-detection
+    let specials_set: std::collections::HashSet<String> =
+        if auto_detect && !movie_mode && args.specials.is_none() {
+            // Extract TMDb episodes from episode_assignments for detection
+            let tmdb_episodes: Vec<Episode> = tmdb_ctx
+                .episode_assignments
+                .values()
+                .flatten()
+                .cloned()
+                .collect();
+
+            let detection_results = crate::detection::run_detection_with_chapters(
+                &all_playlists,
+                config.min_duration(args.min_duration),
+                if tmdb_episodes.is_empty() {
+                    None
+                } else {
+                    Some(&tmdb_episodes)
+                },
+                None, // CLI doesn't fetch season 0 (TUI-only feature for now)
+                &chapter_counts,
+            );
+
+            let mut specials = std::collections::HashSet::new();
+
+            if headless {
+                // Auto-apply high-confidence specials only
+                for det in &detection_results {
+                    if det.suggested_type == crate::detection::SuggestedType::Special
+                        && det.confidence == crate::detection::Confidence::High
+                    {
+                        eprintln!(
+                            "Auto-detected: playlist {} as special ({})",
+                            det.playlist_num,
+                            det.reasons.join(", ")
                         );
+                        specials.insert(det.playlist_num.clone());
                     }
                 }
-                specials
+            } else {
+                // Interactive: show suggestions and prompt
+                let suggestions: Vec<&crate::detection::DetectionResult> = detection_results
+                    .iter()
+                    .filter(|d| {
+                        d.suggested_type == crate::detection::SuggestedType::Special
+                            && d.confidence >= crate::detection::Confidence::Medium
+                    })
+                    .collect();
+
+                if !suggestions.is_empty() {
+                    println!("\nAuto-detected specials:");
+                    for det in &suggestions {
+                        let indicator = match det.confidence {
+                            crate::detection::Confidence::High => "[S!]",
+                            crate::detection::Confidence::Medium => "[S?]",
+                            _ => "[s.]",
+                        };
+                        println!(
+                            "  {} playlist {} — {}",
+                            indicator,
+                            det.playlist_num,
+                            det.reasons.join(", ")
+                        );
+                    }
+                    print!("Accept auto-detected specials? [Y/n/edit]: ");
+                    io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    let input = input.trim().to_lowercase();
+
+                    match input.as_str() {
+                        "" | "y" | "yes" => {
+                            for det in &suggestions {
+                                specials.insert(det.playlist_num.clone());
+                            }
+                        }
+                        "edit" => {
+                            // Fall through - user will need to use --specials manually
+                            eprintln!("Use --specials to manually specify specials.");
+                        }
+                        _ => {} // "n" or anything else - skip
+                    }
+                }
             }
-            None => {
-                anyhow::bail!(
-                    "Invalid --specials value '{}'. Use e.g. '4,5', '4-5' (max {}).",
-                    sel_str,
-                    episodes_pl.len()
-                );
+
+            specials
+        } else if let Some(ref sel_str) = args.specials {
+            match parse_selection(sel_str, episodes_pl.len()) {
+                Some(indices) => {
+                    let selected_set: std::collections::HashSet<usize> =
+                        selected.iter().copied().collect();
+                    let mut specials = std::collections::HashSet::new();
+                    for idx in indices {
+                        if selected_set.contains(&idx) {
+                            specials.insert(episodes_pl[idx].num.clone());
+                        } else {
+                            log::warn!(
+                                "--specials index {} is not in the selected playlists, skipping",
+                                idx + 1
+                            );
+                        }
+                    }
+                    specials
+                }
+                None => {
+                    anyhow::bail!(
+                        "Invalid --specials value '{}'. Use e.g. '4,5', '4-5' (max {}).",
+                        sel_str,
+                        episodes_pl.len()
+                    );
+                }
             }
-        }
-    } else {
-        std::collections::HashSet::new()
-    };
+        } else {
+            std::collections::HashSet::new()
+        };
 
     let outfiles = build_filenames(
         args,
@@ -397,13 +545,14 @@ pub fn run(
     Ok((success_count, regular_episodes))
 }
 
-#[allow(clippy::type_complexity)] // 5-tuple is clear in context; a struct for one call site is over-engineering
+#[allow(clippy::type_complexity)] // 6-tuple is clear in context; a struct for one call site is over-engineering
 fn scan_disc(
     args: &Args,
     config: &crate::config::Config,
 ) -> anyhow::Result<(
     String,
     Option<LabelInfo>,
+    Vec<Playlist>,
     Vec<Playlist>,
     bool,
     crate::types::ProbeCache,
@@ -464,7 +613,14 @@ fn scan_disc(
         println!("  (Single playlist detected — using movie mode. Use --season to force TV mode.)");
     }
 
-    Ok((label, label_info, episodes_pl, movie_mode, probe_cache))
+    Ok((
+        label,
+        label_info,
+        playlists,
+        episodes_pl,
+        movie_mode,
+        probe_cache,
+    ))
 }
 
 fn lookup_tmdb(

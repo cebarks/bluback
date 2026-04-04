@@ -66,6 +66,7 @@ pub struct TmdbState {
     pub selected_movie: Option<usize>,
     pub show_name: String,
     pub episodes: Vec<Episode>,
+    pub specials: Vec<Episode>,
 }
 
 #[derive(Default)]
@@ -84,6 +85,7 @@ pub struct WizardState {
     pub stream_infos: std::collections::HashMap<String, StreamInfo>,
     pub track_selections: std::collections::HashMap<String, Vec<usize>>,
     pub expanded_playlist: Option<usize>,
+    pub detection_results: Vec<crate::detection::DetectionResult>,
 }
 
 pub struct RipState {
