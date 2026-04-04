@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use ffmpeg_the_third::{self as ffmpeg, format, media, Dictionary, Packet, Rational};
+use ffmpeg_the_third::{self as ffmpeg, format, media, Dictionary, Packet, Rational, Rescale};
 
 use super::error::{classify_aacs_error, MediaError};
 use crate::types::{ChapterMark, RipProgress};
@@ -215,6 +215,35 @@ where
         }
     };
 
+    // Blu-ray transport streams often start at a non-zero PTS (e.g. 10+ minutes
+    // into the 90kHz clock). Without normalization the MKV container records
+    // duration = max_PTS, which includes that offset as empty seekable time.
+    // This mirrors what the ffmpeg CLI does via ts_offset = -start_time.
+    let input_start_time = unsafe { (*ictx.as_ptr()).start_time };
+    let stream_ts_offsets: Vec<i64> = if input_start_time > 0
+        && input_start_time != ffmpeg::ffi::AV_NOPTS_VALUE
+    {
+        (0..nb_input_streams)
+            .map(|i| {
+                let tb = ictx
+                    .stream(i)
+                    .map(|s| s.time_base())
+                    .unwrap_or(Rational(1, 90000));
+                input_start_time.rescale(ffmpeg::rescale::TIME_BASE, tb)
+            })
+            .collect()
+    } else {
+        vec![0; nb_input_streams]
+    };
+
+    if input_start_time > 0 && input_start_time != ffmpeg::ffi::AV_NOPTS_VALUE {
+        let offset_secs = input_start_time as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
+        log::info!(
+            "Normalizing timestamps: input start_time={:.3}s",
+            offset_secs
+        );
+    }
+
     // Inject chapters before writing header
     let chapters_added = inject_chapters(&mut octx, &options.chapters, total_duration_secs)?;
 
@@ -280,7 +309,23 @@ where
             .map(|s| s.time_base())
             .unwrap_or(Rational(1, 90000));
 
-        // Track video frames and content time
+        // Normalize timestamps: subtract the input start_time offset so the
+        // output MKV starts at PTS ~0 instead of inheriting the Blu-ray
+        // transport stream's clock offset.
+        let ts_offset = stream_ts_offsets
+            .get(in_stream_idx)
+            .copied()
+            .unwrap_or(0);
+        if ts_offset != 0 {
+            if let Some(pts) = packet.pts() {
+                packet.set_pts(Some(pts - ts_offset));
+            }
+            if let Some(dts) = packet.dts() {
+                packet.set_dts(Some(dts - ts_offset));
+            }
+        }
+
+        // Track video frames and content time (after normalization)
         let in_stream = ictx.stream(in_stream_idx);
         let is_video = in_stream
             .map(|s| s.parameters().medium() == media::Type::Video)
