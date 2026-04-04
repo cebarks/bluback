@@ -250,8 +250,8 @@ pub enum BackgroundResult {
     ShowSearch(anyhow::Result<Vec<TmdbShow>>),
     /// TMDb movie search completed
     MovieSearch(anyhow::Result<Vec<TmdbMovie>>),
-    /// TMDb season fetch completed
-    SeasonFetch(anyhow::Result<Vec<Episode>>),
+    /// TMDb season fetch completed: (regular episodes, optional specials)
+    SeasonFetch(anyhow::Result<Vec<Episode>>, Option<Vec<Episode>>),
     /// Single playlist probe result (for lazy probe of filtered playlists)
     #[allow(dead_code)] // Constructed by Task 12 (final wiring)
     MediaProbe(String, Box<Option<(MediaInfo, StreamInfo)>>),
@@ -460,6 +460,7 @@ pub struct PlaylistView {
     pub stream_infos: HashMap<String, StreamInfo>,
     pub track_selections: HashMap<String, Vec<usize>>,
     pub expanded_playlist: Option<usize>,
+    pub detection_results: Vec<crate::detection::DetectionResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -719,6 +720,11 @@ impl SettingsState {
                 key: "show_filtered".into(),
                 value: config.show_filtered.unwrap_or(false),
             },
+            SettingItem::Toggle {
+                label: "Auto-Detect Episodes/Specials".into(),
+                key: "auto_detect".into(),
+                value: config.auto_detect.unwrap_or(false),
+            },
             SettingItem::Separator {
                 label: Some("Logging".into()),
             },
@@ -914,6 +920,7 @@ impl SettingsState {
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
             ("BLUBACK_BATCH", "batch"),
+            ("BLUBACK_AUTO_DETECT", "auto_detect"),
             ("BLUBACK_VERIFY", "verify"),
             ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
@@ -1025,6 +1032,7 @@ impl SettingsState {
             ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
             ("BLUBACK_OVERWRITE", "overwrite"),
             ("BLUBACK_BATCH", "batch"),
+            ("BLUBACK_AUTO_DETECT", "auto_detect"),
             ("BLUBACK_VERIFY", "verify"),
             ("BLUBACK_VERIFY_LEVEL", "verify_level"),
             ("BLUBACK_AACS_BACKEND", "aacs_backend"),
@@ -1107,6 +1115,7 @@ impl SettingsState {
                     "verbose_libbluray" if *value => config.verbose_libbluray = Some(true),
                     "overwrite" if *value => config.overwrite = Some(true),
                     "batch" if *value => config.batch = Some(true),
+                    "auto_detect" if *value => config.auto_detect = Some(true),
                     "verify" if *value => config.verify = Some(true),
                     "log_file" if !*value => config.log_file = Some(false),
                     "metadata.enabled" if !*value => {
@@ -1361,7 +1370,7 @@ mod tests {
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 33); // 32 settings + 1 action
+        assert_eq!(non_separator_count, 34); // 33 settings + 1 action
     }
 
     #[test]

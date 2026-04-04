@@ -82,6 +82,7 @@ pub struct Config {
     pub reserve_index_space: Option<u32>,
     pub overwrite: Option<bool>,
     pub batch: Option<bool>,
+    pub auto_detect: Option<bool>,
     pub verify: Option<bool>,
     pub verify_level: Option<String>,
     pub aacs_backend: Option<String>,
@@ -181,6 +182,7 @@ impl Config {
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
         emit_bool(&mut out, "overwrite", self.overwrite, false);
         emit_bool(&mut out, "batch", self.batch, false);
+        emit_bool(&mut out, "auto_detect", self.auto_detect, false);
         emit_bool(&mut out, "verify", self.verify, false);
         emit_str(&mut out, "verify_level", &self.verify_level, "quick");
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
@@ -375,6 +377,16 @@ impl Config {
         cli_batch.unwrap_or_else(|| self.batch())
     }
 
+    #[allow(dead_code)] // Part of Task 5 (auto-detection config); used by TUI/CLI after wiring
+    pub fn auto_detect(&self) -> bool {
+        self.auto_detect.unwrap_or(false)
+    }
+
+    #[allow(dead_code)] // Part of Task 5 (auto-detection config); used by TUI/CLI after wiring
+    pub fn should_auto_detect(&self, cli_auto_detect: Option<bool>) -> bool {
+        cli_auto_detect.unwrap_or_else(|| self.auto_detect())
+    }
+
     pub fn verify(&self) -> bool {
         self.verify.unwrap_or(false)
     }
@@ -492,6 +504,7 @@ const KNOWN_KEYS: &[&str] = &[
     "reserve_index_space",
     "overwrite",
     "batch",
+    "auto_detect",
     "verify",
     "verify_level",
     "aacs_backend",
@@ -1600,5 +1613,17 @@ prefer_surround = true
     fn test_should_batch_no_cli_no_config_defaults_false() {
         let config = Config::default();
         assert!(!config.should_batch(None));
+    }
+
+    #[test]
+    fn auto_detect_config_roundtrip() {
+        let mut config = Config::default();
+        config.auto_detect = Some(true);
+        let toml_str = config.to_toml_string();
+        assert!(toml_str.contains("auto_detect = true"));
+
+        let default_config = Config::default();
+        let default_toml = default_config.to_toml_string();
+        assert!(default_toml.contains("# auto_detect = false"));
     }
 }

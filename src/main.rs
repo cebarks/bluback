@@ -3,6 +3,7 @@ mod chapters;
 mod check;
 mod cli;
 mod config;
+mod detection;
 mod disc;
 mod drive_monitor;
 mod hooks;
@@ -172,6 +173,14 @@ pub struct Args {
     /// Disable batch mode (overrides config)
     #[arg(long, conflicts_with = "batch")]
     no_batch: bool,
+
+    /// Enable automatic episode/special detection heuristics
+    #[arg(long, conflicts_with_all = ["no_auto_detect", "movie"])]
+    auto_detect: bool,
+
+    /// Disable auto-detection (overrides config)
+    #[arg(long, conflicts_with = "auto_detect")]
+    no_auto_detect: bool,
 
     /// Filter audio streams by language (e.g. "eng,jpn")
     #[arg(long)]

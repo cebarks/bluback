@@ -320,7 +320,15 @@ fn visible_playlists_view(view: &PlaylistView) -> Vec<(usize, &crate::types::Pla
     view.playlists
         .iter()
         .enumerate()
-        .filter(|(_, pl)| view.show_filtered || view.episodes_pl.iter().any(|ep| ep.num == pl.num))
+        .filter(|(_, pl)| {
+            view.show_filtered
+                || view.episodes_pl.iter().any(|ep| ep.num == pl.num)
+                || view.detection_results.iter().any(|d| {
+                    d.playlist_num == pl.num
+                        && d.suggested_type != crate::detection::SuggestedType::Episode
+                        && d.confidence >= crate::detection::Confidence::Medium
+                })
+        })
         .collect()
 }
 
@@ -471,7 +479,33 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
             "(none)".to_string()
         };
 
-        let special_marker = if is_special { " [SP]" } else { "" };
+        let detection_indicator = view
+            .detection_results
+            .iter()
+            .find(|d| d.playlist_num == pl.num)
+            .and_then(|d| match (d.suggested_type, d.confidence) {
+                (crate::detection::SuggestedType::Special, crate::detection::Confidence::High) => {
+                    Some(" [S!]")
+                }
+                (
+                    crate::detection::SuggestedType::Special,
+                    crate::detection::Confidence::Medium,
+                ) => Some(" [S?]"),
+                (crate::detection::SuggestedType::Special, crate::detection::Confidence::Low) => {
+                    Some(" [s.]")
+                }
+                (
+                    crate::detection::SuggestedType::MultiEpisode,
+                    crate::detection::Confidence::High,
+                ) => Some(" [M!]"),
+                (crate::detection::SuggestedType::MultiEpisode, _) => Some(" [M?]"),
+                _ => None,
+            });
+        let special_marker: &str = if is_special {
+            " [SP]"
+        } else {
+            detection_indicator.unwrap_or_default()
+        };
         let ep_display = format!("{}{}", ep_str, special_marker);
 
         let filename = view.filenames.get(&pl.num).cloned().unwrap_or_default();
@@ -656,6 +690,15 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         if is_tv {
             parts.push("s: Special");
         }
+        let has_suggestions = is_tv
+            && view.detection_results.iter().any(|d| {
+                d.suggested_type == crate::detection::SuggestedType::Special
+                    && d.confidence >= crate::detection::Confidence::Medium
+                    && !view.specials.contains(&d.playlist_num)
+            });
+        if has_suggestions {
+            parts.push("A: Accept");
+        }
         parts.push("r/R: Reset");
         parts.push("f: Show filtered");
         parts.push("Enter: Confirm");
@@ -664,10 +707,22 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         parts.join(" | ")
     };
 
-    let status_line = if !status.is_empty() {
-        format!("{}  {}", hints_text, status)
-    } else {
-        hints_text
+    // Show detection reason for cursor row
+    let detection_reason = visible
+        .get(view.list_cursor)
+        .and_then(|&(_, pl)| {
+            view.detection_results
+                .iter()
+                .find(|d| d.playlist_num == pl.num)
+        })
+        .filter(|d| d.suggested_type != crate::detection::SuggestedType::Episode)
+        .map(|d| d.reasons.join("; "));
+
+    let status_line = match (status.is_empty(), detection_reason) {
+        (true, None) => hints_text,
+        (true, Some(reason)) => format!("{}  [{}]", hints_text, reason),
+        (false, None) => format!("{}  {}", hints_text, status),
+        (false, Some(reason)) => format!("{}  {}  [{}]", hints_text, status, reason),
     };
     let hints = Paragraph::new(status_line).style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
@@ -763,6 +818,113 @@ pub fn render_confirm_view(f: &mut Frame, view: &ConfirmView, _status: &str, are
     f.render_widget(hints, chunks[2]);
 }
 
+/// Run auto-detection if enabled, pre-marking high-confidence specials.
+/// Clears detection_results if auto_detect is disabled.
+pub fn run_detection_if_enabled(session: &mut crate::session::DriveSession) {
+    if session.auto_detect {
+        session.wizard.detection_results = crate::detection::run_detection_with_chapters(
+            &session.disc.playlists,
+            session
+                .config
+                .min_duration
+                .unwrap_or(crate::config::DEFAULT_MIN_DURATION),
+            if session.tmdb.episodes.is_empty() {
+                None
+            } else {
+                Some(&session.tmdb.episodes)
+            },
+            if session.tmdb.specials.is_empty() {
+                None
+            } else {
+                Some(&session.tmdb.specials)
+            },
+            &session.disc.chapter_counts,
+        );
+        // Pre-mark high-confidence specials
+        for det in &session.wizard.detection_results.clone() {
+            if det.suggested_type == crate::detection::SuggestedType::Special
+                && det.confidence == crate::detection::Confidence::High
+            {
+                let pl_num = &det.playlist_num;
+                if !session.wizard.specials.contains(pl_num) {
+                    let max_sp = session
+                        .wizard
+                        .specials
+                        .iter()
+                        .filter_map(|snum| {
+                            session
+                                .wizard
+                                .episode_assignments
+                                .get(snum)
+                                .and_then(|eps| eps.first())
+                                .map(|e| e.episode_number)
+                        })
+                        .max()
+                        .unwrap_or(0);
+                    session.wizard.specials.insert(pl_num.clone());
+                    session.wizard.episode_assignments.insert(
+                        pl_num.clone(),
+                        vec![crate::types::Episode {
+                            episode_number: max_sp + 1,
+                            name: String::new(),
+                            runtime: None,
+                        }],
+                    );
+                    if let Some(real_idx) =
+                        session.disc.playlists.iter().position(|p| p.num == *pl_num)
+                    {
+                        if let Some(sel) = session.wizard.playlist_selected.get_mut(real_idx) {
+                            *sel = true;
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        session.wizard.detection_results.clear();
+    }
+}
+
+/// Accept all medium+ confidence special suggestions that haven't been accepted yet.
+fn accept_detection_suggestions(session: &mut crate::session::DriveSession) {
+    for det in &session.wizard.detection_results.clone() {
+        if det.suggested_type == crate::detection::SuggestedType::Special
+            && det.confidence >= crate::detection::Confidence::Medium
+            && !session.wizard.specials.contains(&det.playlist_num)
+        {
+            let pl_num = det.playlist_num.clone();
+            let max_sp = session
+                .wizard
+                .specials
+                .iter()
+                .filter_map(|snum| {
+                    session
+                        .wizard
+                        .episode_assignments
+                        .get(snum)
+                        .and_then(|eps| eps.first())
+                        .map(|e| e.episode_number)
+                })
+                .max()
+                .unwrap_or(0);
+            session.wizard.specials.insert(pl_num.clone());
+            session.wizard.episode_assignments.insert(
+                pl_num.clone(),
+                vec![crate::types::Episode {
+                    episode_number: max_sp + 1,
+                    name: String::new(),
+                    runtime: None,
+                }],
+            );
+            if let Some(real_idx) = session.disc.playlists.iter().position(|p| p.num == pl_num) {
+                if let Some(sel) = session.wizard.playlist_selected.get_mut(real_idx) {
+                    *sel = true;
+                }
+            }
+        }
+    }
+}
+
 // --- Session variants of input handlers ---
 // These are mechanical ports of the App-based handlers above, operating on
 // DriveSession fields instead. The logic is identical.
@@ -833,6 +995,9 @@ pub fn handle_tmdb_search_input_session(session: &mut crate::session::DriveSessi
                     session.tmdb.movie_mode = !session.tmdb.movie_mode;
                 }
                 KeyCode::Esc => {
+                    if !session.tmdb.movie_mode {
+                        run_detection_if_enabled(session);
+                    }
                     session.wizard.input_focus = InputFocus::List;
                     session.wizard.list_cursor = 0;
                     session.screen = Screen::PlaylistManager;
@@ -884,9 +1049,14 @@ pub fn handle_tmdb_search_input_session(session: &mut crate::session::DriveSessi
                                 let show_id = show.id;
                                 let (tx, rx) = mpsc::channel();
                                 std::thread::spawn(move || {
-                                    let _ = tx.send(BackgroundResult::SeasonFetch(
-                                        tmdb::get_season(show_id, season, &api_key),
-                                    ));
+                                    let regular = tmdb::get_season(show_id, season, &api_key);
+                                    let specials = if season != 0 {
+                                        tmdb::get_season(show_id, 0, &api_key).ok()
+                                    } else {
+                                        None
+                                    };
+                                    let _ =
+                                        tx.send(BackgroundResult::SeasonFetch(regular, specials));
                                 });
                                 session.pending_rx = Some(rx);
                                 session.status_message = "Fetching season...".into();
@@ -955,9 +1125,13 @@ pub fn handle_season_input_session(session: &mut crate::session::DriveSession, k
                         let api_key = api_key.clone();
                         let (tx, rx) = mpsc::channel();
                         std::thread::spawn(move || {
-                            let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
-                                show_id, season, &api_key,
-                            )));
+                            let regular = tmdb::get_season(show_id, season, &api_key);
+                            let specials = if season != 0 {
+                                tmdb::get_season(show_id, 0, &api_key).ok()
+                            } else {
+                                None
+                            };
+                            let _ = tx.send(BackgroundResult::SeasonFetch(regular, specials));
                         });
                         session.pending_rx = Some(rx);
                         session.status_message = "Fetching season...".into();
@@ -971,6 +1145,7 @@ pub fn handle_season_input_session(session: &mut crate::session::DriveSession, k
                         &session.tmdb.episodes,
                         start_ep,
                     );
+                    run_detection_if_enabled(session);
                     session.wizard.input_focus = InputFocus::List;
                     session.wizard.input_buffer.clear();
                     session.wizard.list_cursor = 0;
@@ -994,9 +1169,13 @@ pub fn handle_season_input_session(session: &mut crate::session::DriveSession, k
                     let api_key = api_key.clone();
                     let (tx, rx) = mpsc::channel();
                     std::thread::spawn(move || {
-                        let _ = tx.send(BackgroundResult::SeasonFetch(tmdb::get_season(
-                            show_id, season, &api_key,
-                        )));
+                        let regular = tmdb::get_season(show_id, season, &api_key);
+                        let specials = if season != 0 {
+                            tmdb::get_season(show_id, 0, &api_key).ok()
+                        } else {
+                            None
+                        };
+                        let _ = tx.send(BackgroundResult::SeasonFetch(regular, specials));
                     });
                     session.pending_rx = Some(rx);
                     session.status_message = "Fetching season...".into();
@@ -1163,6 +1342,9 @@ pub fn handle_playlist_manager_input_session(
                 session.wizard.input_buffer = current;
                 session.wizard.input_focus = InputFocus::InlineEdit(session.wizard.list_cursor);
             }
+        }
+        KeyCode::Char('A') if !session.tmdb.movie_mode => {
+            accept_detection_suggestions(session);
         }
         KeyCode::Char('s') if !session.tmdb.movie_mode => {
             if let Some(&(real_idx, _)) = visible.get(session.wizard.list_cursor) {
@@ -1485,6 +1667,7 @@ mod tests {
             stream_infos,
             track_selections: HashMap::new(),
             expanded_playlist: None,
+            detection_results: Vec::new(),
         }
     }
 

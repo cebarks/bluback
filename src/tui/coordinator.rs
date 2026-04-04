@@ -98,6 +98,8 @@ impl Coordinator {
         session.no_metadata = self.args.no_metadata;
         session.no_hooks = self.args.no_hooks;
         session.verify = self.args.verify || (!self.args.no_verify && self.config.verify());
+        session.auto_detect =
+            self.args.auto_detect || (!self.args.no_auto_detect && self.config.auto_detect());
         session.batch = self.args.batch || (!self.args.no_batch && self.config.batch());
         session.verify_level = match self
             .args

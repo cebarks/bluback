@@ -52,6 +52,8 @@ pub struct DriveSession {
     pub verify_level: crate::verify::VerifyLevel,
     pub stream_filter: crate::streams::StreamFilter,
 
+    /// Whether auto-detection is active.
+    pub auto_detect: bool,
     /// Whether batch mode is active (auto-restart on new disc detection).
     pub batch: bool,
     /// Number of discs processed in this session (0 until first scan completes).
@@ -106,6 +108,7 @@ impl DriveSession {
             verify_level: crate::verify::VerifyLevel::Quick,
             stream_filter,
 
+            auto_detect: false,
             batch: false,
             batch_disc_count: 0,
         }
@@ -353,6 +356,7 @@ impl DriveSession {
             stream_infos: self.wizard.stream_infos.clone(),
             track_selections: self.wizard.track_selections.clone(),
             expanded_playlist: self.wizard.expanded_playlist,
+            detection_results: self.wizard.detection_results.clone(),
         })
     }
 
@@ -452,6 +456,7 @@ impl DriveSession {
                 Ok(SessionCommand::ConfigChanged(config)) => {
                     self.config = *config;
                     self.eject = self.config.should_eject(self.cli_eject);
+                    self.auto_detect = self.config.auto_detect();
                     self.batch = self.config.batch();
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -814,14 +819,16 @@ impl DriveSession {
             BackgroundResult::MovieSearch(Err(e)) => {
                 self.status_message = format!("TMDb search failed: {}", e);
             }
-            BackgroundResult::SeasonFetch(Ok(eps)) => {
+            BackgroundResult::SeasonFetch(Ok(eps), specials) => {
                 self.tmdb.episodes = eps;
+                self.tmdb.specials = specials.unwrap_or_default();
                 self.wizard.list_cursor = 0;
                 self.status_message.clear();
             }
-            BackgroundResult::SeasonFetch(Err(e)) => {
+            BackgroundResult::SeasonFetch(Err(e), _) => {
                 self.status_message = format!("Failed to fetch season: {}", e);
                 self.tmdb.episodes.clear();
+                self.tmdb.specials.clear();
             }
             BackgroundResult::MediaProbe(playlist_num, result) => {
                 if let Some((media_info, stream_info)) = *result {
@@ -958,6 +965,9 @@ impl DriveSession {
         self.tmdb.episodes = context.episodes;
         self.wizard.season_num = Some(context.season_num);
         self.wizard.start_episode = Some(context.next_episode);
+        if !self.tmdb.movie_mode {
+            crate::tui::wizard::run_detection_if_enabled(self);
+        }
         self.screen = Screen::PlaylistManager;
         self.wizard.input_focus = InputFocus::default();
         self.status_message.clear();
@@ -1051,13 +1061,20 @@ impl DriveSession {
     }
 
     /// Get visible playlists (respecting show_filtered setting).
+    /// Detected playlists with medium+ confidence non-Episode results are always shown.
     pub fn visible_playlists(&self) -> Vec<(usize, &Playlist)> {
         self.disc
             .playlists
             .iter()
             .enumerate()
             .filter(|(_, pl)| {
-                self.wizard.show_filtered || self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
+                self.wizard.show_filtered
+                    || self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
+                    || self.wizard.detection_results.iter().any(|d| {
+                        d.playlist_num == pl.num
+                            && d.suggested_type != crate::detection::SuggestedType::Episode
+                            && d.confidence >= crate::detection::Confidence::Medium
+                    })
             })
             .collect()
     }

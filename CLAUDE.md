@@ -58,6 +58,13 @@ FFmpeg development libraries and clang are required at build time (bindgen gener
 
 **Recommended drive replacement:** An internal SATA LG WH16NS60 or ASUS BW-16D1HT (same drive without USB enclosure) eliminates all bridge-related issues. The BW-16D1X-U can also be removed from its enclosure and connected directly via SATA.
 
+## Config Fields
+
+- `tmdb_api_key`, `preset`, `tv_format`, `movie_format`, `special_format`
+- `eject`, `max_speed`, `min_duration`, `show_filtered`, `verbose_libbluray`
+- `output_dir`, `device`, `stream_selection`, `reserve_index_space`
+- `aacs_backend` (auto/libaacs/libmmbd), `overwrite`, `auto_detect`
+
 ## Build & Test Commands
 
 ```bash
@@ -94,6 +101,7 @@ Before every commit, you MUST run:
 12. `hooks.rs` — post-rip/post-session hook execution: template expansion, `sh -c` execution, blocking/non-blocking modes, output logging
 13. `verify.rs` — post-remux output validation: probe MKV headers (duration, stream counts, chapters), optional frame decode at seek points
 14. `streams.rs` — stream filtering (`StreamFilter::apply()`) and CLI track spec parsing (`parse_track_spec()`)
+15. `detection.rs` — playlist type detection heuristics (duration, stream count, chapter count) and TMDb runtime matching with confidence levels
 
 ### Two UI Modes
 
@@ -128,7 +136,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
 - **Settings overlay** — `App.overlay: Option<Overlay>` renders on top of the current screen. When active, all global key handlers except `Ctrl+C` are blocked; input routes to the overlay handler. `SettingsState` holds typed `SettingItem` variants (Toggle, Choice, Text, Number, Separator, Action). Choice variant has optional `custom_value` for the "Custom..." option (used by device dropdown). `Ctrl+S` in the overlay saves to `config.toml` with commented-out defaults and triggers workflow reset (rescan) unless mid-rip. Toggle/Choice changes apply to the session immediately without saving.
 - **Config path resolution** — Priority: `--config` CLI flag → `BLUBACK_CONFIG` env var → `~/.config/bluback/config.toml`. The resolved path is stored as `config_path: PathBuf` on `App`.
-- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `BLUBACK_AACS_BACKEND`, `BLUBACK_OVERWRITE`, `BLUBACK_BATCH`, `BLUBACK_VERIFY`, `BLUBACK_VERIFY_LEVEL`, `BLUBACK_METADATA`, `BLUBACK_AUDIO_LANGUAGES`, `BLUBACK_SUBTITLE_LANGUAGES`, `BLUBACK_PREFER_SURROUND`, `TMDB_API_KEY`.
+- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `BLUBACK_AACS_BACKEND`, `BLUBACK_OVERWRITE`, `BLUBACK_BATCH`, `BLUBACK_VERIFY`, `BLUBACK_VERIFY_LEVEL`, `BLUBACK_METADATA`, `BLUBACK_AUDIO_LANGUAGES`, `BLUBACK_SUBTITLE_LANGUAGES`, `BLUBACK_PREFER_SURROUND`, `BLUBACK_AUTO_DETECT`, `TMDB_API_KEY`.
 - **`--settings` standalone mode** — Opens settings panel without disc detection or dependency checks. Dirty close prompts to save. Exits after panel close.
 - **Signal handling** — `ctrlc` crate registers handler for SIGINT/SIGTERM. First signal sets global `AtomicBool` cancel flag (propagated to remux cancel). Second signal within 2 seconds force-exits with code 130. Partial MKV files are deleted on cancel or error in both CLI and TUI modes.
 - **MountGuard** — RAII struct in `disc.rs` with both explicit `cleanup()` and `Drop` impl for disc unmount. Primary cleanup is explicit (called before `std::process::exit()`); `Drop` is a safety net for panics.
@@ -140,6 +148,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Post-rip hooks** — `[post_rip]` and `[post_session]` config tables with `command`, `on_failure`, `blocking`, `log_output` fields. Commands run via `sh -c` with `{var}` template expansion (TODO(debt): shell injection risk from unescaped values). Per-file hook fires after each playlist remux; per-session hook fires after all jobs complete. Both called from CLI (`cli.rs`) and TUI (`tui/dashboard.rs`). `--no-hooks` disables for the run. Hook failures are logged but never fail the rip.
 - **Rip verification** — Optional post-remux validation. `verify` config (default false) + `verify_level` ("quick" or "full"). Quick: probe output MKV headers — check duration (2% tolerance), stream counts, chapter count. Full: adds sample frame decode at 5 seek points. `--verify`, `--verify-level`, `--no-verify` CLI flags. TUI prompts on failure (delete & retry / keep / skip). CLI logs warning. Hook vars: `{verify}` (passed/failed/skipped), `{verify_detail}` (comma-separated failed check names).
 - **Batch mode** — `--batch` flag + `batch` config option enables continuous multi-disc ripping. After rip completes, auto-ejects and waits for next disc. TUI: auto-restarts wizard on disc detection (skip popup). CLI: outer loop with disc polling via `get_volume_label()`, 2-second interval. Episode numbers auto-advance across discs (specials excluded). `--batch` conflicts with `--dry-run`, `--list-playlists`, `--check`, `--settings`, `--no-eject`. Settings panel toggle + `BLUBACK_BATCH` env var. Disc counter shown in TUI block title.
+- **Auto-detection** — Optional heuristic system (`auto_detect` config, `--auto-detect` CLI) that pre-marks likely specials and multi-episode playlists. Layer 1: duration outliers (<50% median = high special, 50-75% = medium, >200% = multi-episode), stream count anomalies, chapter count anomalies. Layer 2: TMDb runtime matching (±10% or ±3min tolerance) with season 0 fetch for specials. Three confidence levels (High/Medium/Low); high-confidence pre-marked in TUI, auto-applied in headless CLI. `--specials` takes precedence over auto-detection.
 
 ## Testing
 
@@ -148,6 +157,7 @@ Unit tests live in `#[cfg(test)] mod tests` blocks within each module. Integrati
 **Unit tests (483):**
 - `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering, episode counting for batch auto-advance
 - `disc.rs` — volume label parsing, playlist filtering
+- `detection.rs` — duration heuristics, stream/chapter count analysis, TMDb runtime matching, confidence stacking, edge cases
 - `media/probe.rs` — HDR classification, channel layout formatting, framerate/aspect ratio formatting, playlist log line parsing, GCD, DTS profile formatting
 - `media/remux.rs` — stream selection logic (all, prefer_surround, manual), map arg building, progress line parsing, size/ETA estimation, chapter OGM formatting
 - `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output, validation (unknown keys, numeric bounds, template braces), aacs_backend parsing, overwrite/batch option, should_batch resolution
@@ -209,6 +219,8 @@ bluback [OPTIONS]
       --verify                 Verify output files after ripping
       --verify-level <LEVEL>   Verification level: quick or full
       --no-verify              Disable verification (overrides config)
+      --auto-detect            Enable automatic episode/special detection heuristics
+      --no-auto-detect         Disable auto-detection (overrides config)
       --audio-lang <LANGS>     Filter audio by language (e.g. "eng,jpn")
       --subtitle-lang <LANGS>  Filter subtitles by language (e.g. "eng")
       --tracks <SPEC>          Select streams by type-local index (e.g. "a:0,2;s:0-1")
@@ -227,6 +239,7 @@ bluback [OPTIONS]
 
 `--format` and `--format-preset` are mutually exclusive (clap argument group).
 `--yes` auto-enables when stdin is not a TTY (headless/scripted contexts).
+`--auto-detect` conflicts with `--movie`.
 
 ### Exit Codes
 
@@ -266,6 +279,7 @@ bluback [OPTIONS]
 - `R` — Reset all episode assignments
 - `t` — Expand/collapse track list (shows video/audio/subtitle streams)
 - `f` — Show/hide filtered (short) playlists
+- `A` — Accept all auto-detected suggestions (medium+ confidence)
 - `Enter` — Confirm and proceed
 - `Esc` — Go back
 
