@@ -237,6 +237,17 @@ const EXIT_NO_DEVICE: i32 = 3;
 const EXIT_CANCELLED: i32 = 4;
 
 fn main() {
+    // Ensure makemkvcon cleanup on ALL exit paths, including double-Ctrl+C
+    // force exit and sub-thread races. atexit handlers run during
+    // std::process::exit() before the process terminates.
+    extern "C" fn cleanup_makemkvcon() {
+        aacs::kill_makemkvcon_children();
+        aacs::reap_children();
+    }
+    unsafe {
+        libc::atexit(cleanup_makemkvcon);
+    }
+
     let code = run();
     std::process::exit(code);
 }
@@ -291,6 +302,11 @@ fn run_inner() -> anyhow::Result<i32> {
             .unwrap_or(0);
         let first = FIRST_SIGNAL_MS.load(Ordering::Relaxed);
         if first > 0 && now.saturating_sub(first) < 2000 {
+            // Force exit — clean up makemkvcon before terminating.
+            // The atexit handler provides a second sweep, but explicit
+            // cleanup here catches processes while threads are still alive.
+            aacs::kill_makemkvcon_children();
+            aacs::reap_children();
             std::process::exit(130);
         }
         FIRST_SIGNAL_MS.store(now, Ordering::Relaxed);

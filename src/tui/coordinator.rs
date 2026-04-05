@@ -132,6 +132,7 @@ impl Coordinator {
                         "unknown panic".to_string()
                     };
                     log::error!("Session thread panicked: {}", msg);
+                    crate::aacs::kill_makemkvcon_children();
                 }
             })
             .expect("failed to spawn session thread");

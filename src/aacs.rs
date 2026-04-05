@@ -2,6 +2,20 @@ use crate::config::AacsBackend;
 use anyhow::{bail, Result};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
+
+/// Process group IDs from forked scan children. When the scan child exits,
+/// makemkvcon is orphaned (PPid → init) but remains in the child's process group.
+/// We track these PGIDs so `kill_makemkvcon_children` can SIGKILL any stragglers
+/// that survived the initial process group kill.
+static SCAN_PGIDS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+/// Register a scan child's PGID for later cleanup.
+pub fn register_scan_pgid(pgid: i32) {
+    if let Ok(mut list) = SCAN_PGIDS.try_lock() {
+        list.push(pgid);
+    }
+}
 
 /// Check if a command exists in PATH.
 pub fn command_exists(name: &str) -> bool {
@@ -177,13 +191,20 @@ pub fn reap_children() {
     }
 }
 
-/// Kill any orphaned makemkvcon child processes of the current process.
+/// Kill any orphaned makemkvcon child processes of the current process,
+/// plus any remaining in scan-forked process groups.
 ///
 /// When using the libmmbd AACS backend, libbluray spawns makemkvcon via IPC
 /// each time a bluray device is opened (count_streams, probe_playlist, remux).
 /// These processes aren't always cleaned up when the FFmpeg context is dropped,
 /// leaving orphans that can interfere with subsequent device opens and survive
 /// past bluback's exit.
+///
+/// Two cleanup strategies:
+/// 1. Direct children: scan /proc for makemkvcon with PPid == our PID
+/// 2. Scan fork orphans: SIGKILL process groups from forked scan children
+///    (makemkvcon is orphaned to init when the scan child exits, but remains
+///    in the child's process group)
 #[cfg(target_os = "linux")]
 pub fn kill_makemkvcon_children() {
     let our_pid = std::process::id();
@@ -222,6 +243,18 @@ pub fn kill_makemkvcon_children() {
             unsafe {
                 libc::kill(pid, libc::SIGKILL);
                 libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+        }
+    }
+
+    // Kill any makemkvcon that survived in scan-forked process groups.
+    // These are orphaned (PPid == 1) and invisible to the PPid check above.
+    // Uses try_lock to avoid deadlocking when called from atexit handlers
+    // or concurrent signal contexts.
+    if let Ok(mut pgids) = SCAN_PGIDS.try_lock() {
+        for pgid in pgids.drain(..) {
+            unsafe {
+                libc::kill(-pgid, libc::SIGKILL);
             }
         }
     }

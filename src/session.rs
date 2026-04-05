@@ -564,6 +564,7 @@ impl DriveSession {
                         results.insert(num.clone(), (media, streams));
                     }
                 }
+                crate::aacs::kill_makemkvcon_children();
                 let _ = tx.send(BackgroundResult::BulkProbe(results));
             })
             .expect("failed to spawn probe thread");

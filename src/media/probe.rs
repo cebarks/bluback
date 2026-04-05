@@ -227,6 +227,7 @@ fn scan_with_log_capture(
 
     // === PARENT PROCESS ===
     unsafe { libc::close(pipe_write) };
+    crate::aacs::register_scan_pgid(child_pid);
 
     let poll_interval = Duration::from_secs(5);
     let start = std::time::Instant::now();
@@ -253,8 +254,10 @@ fn scan_with_log_capture(
     };
     unsafe { libc::close(pipe_read) };
 
-    // Kill any remaining processes in the child's process group (e.g., makemkvcon)
-    unsafe { libc::kill(-child_pid, libc::SIGTERM) };
+    // Kill any remaining processes in the child's process group (e.g., makemkvcon).
+    // Must be SIGKILL — makemkvcon may ignore SIGTERM, and since the child has
+    // exited these orphaned processes can't be found by kill_makemkvcon_children().
+    unsafe { libc::kill(-child_pid, libc::SIGKILL) };
 
     let (lines_str, status, error_msg) = parse_child_output(&child_result);
 
