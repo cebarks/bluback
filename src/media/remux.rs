@@ -220,21 +220,20 @@ where
     // duration = max_PTS, which includes that offset as empty seekable time.
     // This mirrors what the ffmpeg CLI does via ts_offset = -start_time.
     let input_start_time = unsafe { (*ictx.as_ptr()).start_time };
-    let stream_ts_offsets: Vec<i64> = if input_start_time > 0
-        && input_start_time != ffmpeg::ffi::AV_NOPTS_VALUE
-    {
-        (0..nb_input_streams)
-            .map(|i| {
-                let tb = ictx
-                    .stream(i)
-                    .map(|s| s.time_base())
-                    .unwrap_or(Rational(1, 90000));
-                input_start_time.rescale(ffmpeg::rescale::TIME_BASE, tb)
-            })
-            .collect()
-    } else {
-        vec![0; nb_input_streams]
-    };
+    let stream_ts_offsets: Vec<i64> =
+        if input_start_time > 0 && input_start_time != ffmpeg::ffi::AV_NOPTS_VALUE {
+            (0..nb_input_streams)
+                .map(|i| {
+                    let tb = ictx
+                        .stream(i)
+                        .map(|s| s.time_base())
+                        .unwrap_or(Rational(1, 90000));
+                    input_start_time.rescale(ffmpeg::rescale::TIME_BASE, tb)
+                })
+                .collect()
+        } else {
+            vec![0; nb_input_streams]
+        };
 
     if input_start_time > 0 && input_start_time != ffmpeg::ffi::AV_NOPTS_VALUE {
         let offset_secs = input_start_time as f64 / f64::from(ffmpeg::ffi::AV_TIME_BASE);
@@ -312,10 +311,7 @@ where
         // Normalize timestamps: subtract the input start_time offset so the
         // output MKV starts at PTS ~0 instead of inheriting the Blu-ray
         // transport stream's clock offset.
-        let ts_offset = stream_ts_offsets
-            .get(in_stream_idx)
-            .copied()
-            .unwrap_or(0);
+        let ts_offset = stream_ts_offsets.get(in_stream_idx).copied().unwrap_or(0);
         if ts_offset != 0 {
             if let Some(pts) = packet.pts() {
                 packet.set_pts(Some(pts - ts_offset));
