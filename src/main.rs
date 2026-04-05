@@ -237,6 +237,15 @@ const EXIT_NO_DEVICE: i32 = 3;
 const EXIT_CANCELLED: i32 = 4;
 
 fn main() {
+    // Become a subreaper so that orphaned descendant processes (e.g.,
+    // makemkvcon spawned by libmmbd via double-fork) get reparented to
+    // us instead of PID 1. This ensures kill_makemkvcon_children() can
+    // find and clean up ALL makemkvcon processes, not just direct children.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0);
+    }
+
     // Ensure makemkvcon cleanup on ALL exit paths, including double-Ctrl+C
     // force exit and sub-thread races. atexit handlers run during
     // std::process::exit() before the process terminates.
