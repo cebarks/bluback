@@ -1,5 +1,6 @@
 use crate::config::AacsBackend;
 use anyhow::{bail, Result};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
@@ -9,6 +10,12 @@ use std::sync::Mutex;
 /// We track these PGIDs so `kill_makemkvcon_children` can SIGKILL any stragglers
 /// that survived the initial process group kill.
 static SCAN_PGIDS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+/// Serializes device opens so that MakemkvconGuard's before/after PID
+/// diffing correctly attributes makemkvcon processes to the operation
+/// that spawned them.
+#[allow(dead_code)] // Used by MakemkvconGuard::track_open; consumed by probe/remux in Tasks 2-3
+static SPAWN_LOCK: Mutex<()> = Mutex::new(());
 
 /// Register a scan child's PGID for later cleanup.
 pub fn register_scan_pgid(pgid: i32) {
@@ -191,6 +198,115 @@ pub fn reap_children() {
     }
 }
 
+/// List all makemkvcon processes that are children of this process.
+/// Returns a set of PIDs for diffing (used by MakemkvconGuard).
+#[allow(dead_code)] // Part of MakemkvconGuard API; consumed by probe/remux in Tasks 2-3
+#[cfg(target_os = "linux")]
+pub fn list_makemkvcon_children_set() -> HashSet<i32> {
+    let our_pid = std::process::id();
+    let mut pids = HashSet::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return pids;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Ok(pid) = name.to_string_lossy().parse::<i32>() else {
+            continue;
+        };
+        let status_path = format!("/proc/{}/status", pid);
+        let Ok(status) = std::fs::read_to_string(&status_path) else {
+            continue;
+        };
+        let is_our_child = status.lines().any(|line| {
+            line.strip_prefix("PPid:")
+                .and_then(|rest| rest.trim().parse::<u32>().ok())
+                == Some(our_pid)
+        });
+        if !is_our_child {
+            continue;
+        }
+        let comm_path = format!("/proc/{}/comm", pid);
+        let Ok(comm) = std::fs::read_to_string(&comm_path) else {
+            continue;
+        };
+        if comm.trim() == "makemkvcon" {
+            pids.insert(pid);
+        }
+    }
+    pids
+}
+
+#[allow(dead_code)] // Part of MakemkvconGuard API; consumed by probe/remux in Tasks 2-3
+#[cfg(not(target_os = "linux"))]
+pub fn list_makemkvcon_children_set() -> HashSet<i32> {
+    HashSet::new()
+}
+
+/// Kill specific makemkvcon processes by PID.
+#[allow(dead_code)] // Part of MakemkvconGuard API; consumed by probe/remux in Tasks 2-3
+pub fn kill_makemkvcon_pids(pids: &[i32]) {
+    for &pid in pids {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
+        }
+    }
+}
+
+/// RAII guard that tracks makemkvcon processes spawned during device opens
+/// and kills only those processes when dropped.
+///
+/// Each device-opening operation (probe_playlist, remux) should create a guard
+/// and call `track_open()` around the FFmpeg `format::input*` call. The guard
+/// snapshots makemkvcon children before and after the open, recording only the
+/// new PIDs. On drop, it kills exactly those PIDs — no cross-session interference.
+///
+/// The `SPAWN_LOCK` is held during `track_open()` to serialize device opens,
+/// ensuring accurate PID attribution across concurrent sessions.
+#[allow(dead_code)] // Part of scoped makemkvcon cleanup API; consumed by probe/remux in Tasks 2-3
+pub struct MakemkvconGuard {
+    pids: Vec<i32>,
+}
+
+#[allow(dead_code)] // Consumed by probe/remux in Tasks 2-3
+impl MakemkvconGuard {
+    pub fn new() -> Self {
+        Self { pids: Vec::new() }
+    }
+
+    /// Execute a device-opening closure, tracking any makemkvcon processes
+    /// it spawns. The SPAWN_LOCK is held during the closure to prevent
+    /// concurrent opens from confusing the before/after PID diff.
+    #[cfg(target_os = "linux")]
+    pub fn track_open<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _lock = SPAWN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let before = list_makemkvcon_children_set();
+        let result = f();
+        let after = list_makemkvcon_children_set();
+        self.pids.extend(after.difference(&before));
+        result
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn track_open<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        f()
+    }
+}
+
+impl Drop for MakemkvconGuard {
+    fn drop(&mut self) {
+        if !self.pids.is_empty() {
+            kill_makemkvcon_pids(&self.pids);
+        }
+    }
+}
+
 /// Kill any orphaned makemkvcon child processes of the current process,
 /// plus any remaining in scan-forked process groups.
 ///
@@ -286,5 +402,31 @@ mod tests {
     #[test]
     fn test_command_exists_false() {
         assert!(!command_exists("definitely_not_a_real_command_xyz"));
+    }
+
+    #[test]
+    fn test_list_makemkvcon_children_set_returns_set() {
+        // No makemkvcon processes on CI — should return empty set
+        let pids = list_makemkvcon_children_set();
+        assert!(pids.is_empty());
+    }
+
+    #[test]
+    fn test_kill_makemkvcon_pids_empty_is_noop() {
+        // Should not panic or error on empty slice
+        kill_makemkvcon_pids(&[]);
+    }
+
+    #[test]
+    fn test_kill_makemkvcon_pids_nonexistent_pid() {
+        // Killing a non-existent PID should not panic (ESRCH is fine)
+        kill_makemkvcon_pids(&[999_999_999]);
+    }
+
+    #[test]
+    fn test_makemkvcon_guard_drop_empty() {
+        // Guard with no tracked PIDs should drop cleanly
+        let guard = MakemkvconGuard::new();
+        drop(guard);
     }
 }
