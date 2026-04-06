@@ -880,6 +880,10 @@ pub fn run_detection_if_enabled(session: &mut crate::session::DriveSession) {
                 }
             }
         }
+        // Reassign regular episodes to account for auto-marked specials
+        if !session.wizard.specials.is_empty() {
+            reassign_regular_episodes(session);
+        }
     } else {
         session.wizard.detection_results.clear();
     }
@@ -923,6 +927,7 @@ fn accept_detection_suggestions(session: &mut crate::session::DriveSession) {
             }
         }
     }
+    reassign_regular_episodes(session);
 }
 
 /// Recalculate regular (non-special) episode assignments.
@@ -931,7 +936,6 @@ fn accept_detection_suggestions(session: &mut crate::session::DriveSession) {
 /// re-runs `assign_episodes` on just those playlists, and merges the
 /// result with existing special assignments. This ensures episode numbers
 /// shift correctly when specials are added or removed.
-#[allow(dead_code)]
 fn reassign_regular_episodes(session: &mut crate::session::DriveSession) {
     let non_special_pl: Vec<crate::types::Playlist> = session
         .disc
@@ -1416,6 +1420,7 @@ pub fn handle_playlist_manager_input_session(
                         *sel = true;
                     }
                 }
+                reassign_regular_episodes(session);
             }
         }
         KeyCode::Char('r') => {
@@ -1426,8 +1431,8 @@ pub fn handle_playlist_manager_input_session(
             }
         }
         KeyCode::Char('R') => {
-            session.wizard.episode_assignments.clear();
             session.wizard.specials.clear();
+            reassign_regular_episodes(session);
         }
         KeyCode::Char('t') | KeyCode::Char('T') => {
             if let Some(&(real_idx, _)) = visible.get(session.wizard.list_cursor) {
