@@ -205,14 +205,12 @@ pub fn assign_episodes(
 
     for pl in playlists {
         // Determine how many episodes this playlist likely contains
-        let ep_count = if playlists.len() > 1
-            && median_secs > 0
-            && pl.seconds as f64 >= median_secs as f64 * 1.5
-        {
-            (pl.seconds / median_secs).max(1)
+        let ep_count = if playlists.len() > 1 && median_secs > 0 {
+            (pl.seconds as f64 / median_secs as f64).round() as u32
         } else {
             1
-        };
+        }
+        .max(1);
 
         let mut eps = Vec::new();
         for _ in 0..ep_count {
@@ -1080,6 +1078,137 @@ mod tests {
         // Double wants 2 episodes but only 1 remains
         assert_eq!(result["00002"].len(), 1);
         assert_eq!(result["00002"][0].episode_number, 2);
+    }
+
+    #[test]
+    fn test_assign_episodes_rounds_instead_of_truncating() {
+        let playlists = vec![
+            Playlist {
+                num: "00001".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            },
+            Playlist {
+                num: "00003".into(),
+                duration: "1:06:00".into(),
+                seconds: 3960, // 1.5x median (2640)
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            },
+        ];
+        let episodes: Vec<Episode> = (1..=4)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
+        let result = assign_episodes(&playlists, &episodes, 1);
+        assert_eq!(result["00001"].len(), 1);
+        assert_eq!(result["00001"][0].episode_number, 1);
+        assert_eq!(result["00002"].len(), 1);
+        assert_eq!(result["00002"][0].episode_number, 2);
+        // 1.5x median rounds to 2 episodes
+        assert_eq!(result["00003"].len(), 2);
+        assert_eq!(result["00003"][0].episode_number, 3);
+        assert_eq!(result["00003"][1].episode_number, 4);
+    }
+
+    /// Simulates the "mark a playlist as special" scenario:
+    /// 5 playlists initially assigned ep1-5, then playlist 2 is marked special.
+    /// Re-running assign_episodes on the 4 non-special playlists should give
+    /// ep1, ep2, ep3, ep4 — not ep1, ep3, ep4, ep5 (the old buggy behavior).
+    #[test]
+    fn test_reassign_after_special_shifts_episodes() {
+        let all_playlists: Vec<Playlist> = (1..=5)
+            .map(|n| Playlist {
+                num: format!("{:05}", n),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            })
+            .collect();
+        let episodes: Vec<Episode> = (1..=5)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
+
+        // Initial assignment: all 5 playlists get ep1-5
+        let initial = assign_episodes(&all_playlists, &episodes, 1);
+        assert_eq!(initial["00001"][0].episode_number, 1);
+        assert_eq!(initial["00002"][0].episode_number, 2);
+        assert_eq!(initial["00003"][0].episode_number, 3);
+
+        // Mark playlist 00002 as special — reassign on non-special playlists only
+        let non_special: Vec<Playlist> = all_playlists
+            .iter()
+            .filter(|pl| pl.num != "00002")
+            .cloned()
+            .collect();
+        let reassigned = assign_episodes(&non_special, &episodes, 1);
+
+        // Episodes should shift: 00001=ep1, 00003=ep2, 00004=ep3, 00005=ep4
+        assert_eq!(reassigned["00001"][0].episode_number, 1);
+        assert_eq!(reassigned["00003"][0].episode_number, 2);
+        assert_eq!(reassigned["00004"][0].episode_number, 3);
+        assert_eq!(reassigned["00005"][0].episode_number, 4);
+        assert!(!reassigned.contains_key("00002"));
+    }
+
+    /// Simulates multi-disc scenario: disc 2 of a show with 6 episodes per disc.
+    /// guess_start_episode should use the total playlist count (6), not the
+    /// non-special count, so that disc 2 starts at episode 7.
+    #[test]
+    fn test_multi_disc_start_episode_uses_total_count() {
+        // Disc 2 with 6 playlists
+        let start = guess_start_episode(Some(2), 6);
+        assert_eq!(start, 7); // 1 + 6 * (2-1) = 7
+
+        // If we incorrectly used non-special count (5), we'd get 6
+        let wrong = guess_start_episode(Some(2), 5);
+        assert_eq!(wrong, 6); // 1 + 5 * (2-1) = 6 — wrong!
+
+        // Verify the reassignment with correct start episode works
+        let playlists: Vec<Playlist> = (1..=5)
+            .map(|n| Playlist {
+                num: format!("{:05}", n),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            })
+            .collect();
+        let episodes: Vec<Episode> = (1..=12)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
+
+        // Using correct start (7) from total count of 6
+        let result = assign_episodes(&playlists, &episodes, 7);
+        assert_eq!(result["00001"][0].episode_number, 7);
+        assert_eq!(result["00002"][0].episode_number, 8);
+        assert_eq!(result["00005"][0].episode_number, 11);
     }
 
     #[test]
