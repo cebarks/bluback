@@ -6,7 +6,6 @@ use std::path::Path;
 /// Each HDMV title entry references an MPLS playlist by number.
 /// Returns playlist numbers (zero-padded to 5 digits) in the disc author's
 /// intended title order, or `None` if the file can't be read/parsed.
-#[allow(dead_code)]
 pub fn parse_title_order(mount_point: &Path) -> Option<Vec<String>> {
     let index_path = mount_point.join("BDMV").join("index.bdmv");
     let data = std::fs::read(&index_path).ok()?;
@@ -86,7 +85,6 @@ pub fn parse_title_order(mount_point: &Path) -> Option<Vec<String>> {
 /// Playlists referenced in `title_order` are moved to the front in that order.
 /// Remaining playlists are appended in MPLS number order.
 /// If `title_order` is `None`, falls back to sorting all playlists by MPLS number.
-#[allow(dead_code)]
 pub fn reorder_playlists(playlists: &mut [crate::types::Playlist], title_order: Option<&[String]>) {
     match title_order {
         Some(order) => {

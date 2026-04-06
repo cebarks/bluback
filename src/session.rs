@@ -736,28 +736,42 @@ impl DriveSession {
                     .map(|pl| self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num))
                     .collect();
 
-                // Extract chapter counts from MPLS files
+                // Extract chapter counts and title order from mounted disc
                 let device_str = self.device.to_string_lossy().to_string();
-                match crate::disc::ensure_mounted(&device_str) {
+                let title_order = match crate::disc::ensure_mounted(&device_str) {
                     Ok((mount, did_mount)) => {
+                        let mount_path = std::path::Path::new(&mount);
                         let nums: Vec<&str> = self
                             .disc
                             .playlists
                             .iter()
                             .map(|pl| pl.num.as_str())
                             .collect();
-                        self.disc.chapter_counts = crate::chapters::count_chapters_for_playlists(
-                            std::path::Path::new(&mount),
-                            &nums,
-                        );
+                        self.disc.chapter_counts =
+                            crate::chapters::count_chapters_for_playlists(mount_path, &nums);
+                        let order = crate::index::parse_title_order(mount_path);
                         if did_mount {
                             let _ = crate::disc::unmount_disc(&device_str);
                         }
+                        order
                     }
                     Err(_) => {
                         self.disc.chapter_counts.clear();
+                        None
                     }
-                }
+                };
+
+                // Reorder playlists by title index (or MPLS number fallback)
+                crate::index::reorder_playlists(&mut self.disc.playlists, title_order.as_deref());
+                crate::index::reorder_playlists(&mut self.disc.episodes_pl, title_order.as_deref());
+
+                // Re-derive playlist_selected after reorder
+                self.wizard.playlist_selected = self
+                    .disc
+                    .playlists
+                    .iter()
+                    .map(|pl| self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num))
+                    .collect();
 
                 // Count first disc in batch mode
                 if self.batch && self.batch_disc_count == 0 {
