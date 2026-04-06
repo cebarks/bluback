@@ -1289,10 +1289,6 @@ fn rip_selected(
         let started = std::cell::Cell::new(false);
         let pl_num = pl.num.clone();
 
-        // Kill stale makemkvcon from prior device opens (scan, probe) so they
-        // don't interfere with the remux's libbluray/AACS initialization.
-        crate::aacs::kill_makemkvcon_children();
-
         let result = crate::media::remux::remux(options, |progress| {
             // Use actual stream duration from FFmpeg when available,
             // falling back to libbluray's parsed playlist duration
@@ -1332,9 +1328,6 @@ fn rip_selected(
                 }
             }
         });
-
-        // Clean up makemkvcon spawned during this remux.
-        crate::aacs::kill_makemkvcon_children();
 
         if is_tty {
             println!(); // newline after \r progress
