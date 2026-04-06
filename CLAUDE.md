@@ -79,9 +79,10 @@ cargo fmt                      # Format code
 
 ## Pre-Commit Checklist
 
-Before every commit, you MUST run:
-1. `rustup run stable cargo fmt` — format all code (must use stable toolchain to match CI)
-2. `cargo clippy -- -D warnings` — all warnings must be fixed (this matches CI)
+Before every commit, you MUST run all three of these and verify they pass:
+1. `cargo test` — all tests must pass
+2. `rustup run stable cargo fmt` — format all code (must use stable toolchain to match CI)
+3. `cargo clippy -- -D warnings` — all warnings must be fixed (this matches CI)
 
 ## Architecture
 
