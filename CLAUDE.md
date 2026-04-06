@@ -101,8 +101,10 @@ Before every commit, you MUST run all three of these and verify they pass:
 11. `aacs.rs` — AACS backend preflight (library detection via ldconfig, makemkvcon availability, LIBAACS_PATH env var setup, zombie process reaping)
 12. `hooks.rs` — post-rip/post-session hook execution: template expansion, `sh -c` execution, blocking/non-blocking modes, output logging
 13. `verify.rs` — post-remux output validation: probe MKV headers (duration, stream counts, chapters), optional frame decode at seek points
-14. `streams.rs` — stream filtering (`StreamFilter::apply()`) and CLI track spec parsing (`parse_track_spec()`)
-15. `detection.rs` — playlist type detection heuristics (duration, stream count, chapter count) and TMDb runtime matching with confidence levels
+14. `chapters.rs` — chapter extraction with missing paths/playlists
+15. `index.rs` — Blu-ray `index.bdmv` parser: extracts title→playlist ordering for correct episode assignment
+16. `streams.rs` — stream filtering (`StreamFilter::apply()`) and CLI track spec parsing (`parse_track_spec()`)
+17. `detection.rs` — playlist type detection heuristics (duration, stream count, chapter count) and TMDb runtime matching with confidence levels
 
 ### Two UI Modes
 
@@ -132,6 +134,8 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **MKV index reservation** — `reserve_index_space` config option (default 500 KB) reserves void space after the MKV header for the seek index (Cues) and in-place metadata edits. Cues at the front of the file enable faster seeking over HTTP byte-range requests, and the extra void space allows tools like `mkvpropedit` to update metadata without rewriting the entire file. If the actual Cues exceed the reserved space, they fall back to EOF (standard behavior). Passed to FFmpeg via `write_header_with` dictionary option.
 - **libbluray stderr suppression** — `BD_DEBUG_MASK=0` set by default to prevent libbluray debug output from corrupting TUI. Controlled by `verbose_libbluray` config option.
 - **Episode assignment** — Default: sequential with multi-episode detection (uses median playlist duration with 1.5x threshold to detect double-episode playlists). Volume label parsing guesses the starting episode from disc number. The Playlist Manager screen allows overriding individual playlist assignments inline (`e` hotkey), including assigning multiple episodes to a single playlist (e.g., `3-4` or `3,5`). Multi-episode playlists produce range-style filenames like `S01E03-E04_Title.mkv`. The `EpisodeAssignments` type is `HashMap<String, Vec<Episode>>` — each playlist maps to zero or more episodes.
+- **Playlist ordering** — Playlists are reordered after scan using the title table from `BDMV/index.bdmv`, which reflects the disc author's intended playback order. Falls back to MPLS number sort if `index.bdmv` is unavailable or unparseable. Both `disc.playlists` and `disc.episodes_pl` are reordered before any episode assignment occurs.
+- **Episode reassignment on special changes** — When playlists are marked/unmarked as specials (`s` key, auto-detection, `A` key), regular episode assignments are recalculated via `reassign_regular_episodes()`. This ensures episode numbers shift correctly instead of leaving gaps. The `r` key (reset single) does NOT trigger reassignment — manual edits are intentional.
 - **Specials support** — Playlists can be marked as specials (`s` hotkey in TUI Playlist Manager, `--specials <SEL>` in CLI using filtered indices). Uses `S{season}SP{episode}` naming format (actual season, not S00) and a separate `special_format` naming template. TUI: `r` resets a single row's assignment, `R` resets all. CLI: specials auto-assigned SP01, SP02, etc.
 - **All playlists visible** — The Playlist Manager shows all disc playlists, not just episode-length ones. Filtered playlists (below `min_duration`) are hidden by default but can be toggled with `f`. Controlled by `show_filtered` config option.
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
@@ -178,6 +182,7 @@ Unit tests live in `#[cfg(test)] mod tests` blocks within each module. Integrati
 - `session.rs` — state machine transitions, rescan preservation, batch field survival
 - `aacs.rs` — command_exists, is_libmmbd path detection
 - `chapters.rs` — chapter extraction with missing paths/playlists
+- `index.rs` — Blu-ray index.bdmv parsing, playlist reordering logic
 - `drive_monitor.rs` — drive detection, event classification
 - `check.rs` — environment validation
 
