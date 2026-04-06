@@ -946,10 +946,11 @@ fn reassign_regular_episodes(session: &mut crate::session::DriveSession) {
         .collect();
 
     let disc_num = session.disc.label_info.as_ref().map(|l| l.disc);
-    let start_ep = session
-        .wizard
-        .start_episode
-        .unwrap_or_else(|| crate::util::guess_start_episode(disc_num, non_special_pl.len()));
+    // Use total episode playlist count (not non-special count) to match
+    // the initial guess_start_episode calculation on multi-disc sets.
+    let start_ep = session.wizard.start_episode.unwrap_or_else(|| {
+        crate::util::guess_start_episode(disc_num, session.disc.episodes_pl.len())
+    });
 
     let new_assignments =
         crate::util::assign_episodes(&non_special_pl, &session.tmdb.episodes, start_ep);
