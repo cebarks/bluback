@@ -16,9 +16,10 @@ pub fn parse_title_order(mount_point: &Path) -> Option<Vec<String>> {
         return None;
     }
 
-    // Read indexes_start offset (u32 BE at offset 8)
+    // Read indexes_start offset (u32 BE at offset 8).
+    // This points directly to the index table (past AppInfoBDMV).
     let indexes_start = u32::from_be_bytes(data[8..12].try_into().ok()?) as usize;
-    if indexes_start >= data.len() {
+    if indexes_start + 4 > data.len() {
         log::debug!(
             "index.bdmv: indexes_start ({}) beyond file length",
             indexes_start
@@ -26,20 +27,10 @@ pub fn parse_title_order(mount_point: &Path) -> Option<Vec<String>> {
         return None;
     }
 
-    // Skip AppInfoBDMV section: 4-byte length + data
-    let pos = indexes_start;
-    if pos + 4 > data.len() {
-        return None;
-    }
-    let app_info_len = u32::from_be_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
-    let pos = pos + 4 + app_info_len;
-
-    // Indexes section: 4-byte length
-    if pos + 4 > data.len() {
-        return None;
-    }
-    let _indexes_len = u32::from_be_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
-    let pos = pos + 4;
+    // Index table: 4-byte length, then entries
+    let _indexes_len =
+        u32::from_be_bytes(data[indexes_start..indexes_start + 4].try_into().ok()?) as usize;
+    let pos = indexes_start + 4;
 
     // Skip First Playback (12 bytes) + Top Menu (12 bytes)
     let pos = pos + 24;
@@ -192,20 +183,22 @@ mod tests {
     fn build_index_bdmv(titles: &[(u8, u16)]) -> Vec<u8> {
         let mut buf = Vec::new();
 
+        // AppInfoBDMV (between header and index table)
+        let app_info_len: u32 = 34;
+        let indexes_start: u32 = 40 + 4 + app_info_len; // header + app_info length field + data
+
         // Header (40 bytes)
         buf.extend_from_slice(b"INDX");
         buf.extend_from_slice(b"0200");
-        let indexes_start: u32 = 40;
         buf.extend_from_slice(&indexes_start.to_be_bytes());
         buf.extend_from_slice(&0u32.to_be_bytes());
         buf.extend_from_slice(&[0u8; 24]);
 
-        // AppInfoBDMV section: length + minimal data
-        let app_info_len: u32 = 34;
+        // AppInfoBDMV section: 4-byte length + data (before indexes_start)
         buf.extend_from_slice(&app_info_len.to_be_bytes());
         buf.extend_from_slice(&vec![0u8; app_info_len as usize]);
 
-        // Indexes section
+        // Index table (at indexes_start)
         let first_play_top_menu = 12 + 12;
         let titles_data = 2 + titles.len() * 12;
         let indexes_len = first_play_top_menu + titles_data;
