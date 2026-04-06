@@ -159,15 +159,49 @@ jobs:
         id: changelog
         run: |
           prev_tag=$(git tag --sort=-version:refname | sed -n '2p')
-          if [ -n "$prev_tag" ]; then
-            log=$(git log --pretty=format:'- %s' "$prev_tag".."$GITHUB_REF_NAME")
-          else
-            log=$(git log --pretty=format:'- %s')
-          fi
+          range="${prev_tag:+$prev_tag..$GITHUB_REF_NAME}"
+          range="${range:-$GITHUB_REF_NAME}"
+
+          # Categorize commits by conventional commit prefix
+          features=$(git log --pretty=format:'%s' $range | grep -iE '^feat(\(|:)' | sed 's/^[^:]*: /- /' || true)
+          fixes=$(git log --pretty=format:'%s' $range | grep -iE '^fix(\(|:)' | sed 's/^[^:]*: /- /' || true)
+          tests=$(git log --pretty=format:'%s' $range | grep -iE '^test(\(|:)' | sed 's/^[^:]*: /- /' || true)
+          docs=$(git log --pretty=format:'%s' $range | grep -iE '^docs?(\(|:)' | sed 's/^[^:]*: /- /' || true)
+          other=$(git log --pretty=format:'%s' $range | grep -ivE '^(feat|fix|test|docs?|chore|ci|refactor|style|build)(\(|:)|^Merge ' | sed 's/^/- /' || true)
+
           {
-            echo 'body<<EOF'
-            echo "$log"
-            echo 'EOF'
+            echo 'body<<CHANGELOG_EOF'
+            echo "## What's Changed"
+            echo ""
+            if [ -n "$features" ]; then
+              echo "### Features"
+              echo "$features"
+              echo ""
+            fi
+            if [ -n "$fixes" ]; then
+              echo "### Bug Fixes"
+              echo "$fixes"
+              echo ""
+            fi
+            if [ -n "$tests" ]; then
+              echo "### Tests"
+              echo "$tests"
+              echo ""
+            fi
+            if [ -n "$docs" ]; then
+              echo "### Documentation"
+              echo "$docs"
+              echo ""
+            fi
+            if [ -n "$other" ]; then
+              echo "### Other"
+              echo "$other"
+              echo ""
+            fi
+            if [ -n "$prev_tag" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${prev_tag}...$GITHUB_REF_NAME"
+            fi
+            echo 'CHANGELOG_EOF'
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
