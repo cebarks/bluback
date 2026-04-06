@@ -14,7 +14,6 @@ static SCAN_PGIDS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 /// Serializes device opens so that MakemkvconGuard's before/after PID
 /// diffing correctly attributes makemkvcon processes to the operation
 /// that spawned them.
-#[allow(dead_code)] // Used by MakemkvconGuard::track_open; consumed by probe/remux in Tasks 2-3
 static SPAWN_LOCK: Mutex<()> = Mutex::new(());
 
 /// Register a scan child's PGID for later cleanup.
@@ -200,7 +199,6 @@ pub fn reap_children() {
 
 /// List all makemkvcon processes that are children of this process.
 /// Returns a set of PIDs for diffing (used by MakemkvconGuard).
-#[allow(dead_code)] // Part of MakemkvconGuard API; consumed by probe/remux in Tasks 2-3
 #[cfg(target_os = "linux")]
 pub fn list_makemkvcon_children_set() -> HashSet<i32> {
     let our_pid = std::process::id();
@@ -236,14 +234,12 @@ pub fn list_makemkvcon_children_set() -> HashSet<i32> {
     pids
 }
 
-#[allow(dead_code)] // Part of MakemkvconGuard API; consumed by probe/remux in Tasks 2-3
 #[cfg(not(target_os = "linux"))]
 pub fn list_makemkvcon_children_set() -> HashSet<i32> {
     HashSet::new()
 }
 
 /// Kill specific makemkvcon processes by PID.
-#[allow(dead_code)] // Part of MakemkvconGuard API; consumed by probe/remux in Tasks 2-3
 pub fn kill_makemkvcon_pids(pids: &[i32]) {
     for &pid in pids {
         unsafe {
@@ -263,12 +259,10 @@ pub fn kill_makemkvcon_pids(pids: &[i32]) {
 ///
 /// The `SPAWN_LOCK` is held during `track_open()` to serialize device opens,
 /// ensuring accurate PID attribution across concurrent sessions.
-#[allow(dead_code)] // Part of scoped makemkvcon cleanup API; consumed by probe/remux in Tasks 2-3
 pub struct MakemkvconGuard {
     pids: Vec<i32>,
 }
 
-#[allow(dead_code)] // Consumed by probe/remux in Tasks 2-3
 impl MakemkvconGuard {
     pub fn new() -> Self {
         Self { pids: Vec::new() }

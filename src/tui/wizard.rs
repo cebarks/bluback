@@ -1414,7 +1414,6 @@ pub fn handle_playlist_manager_input_session(
                             {
                                 results.insert(num, (media, streams));
                             }
-                            crate::aacs::kill_makemkvcon_children();
                             let _ = tx.send(crate::types::BackgroundResult::BulkProbe(results));
                         });
                         session.probe_rx = Some(rx);

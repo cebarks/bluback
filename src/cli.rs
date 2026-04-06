@@ -162,7 +162,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     // Verbose mode: use cached probe results, only probe on the spot if not cached
     let verbose_info: Vec<Option<(crate::types::MediaInfo, crate::types::StreamInfo)>> =
         if args.verbose {
-            let info: Vec<_> = playlists
+            playlists
                 .iter()
                 .map(|pl| {
                     probe_cache
@@ -170,9 +170,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
                         .cloned()
                         .or_else(|| crate::media::probe::probe_playlist(&device, &pl.num).ok())
                 })
-                .collect();
-            crate::aacs::kill_makemkvcon_children();
-            info
+                .collect()
         } else {
             vec![None; playlists.len()]
         };

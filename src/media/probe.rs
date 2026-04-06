@@ -115,12 +115,6 @@ pub fn scan_playlists_with_progress(
         }
     }
 
-    // Each probe_playlist call opens the device via libbluray, which may spawn
-    // makemkvcon when using the libmmbd backend. These child processes aren't
-    // killed when the FFmpeg context is dropped, so clean them up now to
-    // prevent interference with subsequent device opens (e.g., remux).
-    crate::aacs::kill_makemkvcon_children();
-
     log::info!("Scan complete: found {} playlists", playlists.len());
     Ok((playlists, probe_cache))
 }
@@ -519,7 +513,8 @@ pub fn probe_playlist(
     device: &str,
     playlist_num: &str,
 ) -> Result<(MediaInfo, StreamInfo), MediaError> {
-    let ctx = open_bluray(device, Some(playlist_num))?;
+    let mut guard = crate::aacs::MakemkvconGuard::new();
+    let ctx = guard.track_open(|| open_bluray(device, Some(playlist_num)))?;
 
     let mut media_info = MediaInfo::default();
     let mut video_streams = Vec::new();
