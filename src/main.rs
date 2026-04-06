@@ -7,6 +7,7 @@ mod detection;
 mod disc;
 mod drive_monitor;
 mod hooks;
+mod index;
 mod logging;
 mod media;
 mod rip;
