@@ -925,6 +925,41 @@ fn accept_detection_suggestions(session: &mut crate::session::DriveSession) {
     }
 }
 
+/// Recalculate regular (non-special) episode assignments.
+///
+/// Collects episode-length playlists that are not marked as specials,
+/// re-runs `assign_episodes` on just those playlists, and merges the
+/// result with existing special assignments. This ensures episode numbers
+/// shift correctly when specials are added or removed.
+#[allow(dead_code)]
+fn reassign_regular_episodes(session: &mut crate::session::DriveSession) {
+    let non_special_pl: Vec<crate::types::Playlist> = session
+        .disc
+        .episodes_pl
+        .iter()
+        .filter(|pl| !session.wizard.specials.contains(&pl.num))
+        .cloned()
+        .collect();
+
+    let disc_num = session.disc.label_info.as_ref().map(|l| l.disc);
+    let start_ep = session
+        .wizard
+        .start_episode
+        .unwrap_or_else(|| crate::util::guess_start_episode(disc_num, non_special_pl.len()));
+
+    let new_assignments =
+        crate::util::assign_episodes(&non_special_pl, &session.tmdb.episodes, start_ep);
+
+    // Remove all non-special assignments, keeping special ones intact
+    session
+        .wizard
+        .episode_assignments
+        .retain(|k, _| session.wizard.specials.contains(k));
+
+    // Merge in the recalculated regular assignments
+    session.wizard.episode_assignments.extend(new_assignments);
+}
+
 // --- Session variants of input handlers ---
 // These are mechanical ports of the App-based handlers above, operating on
 // DriveSession fields instead. The logic is identical.
