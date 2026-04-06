@@ -613,7 +613,7 @@ fn scan_disc(
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
 
-    let episodes_pl: Vec<Playlist> = disc::filter_episodes(&playlists, args.min_duration)
+    let episodes_pl: Vec<Playlist> = disc::filter_episodes(&playlists, min_duration)
         .into_iter()
         .cloned()
         .collect();

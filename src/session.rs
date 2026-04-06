@@ -980,6 +980,13 @@ impl DriveSession {
         self.wizard.season_num = Some(context.season_num);
         self.wizard.start_episode = Some(context.next_episode);
         if !self.tmdb.movie_mode {
+            // Assign episodes before detection so playlists have initial assignments.
+            // run_detection_if_enabled may mark specials and call reassign_regular_episodes.
+            self.wizard.episode_assignments = crate::util::assign_episodes(
+                &self.disc.episodes_pl,
+                &self.tmdb.episodes,
+                context.next_episode,
+            );
             crate::tui::wizard::run_detection_if_enabled(self);
         }
         self.screen = Screen::PlaylistManager;
