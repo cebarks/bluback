@@ -11,11 +11,44 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ci:
-    uses: ./.github/workflows/ci.yml
+  # Wait for the CI workflow (triggered by the branch push) to pass on this
+  # commit before building release artifacts. This avoids re-running CI — it
+  # runs exactly once from the push-to-main trigger.
+  wait-for-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CI to pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Waiting for CI to pass on ${{ github.sha }}..."
+          for i in $(seq 1 60); do
+            # Check for a completed CI run on this commit
+            result=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs" \
+              --jq "[.workflow_runs[] | select(.head_sha == \"${{ github.sha }}\")] | first | {status, conclusion}" \
+              2>/dev/null || echo '{}')
+
+            status=$(echo "$result" | jq -r '.status // empty')
+            conclusion=$(echo "$result" | jq -r '.conclusion // empty')
+
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "success" ]; then
+                echo "CI passed!"
+                exit 0
+              else
+                echo "::error::CI failed (conclusion: $conclusion) — aborting release"
+                exit 1
+              fi
+            fi
+
+            echo "CI status: ${status:-pending} (attempt $i/60, waiting 10s)"
+            sleep 10
+          done
+          echo "::error::Timed out waiting for CI after 10 minutes"
+          exit 1
 
   gate:
-    needs: ci
+    needs: wait-for-ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
