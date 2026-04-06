@@ -71,3 +71,4 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 - GUI frontend (architecture prepared via v0.7 workflow extraction)
 - Desktop notifications on rip completion
 - Native LibreDrive support
+- Self-contained CLPI generator for test fixtures (replace tsMuxeR dependency for fixture generation with a pure Rust/Python CLPI writer that produces valid EP maps from synthetic m2ts timestamps)

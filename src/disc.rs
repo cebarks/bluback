@@ -237,7 +237,16 @@ pub fn unmount_disc(device: &str) -> Result<()> {
 /// Ensure the disc is mounted, returning (mount_point, did_we_mount_it).
 /// If it was already mounted, returns the existing mount point.
 /// If we mounted it, the caller should unmount when done.
+/// If `device` is a directory with a BDMV/ subdirectory, treats it as
+/// already mounted (useful for testing with directory paths instead of
+/// block devices).
 pub fn ensure_mounted(device: &str) -> Result<(String, bool)> {
+    // Directory path with BDMV structure: use directly as mount point
+    let path = std::path::Path::new(device);
+    if path.is_dir() && path.join("BDMV").is_dir() {
+        return Ok((device.to_string(), false));
+    }
+
     if let Some(mount) = get_mount_point(device) {
         Ok((mount, false))
     } else {
