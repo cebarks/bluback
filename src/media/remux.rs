@@ -149,16 +149,21 @@ where
         return Err(MediaError::OutputExists(options.output.clone()));
     }
 
-    // Open input: bluray:{device} with playlist option
+    // Open input: bluray:{device} with playlist option.
+    // The guard tracks makemkvcon spawned during the open and kills it on drop,
+    // scoped to this remux only (no cross-session interference in multi-drive mode).
+    let mut _mkv_guard = crate::aacs::MakemkvconGuard::new();
     let input_url = format!("bluray:{}", options.device);
     let mut opts = Dictionary::new();
     opts.set("playlist", &options.playlist);
 
-    let mut ictx = format::input_with_dictionary(&input_url, opts).map_err(|e| {
-        if let Some(aacs_err) = classify_aacs_error(&e) {
-            return aacs_err;
-        }
-        MediaError::Ffmpeg(e)
+    let mut ictx = _mkv_guard.track_open(|| {
+        format::input_with_dictionary(&input_url, opts).map_err(|e| {
+            if let Some(aacs_err) = classify_aacs_error(&e) {
+                return aacs_err;
+            }
+            MediaError::Ffmpeg(e)
+        })
     })?;
 
     let nb_input_streams = ictx.nb_streams() as usize;
