@@ -205,14 +205,12 @@ pub fn assign_episodes(
 
     for pl in playlists {
         // Determine how many episodes this playlist likely contains
-        let ep_count = if playlists.len() > 1
-            && median_secs > 0
-            && pl.seconds as f64 >= median_secs as f64 * 1.5
-        {
-            (pl.seconds / median_secs).max(1)
+        let ep_count = if playlists.len() > 1 && median_secs > 0 {
+            (pl.seconds as f64 / median_secs as f64).round() as u32
         } else {
             1
-        };
+        }
+        .max(1);
 
         let mut eps = Vec::new();
         for _ in 0..ep_count {
@@ -1080,6 +1078,52 @@ mod tests {
         // Double wants 2 episodes but only 1 remains
         assert_eq!(result["00002"].len(), 1);
         assert_eq!(result["00002"][0].episode_number, 2);
+    }
+
+    #[test]
+    fn test_assign_episodes_rounds_instead_of_truncating() {
+        let playlists = vec![
+            Playlist {
+                num: "00001".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            },
+            Playlist {
+                num: "00002".into(),
+                duration: "0:44:00".into(),
+                seconds: 2640,
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            },
+            Playlist {
+                num: "00003".into(),
+                duration: "1:06:00".into(),
+                seconds: 3960, // 1.5x median (2640)
+                video_streams: 0,
+                audio_streams: 0,
+                subtitle_streams: 0,
+            },
+        ];
+        let episodes: Vec<Episode> = (1..=4)
+            .map(|n| Episode {
+                episode_number: n,
+                name: format!("Episode {}", n),
+                runtime: Some(44),
+            })
+            .collect();
+        let result = assign_episodes(&playlists, &episodes, 1);
+        assert_eq!(result["00001"].len(), 1);
+        assert_eq!(result["00001"][0].episode_number, 1);
+        assert_eq!(result["00002"].len(), 1);
+        assert_eq!(result["00002"][0].episode_number, 2);
+        // 1.5x median rounds to 2 episodes
+        assert_eq!(result["00003"].len(), 2);
+        assert_eq!(result["00003"][0].episode_number, 3);
+        assert_eq!(result["00003"][1].episode_number, 4);
     }
 
     #[test]
