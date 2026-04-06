@@ -62,6 +62,8 @@ fn format_subtitle_column(streams: &[crate::types::SubtitleStream]) -> String {
 
 struct TmdbContext {
     episode_assignments: EpisodeAssignments,
+    episodes: Vec<Episode>,
+    start_episode: u32,
     season_num: Option<u32>,
     movie_title: Option<(String, String)>,
     show_name: Option<String>,
@@ -87,7 +89,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     let min_duration = config.min_duration(args.min_duration);
 
     eprint!("Scanning disc at {}...", device);
-    let (playlists, probe_cache) = crate::media::scan_playlists_with_progress(
+    let (mut playlists, probe_cache) = crate::media::scan_playlists_with_progress(
         &device,
         min_duration,
         Some(&|elapsed, timeout| {
@@ -103,24 +105,26 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
 
-    // Extract chapter counts from MPLS files
-    let chapter_counts = {
+    // Mount disc for chapter counts + title order
+    let (chapter_counts, title_order) = {
         let device_str = device.to_string();
         match disc::ensure_mounted(&device_str) {
             Ok((mount, did_mount)) => {
+                let mount_path = std::path::Path::new(&mount);
                 let nums: Vec<&str> = playlists.iter().map(|pl| pl.num.as_str()).collect();
-                let counts = crate::chapters::count_chapters_for_playlists(
-                    std::path::Path::new(&mount),
-                    &nums,
-                );
+                let counts = crate::chapters::count_chapters_for_playlists(mount_path, &nums);
+                let order = crate::index::parse_title_order(mount_path);
                 if did_mount {
                     let _ = disc::unmount_disc(&device_str);
                 }
-                counts
+                (counts, order)
             }
-            Err(_) => std::collections::HashMap::new(),
+            Err(_) => (std::collections::HashMap::new(), None),
         }
     };
+
+    // Reorder playlists by title index (or MPLS number fallback)
+    crate::index::reorder_playlists(&mut playlists, title_order.as_deref());
 
     // Resolve auto_detect setting
     let auto_detect = config.should_auto_detect(if args.auto_detect {
@@ -309,29 +313,32 @@ pub fn run(
 ) -> anyhow::Result<(u32, u32)> {
     let device = args.device().to_string_lossy();
 
-    let (label, label_info, all_playlists, episodes_pl, movie_mode, probe_cache) =
+    let (label, label_info, mut all_playlists, mut episodes_pl, movie_mode, probe_cache) =
         scan_disc(args, config)?;
 
-    // Extract chapter counts from MPLS files (for ALL playlists, not just episode-length)
-    let chapter_counts = {
+    // Mount disc for chapter counts + title order
+    let (chapter_counts, title_order) = {
         let device_str = device.to_string();
         match disc::ensure_mounted(&device_str) {
             Ok((mount, did_mount)) => {
+                let mount_path = std::path::Path::new(&mount);
                 let nums: Vec<&str> = all_playlists.iter().map(|pl| pl.num.as_str()).collect();
-                let counts = crate::chapters::count_chapters_for_playlists(
-                    std::path::Path::new(&mount),
-                    &nums,
-                );
+                let counts = crate::chapters::count_chapters_for_playlists(mount_path, &nums);
+                let order = crate::index::parse_title_order(mount_path);
                 if did_mount {
                     let _ = disc::unmount_disc(&device_str);
                 }
-                counts
+                (counts, order)
             }
-            Err(_) => std::collections::HashMap::new(),
+            Err(_) => (std::collections::HashMap::new(), None),
         }
     };
 
-    let tmdb_ctx = lookup_tmdb(
+    // Reorder playlists by title index (or MPLS number fallback)
+    crate::index::reorder_playlists(&mut all_playlists, title_order.as_deref());
+    crate::index::reorder_playlists(&mut episodes_pl, title_order.as_deref());
+
+    let mut tmdb_ctx = lookup_tmdb(
         args,
         config,
         &label_info,
@@ -475,6 +482,20 @@ pub fn run(
         } else {
             std::collections::HashSet::new()
         };
+
+    // Reassign regular episodes after specials are determined
+    if !specials_set.is_empty() && !movie_mode {
+        let non_special_pl: Vec<Playlist> = episodes_pl
+            .iter()
+            .filter(|pl| !specials_set.contains(&pl.num))
+            .cloned()
+            .collect();
+        tmdb_ctx.episode_assignments = crate::util::assign_episodes(
+            &non_special_pl,
+            &tmdb_ctx.episodes,
+            tmdb_ctx.start_episode,
+        );
+    }
 
     let outfiles = build_filenames(
         args,
@@ -634,6 +655,8 @@ fn lookup_tmdb(
 ) -> anyhow::Result<TmdbContext> {
     let mut ctx = TmdbContext {
         episode_assignments: HashMap::new(),
+        episodes: Vec::new(),
+        start_episode: 1,
         season_num: args.season.or(label_info.as_ref().map(|l| l.season)),
         movie_title: None,
         show_name: None,
@@ -681,6 +704,8 @@ fn lookup_tmdb(
                 })
                 .collect();
 
+            ctx.episodes = synthetic_episodes.clone();
+            ctx.start_episode = start_ep;
             ctx.episode_assignments = assign_episodes(episodes_pl, &synthetic_episodes, start_ep);
             return Ok(ctx);
         }
@@ -744,6 +769,8 @@ fn lookup_tmdb(
                     default_start
                 };
 
+                ctx.episodes = lookup.episodes.clone();
+                ctx.start_episode = start_ep;
                 ctx.episode_assignments = assign_episodes(episodes_pl, &lookup.episodes, start_ep);
 
                 // Show mappings and prompt for accept/manual (interactive only)
@@ -784,6 +811,7 @@ fn lookup_tmdb(
                                 &format!("  Starting episode number [{}]: ", start_ep),
                                 Some(start_ep),
                             )?;
+                            ctx.start_episode = new_start;
                             ctx.episode_assignments =
                                 assign_episodes(episodes_pl, &lookup.episodes, new_start);
                             continue;
@@ -881,6 +909,8 @@ fn lookup_tmdb(
             })
             .collect();
 
+        ctx.episodes = synthetic_episodes.clone();
+        ctx.start_episode = start_ep;
         ctx.episode_assignments = assign_episodes(episodes_pl, &synthetic_episodes, start_ep);
     }
 
