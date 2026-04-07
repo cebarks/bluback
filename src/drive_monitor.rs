@@ -59,6 +59,11 @@ impl DriveMonitor {
                     .send(DriveEvent::DiscInserted(drive.clone(), label.clone()));
             } else if !old_label.is_empty() && label.is_empty() {
                 let _ = self.tx.send(DriveEvent::DiscEjected(drive.clone()));
+            } else if !old_label.is_empty() && !label.is_empty() && old_label != label {
+                let _ = self.tx.send(DriveEvent::DiscEjected(drive.clone()));
+                let _ = self
+                    .tx
+                    .send(DriveEvent::DiscInserted(drive.clone(), label.clone()));
             }
 
             self.disc_labels.insert(drive.clone(), label);
@@ -186,5 +191,33 @@ mod tests {
         monitor.diff_and_emit(vec![], &|_| String::new());
         let events = collect_events(&rx);
         assert_eq!(events, vec!["disappeared:/dev/sr0"]);
+    }
+
+    #[test]
+    fn test_disc_swap_emits_eject_and_insert() {
+        let (tx, rx) = mpsc::channel();
+        let mut monitor = DriveMonitor::new(tx);
+        monitor.diff_and_emit(vec![PathBuf::from("/dev/sr0")], &|_| "DISC_A".into());
+        let _ = collect_events(&rx);
+
+        monitor.diff_and_emit(vec![PathBuf::from("/dev/sr0")], &|_| "DISC_B".into());
+        let events = collect_events(&rx);
+        assert_eq!(
+            events,
+            vec!["ejected:/dev/sr0", "inserted:/dev/sr0:DISC_B"],
+            "disc swap should emit eject then insert"
+        );
+    }
+
+    #[test]
+    fn test_same_disc_no_events() {
+        let (tx, rx) = mpsc::channel();
+        let mut monitor = DriveMonitor::new(tx);
+        monitor.diff_and_emit(vec![PathBuf::from("/dev/sr0")], &|_| "SAME_DISC".into());
+        let _ = collect_events(&rx);
+
+        monitor.diff_and_emit(vec![PathBuf::from("/dev/sr0")], &|_| "SAME_DISC".into());
+        let events = collect_events(&rx);
+        assert!(events.is_empty(), "same disc should produce no events");
     }
 }
