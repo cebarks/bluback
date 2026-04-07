@@ -325,7 +325,10 @@ fn run_inner() -> anyhow::Result<i32> {
     .expect("failed to set Ctrl+C handler");
 
     let config_path = config::resolve_config_path(args.config.clone());
-    let config = config::load_from(&config_path);
+    let config = config::load_from(&config_path).unwrap_or_else(|e| {
+        eprintln!("Error: {:#}", e);
+        std::process::exit(2);
+    });
 
     // Initialize logging before config validation so warnings are captured
     let use_tui = !args.no_tui && atty_stdout();
