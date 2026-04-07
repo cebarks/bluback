@@ -350,11 +350,8 @@ impl Config {
         self.max_speed.unwrap_or(true)
     }
 
-    pub fn min_duration(&self, cli_min_duration: u32) -> u32 {
-        if cli_min_duration != 900 {
-            return cli_min_duration; // CLI explicitly set, takes priority
-        }
-        self.min_duration.unwrap_or(900)
+    pub fn min_duration(&self, cli_min_duration: Option<u32>) -> u32 {
+        cli_min_duration.unwrap_or_else(|| self.min_duration.unwrap_or(900))
     }
 
     pub fn show_filtered(&self) -> bool {
@@ -839,7 +836,7 @@ mod tests {
     #[test]
     fn test_min_duration_default() {
         let config = Config::default();
-        assert_eq!(config.min_duration(900), 900);
+        assert_eq!(config.min_duration(None), 900);
     }
 
     #[test]
@@ -848,7 +845,7 @@ mod tests {
             min_duration: Some(600),
             ..Default::default()
         };
-        assert_eq!(config.min_duration(900), 600);
+        assert_eq!(config.min_duration(None), 600);
     }
 
     #[test]
@@ -857,7 +854,17 @@ mod tests {
             min_duration: Some(600),
             ..Default::default()
         };
-        assert_eq!(config.min_duration(1200), 1200);
+        assert_eq!(config.min_duration(Some(1200)), 1200);
+    }
+
+    #[test]
+    fn test_min_duration_cli_explicit_default_overrides_config() {
+        let config = Config {
+            min_duration: Some(600),
+            ..Default::default()
+        };
+        // Explicitly passing 900 on CLI should override config's 600
+        assert_eq!(config.min_duration(Some(900)), 900);
     }
 
     #[test]
