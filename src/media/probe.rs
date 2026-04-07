@@ -287,26 +287,38 @@ fn read_pipe_to_string(fd: i32) -> String {
 #[cfg(target_os = "linux")]
 fn parse_child_output(data: &str) -> (&str, u8, Option<String>) {
     // Format: log lines (newline-separated), then status byte (0=ok, 1=err),
-    // then optional error message
-    if let Some(pos) = data.rfind('\0') {
-        // Status 0 (success)
-        (&data[..pos], 0, None)
-    } else if let Some(pos) = data.rfind('\x01') {
-        // Status 1 (error)
-        let error_msg = if pos + 1 < data.len() {
-            Some(data[pos + 1..].to_string())
-        } else {
-            None
-        };
-        (&data[..pos], 1, error_msg)
+    // then optional error message.
+    // Find whichever of \0 or \x01 appears last — the status byte is always
+    // appended after all log content.
+    let pos_zero = data.rfind('\0');
+    let pos_one = data.rfind('\x01');
+
+    let (pos, status) = match (pos_zero, pos_one) {
+        (Some(z), Some(o)) => {
+            if z > o {
+                (z, 0u8)
+            } else {
+                (o, 1u8)
+            }
+        }
+        (Some(z), None) => (z, 0),
+        (None, Some(o)) => (o, 1),
+        (None, None) => {
+            return (
+                data,
+                1,
+                Some("Child process terminated unexpectedly".into()),
+            );
+        }
+    };
+
+    let error_msg = if status != 0 && pos + 1 < data.len() {
+        Some(data[pos + 1..].to_string())
     } else {
-        // No status byte — child was likely killed
-        (
-            data,
-            1,
-            Some("Child process terminated unexpectedly".into()),
-        )
-    }
+        None
+    };
+
+    (&data[..pos], status, error_msg)
 }
 
 // Thread-local log capture buffer. When `Some`, the log callback stores
@@ -346,7 +358,7 @@ macro_rules! log_capture_body {
         );
 
         if len > 0 {
-            let len = (len as usize).min(buf.len());
+            let len = (len as usize).min(buf.len().saturating_sub(1));
             if let Ok(s) = std::str::from_utf8(&buf[..len]) {
                 THREAD_LOG_BUFFER.with(|buf| {
                     if let Ok(mut borrow) = buf.try_borrow_mut() {
@@ -1051,5 +1063,43 @@ mod tests {
     fn test_format_dts_profile_default() {
         use ffmpeg_the_third::codec::profile::DTS;
         assert_eq!(format_dts_profile(&DTS::Default), "dts");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_child_output_success() {
+        let data = "log line 1\nlog line 2\n\0";
+        let (lines, status, error) = parse_child_output(data);
+        assert_eq!(status, 0);
+        assert!(error.is_none());
+        assert_eq!(lines, "log line 1\nlog line 2\n");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_child_output_error() {
+        let data = "log line\n\x01AACS failed";
+        let (lines, status, error) = parse_child_output(data);
+        assert_eq!(status, 1);
+        assert_eq!(error, Some("AACS failed".to_string()));
+        assert_eq!(lines, "log line\n");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_child_output_embedded_nul_with_error() {
+        let data = "log with \0 embedded\n\x01AACS failed";
+        let (_lines, status, error) = parse_child_output(data);
+        assert_eq!(status, 1, "should detect error status, not embedded NUL");
+        assert_eq!(error, Some("AACS failed".to_string()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_parse_child_output_embedded_nul_with_success() {
+        let data = "log with \0 embedded\n\0";
+        let (_lines, status, error) = parse_child_output(data);
+        assert_eq!(status, 0);
+        assert!(error.is_none());
     }
 }
