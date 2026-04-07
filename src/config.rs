@@ -114,14 +114,15 @@ pub fn resolve_config_path(cli_path: Option<PathBuf>) -> PathBuf {
     config_dir().join("config.toml")
 }
 
-pub fn load_from(path: &std::path::Path) -> Config {
+pub fn load_from(path: &std::path::Path) -> anyhow::Result<Config> {
     if path.exists() {
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default()
+        let contents = fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("failed to read config file {}: {}", path.display(), e))?;
+        let config: Config = toml::from_str(&contents)
+            .map_err(|e| anyhow::anyhow!("failed to parse config file {}: {}", path.display(), e))?;
+        Ok(config)
     } else {
-        Config::default()
+        Ok(Config::default())
     }
 }
 
@@ -1632,5 +1633,48 @@ prefer_surround = true
         let default_config = Config::default();
         let default_toml = default_config.to_toml_string();
         assert!(default_toml.contains("# auto_detect = false"));
+    }
+
+    #[test]
+    fn test_load_from_missing_file_returns_default() {
+        let path = std::path::Path::new("/tmp/bluback_test_nonexistent_config.toml");
+        let config = load_from(path).unwrap();
+        assert_eq!(config.min_duration, None);
+        assert_eq!(config.eject, None);
+    }
+
+    #[test]
+    fn test_load_from_valid_toml() {
+        let dir = std::env::temp_dir().join("bluback_test_valid_config");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "min_duration = 600\n").unwrap();
+        let config = load_from(&path).unwrap();
+        assert_eq!(config.min_duration, Some(600));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_invalid_toml_returns_error() {
+        let dir = std::env::temp_dir().join("bluback_test_invalid_config");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "min_duration = \"not_a_number\"\n").unwrap();
+        let result = load_from(&path);
+        assert!(result.is_err());
+        let err_msg = format!("{:#}", result.unwrap_err());
+        assert!(err_msg.contains("parse"), "error should mention parse: {}", err_msg);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_malformed_syntax_returns_error() {
+        let dir = std::env::temp_dir().join("bluback_test_malformed_config");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "this is not [valid toml\n").unwrap();
+        let result = load_from(&path);
+        assert!(result.is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
