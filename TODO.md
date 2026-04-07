@@ -58,6 +58,33 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 - [ ] Continuous batch mode (rip → eject → wait → auto-start, `--batch`)
 - [ ] Disc history / rip database (`history.json`, `--history`, duplicate detection)
 
+## Bugs (from code review, 2026-04-06)
+
+### Security
+- [ ] Shell injection via hook template expansion (`hooks.rs`) — `expand_template` inserts raw values into `sh -c` commands; switch to env vars or shell-escape
+
+### Low
+- [ ] Settings `scroll_offset` never persisted (`tui/settings.rs`) — view always jams cursor to bottom
+- [ ] FFmpeg log level not restored after scan on macOS (`media/probe.rs`) — unnecessary log formatting in subsequent ops
+- [ ] Zombie process on scan timeout, Linux (`media/probe.rs`) — `waitpid()` not called after SIGKILL
+- [ ] Pipe deadlock if scan log exceeds 64KB, Linux (`media/probe.rs`) — child write blocks, parent waits on child
+- [ ] `truncate` and `mask_api_key` panic on multi-byte UTF-8 (`tui/settings.rs`) — byte-offset slicing
+- [ ] `parse_volume_label` panics on overflow (`disc.rs`) — `.parse::<u32>().expect()` on arbitrarily large numbers
+- [ ] `validate_raw_toml` only checks top-level keys (`config.rs`) — sub-table typos never caught
+- [ ] `--verify`/`--no-verify` missing `conflicts_with` (`main.rs`)
+- [ ] Dead code: unreachable `api_key.is_none()` check inside `if let Some` (`cli.rs`)
+- [ ] Batch episode advancement counts all assigned, not just successful (`cli.rs`)
+- [ ] "All done" message reports `selected.len()` not `success_count` (`cli.rs`)
+- [ ] macOS `get_mount_point` truncates paths containing colons (`disc.rs`) — use `split_once` like sibling function
+- [ ] `try_lock_device` misattributes all `flock` failures as contention (`disc.rs`)
+- [ ] Non-blocking post-session hook silently dropped on exit (`hooks.rs`) — thread killed before completion
+- [ ] Settings arithmetic underflow on narrow terminals (`tui/settings.rs`)
+- [ ] Duplicate manual stream indices create empty MKV tracks (`media/remux.rs`)
+- [ ] Stale `confirm_rescan` flag persists to Done screen (`session.rs` / `tui/dashboard.rs`)
+- [ ] Playlist manager has no scroll handling for long playlist lists (`tui/wizard.rs`)
+- [ ] DriveMonitor thread runs forever after receiver dropped (`drive_monitor.rs`)
+- [ ] Live config preview applies partial text edits (`tui/coordinator.rs`)
+
 ## Upcoming Milestones
 - **v0.11** — DVD Support: disc type abstraction, title enumeration, chapter extraction, CSS errors
 - **v0.12** — UHD Blu-ray: AACS 2.0, HDR metadata verification
