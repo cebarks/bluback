@@ -363,7 +363,12 @@ fn run_inner() -> anyhow::Result<i32> {
                 .as_deref()
                 .map(|d| d.to_string_lossy())
                 .as_deref(),
-            &args.output.as_deref().unwrap_or_else(|| std::path::Path::new(".")).display().to_string(),
+            &args
+                .output
+                .as_deref()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .display()
+                .to_string(),
             &config_path,
             args.aacs_backend.as_deref().unwrap_or("auto"),
         );

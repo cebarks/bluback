@@ -1039,7 +1039,10 @@ fn build_filenames(
     headless: bool,
     probe_cache: &crate::types::ProbeCache,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let output_dir = args.output.as_deref().unwrap_or_else(|| std::path::Path::new("."));
+    let output_dir = args
+        .output
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("."));
 
     let show_name_str = if movie_mode {
         tmdb_ctx
@@ -1177,7 +1180,10 @@ fn rip_selected(
     skip_eject: bool,
     probe_cache: &crate::types::ProbeCache,
 ) -> anyhow::Result<(u32, u32)> {
-    let output_dir = args.output.as_deref().unwrap_or_else(|| std::path::Path::new("."));
+    let output_dir = args
+        .output
+        .as_deref()
+        .unwrap_or_else(|| std::path::Path::new("."));
 
     if args.dry_run {
         println!("\n[DRY RUN] Would rip:");
