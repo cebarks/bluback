@@ -118,8 +118,9 @@ pub fn load_from(path: &std::path::Path) -> anyhow::Result<Config> {
     if path.exists() {
         let contents = fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read config file {}: {}", path.display(), e))?;
-        let config: Config = toml::from_str(&contents)
-            .map_err(|e| anyhow::anyhow!("failed to parse config file {}: {}", path.display(), e))?;
+        let config: Config = toml::from_str(&contents).map_err(|e| {
+            anyhow::anyhow!("failed to parse config file {}: {}", path.display(), e)
+        })?;
         Ok(config)
     } else {
         Ok(Config::default())
@@ -1663,7 +1664,11 @@ prefer_surround = true
         let result = load_from(&path);
         assert!(result.is_err());
         let err_msg = format!("{:#}", result.unwrap_err());
-        assert!(err_msg.contains("parse"), "error should mention parse: {}", err_msg);
+        assert!(
+            err_msg.contains("parse"),
+            "error should mention parse: {}",
+            err_msg
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

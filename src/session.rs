@@ -576,9 +576,7 @@ impl DriveSession {
     pub fn start_disc_scan(&mut self) {
         let device = self.device.clone();
         let max_speed = self.config.should_max_speed(self.no_max_speed);
-        let min_duration = self
-            .config
-            .min_duration(self.min_duration_arg);
+        let min_duration = self.config.min_duration(self.min_duration_arg);
         let (tx, rx) = std::sync::mpsc::channel();
 
         std::thread::Builder::new()
@@ -707,9 +705,7 @@ impl DriveSession {
                 self.device = PathBuf::from(device);
                 self.disc.label_info = crate::disc::parse_volume_label(&label);
                 self.disc.label = label;
-                let min_dur = self
-                    .config
-                    .min_duration(self.min_duration_arg);
+                let min_dur = self.config.min_duration(self.min_duration_arg);
                 self.disc.episodes_pl = crate::disc::filter_episodes(&playlists, min_dur)
                     .into_iter()
                     .cloned()
@@ -1336,7 +1332,10 @@ mod tests {
         // The OLD cancel flag (held by the orphaned remux thread) must be true
         assert!(old_cancel.load(std::sync::atomic::Ordering::Relaxed));
         // The NEW rip state has a fresh cancel flag (false)
-        assert!(!session.rip.cancel.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!session
+            .rip
+            .cancel
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
