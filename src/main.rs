@@ -51,9 +51,9 @@ pub struct Args {
     #[arg(short = 'e', long)]
     start_episode: Option<u32>,
 
-    /// Minimum seconds to consider a playlist an episode
-    #[arg(long, default_value = "900")]
-    min_duration: u32,
+    /// Min seconds for episode detection [default: 900]
+    #[arg(long)]
+    min_duration: Option<u32>,
 
     /// Movie mode (skip episode assignment)
     #[arg(long)]

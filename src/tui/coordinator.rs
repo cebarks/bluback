@@ -88,7 +88,7 @@ impl Coordinator {
         session.movie_mode_arg = self.args.movie;
         session.season_arg = self.args.season;
         session.start_episode_arg = self.args.start_episode;
-        session.min_duration_arg = Some(self.args.min_duration);
+        session.min_duration_arg = self.args.min_duration;
         session.no_max_speed = self.args.no_max_speed;
         session.output_dir = self.args.output.clone();
         session.cli_eject = self.args.cli_eject();
@@ -295,8 +295,8 @@ impl Coordinator {
             return;
         }
 
-        // Tab/Shift+Tab: switch active tab
-        if key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::SHIFT) {
+        // Ctrl+Left/Right: switch active tab
+        if key.code == KeyCode::Right && key.modifiers.contains(KeyModifiers::CONTROL) {
             if !self.sessions.is_empty() {
                 let live_count = self.live_session_count();
                 if live_count > 0 {
@@ -305,9 +305,7 @@ impl Coordinator {
             }
             return;
         }
-        if key.code == KeyCode::BackTab
-            || (key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::SHIFT))
-        {
+        if key.code == KeyCode::Left && key.modifiers.contains(KeyModifiers::CONTROL) {
             if !self.sessions.is_empty() {
                 let live_count = self.live_session_count();
                 if live_count > 0 {

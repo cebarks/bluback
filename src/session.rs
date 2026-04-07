@@ -246,7 +246,7 @@ impl DriveSession {
         // Cancel any active rip
         self.rip
             .cancel
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         self.rip.progress_rx = None;
 
         if self.disc.did_mount {
@@ -264,6 +264,7 @@ impl DriveSession {
         self.tmdb.selected_movie = None;
         self.tmdb.show_name = String::new();
         self.tmdb.episodes = Vec::new();
+        self.tmdb.specials = Vec::new();
 
         self.wizard = WizardState::default();
         self.rip = RipState::default();
@@ -577,7 +578,7 @@ impl DriveSession {
         let max_speed = self.config.should_max_speed(self.no_max_speed);
         let min_duration = self
             .config
-            .min_duration(self.min_duration_arg.unwrap_or(900));
+            .min_duration(self.min_duration_arg);
         let (tx, rx) = std::sync::mpsc::channel();
 
         std::thread::Builder::new()
@@ -708,7 +709,7 @@ impl DriveSession {
                 self.disc.label = label;
                 let min_dur = self
                     .config
-                    .min_duration(self.min_duration_arg.unwrap_or(900));
+                    .min_duration(self.min_duration_arg);
                 self.disc.episodes_pl = crate::disc::filter_episodes(&playlists, min_dur)
                     .into_iter()
                     .cloned()
@@ -1322,5 +1323,33 @@ mod tests {
         assert_eq!(ctx.season_num, 2);
         assert_eq!(ctx.next_episode, 1);
         assert!(!ctx.movie_mode);
+    }
+
+    #[test]
+    fn test_reset_for_rescan_cancels_active_rip() {
+        let mut session = make_test_session();
+        let old_cancel = session.rip.cancel.clone(); // Arc clone
+        assert!(!old_cancel.load(std::sync::atomic::Ordering::Relaxed));
+
+        session.reset_for_rescan();
+
+        // The OLD cancel flag (held by the orphaned remux thread) must be true
+        assert!(old_cancel.load(std::sync::atomic::Ordering::Relaxed));
+        // The NEW rip state has a fresh cancel flag (false)
+        assert!(!session.rip.cancel.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_reset_for_rescan_clears_specials() {
+        let mut session = make_test_session();
+        session.tmdb.specials = vec![Episode {
+            episode_number: 1,
+            name: "Special 1".into(),
+            runtime: None,
+        }];
+
+        session.reset_for_rescan();
+
+        assert!(session.tmdb.specials.is_empty());
     }
 }
