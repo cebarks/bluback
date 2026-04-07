@@ -90,7 +90,7 @@ impl Coordinator {
         session.start_episode_arg = self.args.start_episode;
         session.min_duration_arg = self.args.min_duration;
         session.no_max_speed = self.args.no_max_speed;
-        session.output_dir = self.args.output.clone();
+        session.output_dir = self.args.output.clone().unwrap_or_else(|| PathBuf::from("."));
         session.cli_eject = self.args.cli_eject();
         session.format = self.args.format.clone();
         session.format_preset = self.args.format_preset.clone();
@@ -766,7 +766,7 @@ impl Coordinator {
 
                 // Update args from new config
                 if let Some(ref dir) = new_config.output_dir {
-                    self.args.output = PathBuf::from(dir);
+                    self.args.output = Some(PathBuf::from(dir));
                 }
                 if let Some(ref dev) = new_config.device {
                     if dev != crate::config::DEFAULT_DEVICE {
