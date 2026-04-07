@@ -550,6 +550,7 @@ pub fn run(
         tracks_spec,
         skip_eject,
         &probe_cache,
+        movie_mode,
     )?;
 
     let regular_episodes =
@@ -1179,6 +1180,7 @@ fn rip_selected(
     tracks_spec: Option<&str>,
     skip_eject: bool,
     probe_cache: &crate::types::ProbeCache,
+    movie_mode: bool,
 ) -> anyhow::Result<(u32, u32)> {
     let output_dir = args
         .output
@@ -1224,7 +1226,6 @@ fn rip_selected(
     let mut success_count = 0u32;
     let mut fail_count = 0u32;
     let mut skip_count = 0u32;
-    let movie_mode = args.movie;
     let mode_str = if movie_mode { "movie" } else { "tv" };
 
     for (i, &idx) in selected.iter().enumerate() {
