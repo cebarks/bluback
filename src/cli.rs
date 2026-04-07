@@ -1039,6 +1039,8 @@ fn build_filenames(
     headless: bool,
     probe_cache: &crate::types::ProbeCache,
 ) -> anyhow::Result<Vec<PathBuf>> {
+    let output_dir = args.output.as_deref().unwrap_or_else(|| std::path::Path::new("."));
+
     let show_name_str = if movie_mode {
         tmdb_ctx
             .movie_title
@@ -1130,7 +1132,7 @@ fn build_filenames(
     let mut outfiles: Vec<PathBuf> = Vec::new();
     if headless {
         for name in &default_names {
-            outfiles.push(args.output.join(name));
+            outfiles.push(output_dir.join(name));
         }
     } else {
         let customize = prompt("\n  Customize filenames? [y/N]: ")?;
@@ -1146,11 +1148,11 @@ fn build_filenames(
                 } else {
                     format!("{}.mkv", sanitize_filename(&input))
                 };
-                outfiles.push(args.output.join(&name));
+                outfiles.push(output_dir.join(&name));
             }
         } else {
             for name in &default_names {
-                outfiles.push(args.output.join(name));
+                outfiles.push(output_dir.join(name));
             }
         }
     }
@@ -1175,6 +1177,8 @@ fn rip_selected(
     skip_eject: bool,
     probe_cache: &crate::types::ProbeCache,
 ) -> anyhow::Result<(u32, u32)> {
+    let output_dir = args.output.as_deref().unwrap_or_else(|| std::path::Path::new("."));
+
     if args.dry_run {
         println!("\n[DRY RUN] Would rip:");
         for (i, &idx) in selected.iter().enumerate() {
@@ -1491,7 +1495,7 @@ fn rip_selected(
             let mut vars = std::collections::HashMap::new();
             vars.insert("file", outfile.display().to_string());
             vars.insert("filename", filename.to_string());
-            vars.insert("dir", args.output.display().to_string());
+            vars.insert("dir", output_dir.display().to_string());
             vars.insert("size", hook_size.to_string());
             vars.insert("chapters", hook_chapters.to_string());
             vars.insert("title", title_str.to_string());
@@ -1559,7 +1563,7 @@ fn rip_selected(
         vars.insert("label", label.to_string());
         vars.insert("device", device.to_string());
         vars.insert("mode", mode_str.to_string());
-        vars.insert("dir", args.output.display().to_string());
+        vars.insert("dir", output_dir.display().to_string());
         vars.insert("total", selected.len().to_string());
         vars.insert("succeeded", success_count.to_string());
         vars.insert("failed", fail_count.to_string());
@@ -1570,7 +1574,7 @@ fn rip_selected(
     println!(
         "\nAll done! Ripped {} playlist(s) to {}",
         selected.len(),
-        args.output.display()
+        output_dir.display()
     );
 
     if !skip_eject && fail_count == 0 && config.should_eject(args.cli_eject()) {

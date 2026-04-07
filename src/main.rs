@@ -39,9 +39,9 @@ pub struct Args {
     #[arg(short, long)]
     device: Option<PathBuf>,
 
-    /// Output directory
-    #[arg(short, long, default_value = ".")]
-    output: PathBuf,
+    /// Output directory [default: .]
+    #[arg(short = 'o', long)]
+    output: Option<PathBuf>,
 
     /// Season number
     #[arg(short, long)]
@@ -360,7 +360,7 @@ fn run_inner() -> anyhow::Result<i32> {
                 .as_deref()
                 .map(|d| d.to_string_lossy())
                 .as_deref(),
-            &args.output.display().to_string(),
+            &args.output.as_deref().unwrap_or_else(|| std::path::Path::new(".")).display().to_string(),
             &config_path,
             args.aacs_backend.as_deref().unwrap_or("auto"),
         );
@@ -402,11 +402,9 @@ fn run_inner() -> anyhow::Result<i32> {
         return Ok(EXIT_SUCCESS);
     }
 
-    // Apply config defaults to args
-    if args.output.as_os_str() == "." {
-        if let Some(ref dir) = config.output_dir {
-            args.output = PathBuf::from(dir);
-        }
+    // Resolve output directory: CLI flag > config > current directory
+    if args.output.is_none() {
+        args.output = config.output_dir.as_ref().map(PathBuf::from);
     }
 
     // Device resolution: in TUI multi-drive auto mode, leave args.device as None
