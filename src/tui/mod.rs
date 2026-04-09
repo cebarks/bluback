@@ -51,6 +51,7 @@ pub struct DiscState {
     pub mount_point: Option<String>,
     pub did_mount: bool,
     pub chapter_counts: HashMap<String, usize>,
+    pub clip_sizes: HashMap<String, u64>,
 }
 
 #[derive(Default)]

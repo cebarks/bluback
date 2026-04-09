@@ -1582,11 +1582,30 @@ pub fn handle_confirm_input_session(session: &mut crate::session::DriveSession, 
                     .get(&pl.num)
                     .cloned()
                     .unwrap_or_default();
+                // Prefer real on-disc clip size; fall back to bitrate estimate
+                let estimated_size = session
+                    .disc
+                    .clip_sizes
+                    .get(&pl.num)
+                    .copied()
+                    .filter(|&sz| sz > 0)
+                    .unwrap_or_else(|| {
+                        const FALLBACK_BYTERATE: u64 = 2_500_000;
+                        let byterate = session
+                            .wizard
+                            .media_infos
+                            .get(&pl.num)
+                            .map(|info| info.bitrate_bps / 8)
+                            .filter(|&br| br > 0)
+                            .unwrap_or(FALLBACK_BYTERATE);
+                        pl.seconds as u64 * byterate
+                    });
                 session.rip.jobs.push(crate::types::RipJob {
                     playlist: pl,
                     episode,
                     filename: filename.clone(),
                     status: crate::types::PlaylistStatus::Pending,
+                    estimated_size,
                 });
             }
 

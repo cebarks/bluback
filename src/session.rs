@@ -744,8 +744,15 @@ impl DriveSession {
                             .iter()
                             .map(|pl| pl.num.as_str())
                             .collect();
-                        self.disc.chapter_counts =
-                            crate::chapters::count_chapters_for_playlists(mount_path, &nums);
+                        let mpls_info = crate::chapters::collect_mpls_info(mount_path, &nums);
+                        self.disc.chapter_counts = mpls_info
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.chapters.len()))
+                            .collect();
+                        self.disc.clip_sizes = mpls_info
+                            .into_iter()
+                            .map(|(k, v)| (k, v.clip_size))
+                            .collect();
                         let order = crate::index::parse_title_order(mount_path);
                         if did_mount {
                             let _ = crate::disc::unmount_disc(&device_str);
@@ -754,6 +761,7 @@ impl DriveSession {
                     }
                     Err(_) => {
                         self.disc.chapter_counts.clear();
+                        self.disc.clip_sizes.clear();
                         None
                     }
                 };
@@ -1169,6 +1177,7 @@ mod tests {
                 }],
                 filename: "ep1.mkv".into(),
                 status: PlaylistStatus::Done(1_000_000),
+                estimated_size: 9_000_000,
             },
             RipJob {
                 playlist: Playlist {
@@ -1194,6 +1203,7 @@ mod tests {
                     speed: 2.0,
                     ..Default::default()
                 }),
+                estimated_size: 9_000_000,
             },
             RipJob {
                 playlist: Playlist {
@@ -1211,6 +1221,7 @@ mod tests {
                 }],
                 filename: "ep3.mkv".into(),
                 status: PlaylistStatus::Pending,
+                estimated_size: 9_000_000,
             },
         ];
         session.rip.current_rip = 1;

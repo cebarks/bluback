@@ -179,8 +179,10 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
                 )
             };
 
+            let est_str = format!("~{}", format_size(job.estimated_size));
+
             let (status, size, eta) = match &job.status {
-                PlaylistStatus::Pending => ("Pending".to_string(), String::new(), String::new()),
+                PlaylistStatus::Pending => ("Pending".to_string(), est_str, String::new()),
                 PlaylistStatus::Ripping(prog) => {
                     // Use the actual stream duration from FFmpeg when available,
                     // falling back to the playlist duration from libbluray log
@@ -195,32 +197,34 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
                         0
                     };
                     let bar = render_progress_bar(pct, 20);
-                    let size_str = format_size(prog.total_size);
+                    let size_str = format!("{}/{}", format_size(prog.total_size), est_str);
                     let eta_str = rip::estimate_eta(prog, duration)
                         .map(rip::format_eta)
                         .unwrap_or_default();
                     (format!("{} {}%", bar, pct), size_str, eta_str)
                 }
-                PlaylistStatus::Verifying => {
-                    ("Verifying...".to_string(), String::new(), String::new())
-                }
-                PlaylistStatus::Done(sz) => {
-                    ("Completed".to_string(), format_size(*sz), String::new())
-                }
-                PlaylistStatus::Verified(sz, _) => {
-                    ("Verified".to_string(), format_size(*sz), String::new())
-                }
-                PlaylistStatus::VerifyFailed(sz, _) => {
-                    ("Verify failed".to_string(), format_size(*sz), String::new())
-                }
-                PlaylistStatus::Skipped(sz) => (
-                    format!("Skipped ({})", format_size(*sz)),
-                    String::new(),
+                PlaylistStatus::Verifying => ("Verifying...".to_string(), est_str, String::new()),
+                PlaylistStatus::Done(sz) => (
+                    "Completed".to_string(),
+                    format!("{}/{}", format_size(*sz), est_str),
                     String::new(),
                 ),
-                PlaylistStatus::Failed(msg) => {
-                    (format!("Failed: {}", msg), String::new(), String::new())
-                }
+                PlaylistStatus::Verified(sz, _) => (
+                    "Verified".to_string(),
+                    format!("{}/{}", format_size(*sz), est_str),
+                    String::new(),
+                ),
+                PlaylistStatus::VerifyFailed(sz, _) => (
+                    "Verify failed".to_string(),
+                    format!("{}/{}", format_size(*sz), est_str),
+                    String::new(),
+                ),
+                PlaylistStatus::Skipped(sz) => (
+                    format!("Skipped ({})", format_size(*sz)),
+                    est_str,
+                    String::new(),
+                ),
+                PlaylistStatus::Failed(msg) => (format!("Failed: {}", msg), est_str, String::new()),
             };
 
             let row = Row::new([
@@ -255,7 +259,7 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
         Constraint::Min(15),
         Constraint::Min(20),
         Constraint::Length(30),
-        Constraint::Length(12),
+        Constraint::Length(22),
         Constraint::Length(10),
     ];
 
@@ -972,6 +976,7 @@ mod tests {
             episode: vec![],
             filename: "test_verify.mkv".into(),
             status: PlaylistStatus::VerifyFailed(1_000_000, verify_result),
+            estimated_size: 9_000_000,
         }];
         session.rip.verify_failed_idx = Some(0);
         session
@@ -1105,6 +1110,7 @@ mod tests {
             }],
             filename: "S01E01_Pilot.mkv".into(),
             status,
+            estimated_size: 9_000_000,
         }
     }
 
@@ -1611,6 +1617,7 @@ mod tests {
             episode: vec![],
             filename: "test.mkv".into(),
             status,
+            estimated_size: 9_000_000,
         }];
         session
     }

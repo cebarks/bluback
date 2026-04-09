@@ -105,21 +105,33 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
 
-    // Mount disc for chapter counts + title order
-    let (chapter_counts, title_order) = {
+    // Mount disc for chapter counts, clip sizes, and title order
+    let (chapter_counts, _clip_sizes, title_order) = {
         let device_str = device.to_string();
         match disc::ensure_mounted(&device_str) {
             Ok((mount, did_mount)) => {
                 let mount_path = std::path::Path::new(&mount);
                 let nums: Vec<&str> = playlists.iter().map(|pl| pl.num.as_str()).collect();
-                let counts = crate::chapters::count_chapters_for_playlists(mount_path, &nums);
+                let mpls_info = crate::chapters::collect_mpls_info(mount_path, &nums);
+                let counts: std::collections::HashMap<String, usize> = mpls_info
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.chapters.len()))
+                    .collect();
+                let sizes: std::collections::HashMap<String, u64> = mpls_info
+                    .into_iter()
+                    .map(|(k, v)| (k, v.clip_size))
+                    .collect();
                 let order = crate::index::parse_title_order(mount_path);
                 if did_mount {
                     let _ = disc::unmount_disc(&device_str);
                 }
-                (counts, order)
+                (counts, sizes, order)
             }
-            Err(_) => (std::collections::HashMap::new(), None),
+            Err(_) => (
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+                None,
+            ),
         }
     };
 
@@ -316,21 +328,33 @@ pub fn run(
     let (label, label_info, mut all_playlists, mut episodes_pl, movie_mode, probe_cache) =
         scan_disc(args, config)?;
 
-    // Mount disc for chapter counts + title order
-    let (chapter_counts, title_order) = {
+    // Mount disc for chapter counts, clip sizes, and title order
+    let (chapter_counts, _clip_sizes, title_order) = {
         let device_str = device.to_string();
         match disc::ensure_mounted(&device_str) {
             Ok((mount, did_mount)) => {
                 let mount_path = std::path::Path::new(&mount);
                 let nums: Vec<&str> = all_playlists.iter().map(|pl| pl.num.as_str()).collect();
-                let counts = crate::chapters::count_chapters_for_playlists(mount_path, &nums);
+                let mpls_info = crate::chapters::collect_mpls_info(mount_path, &nums);
+                let counts: std::collections::HashMap<String, usize> = mpls_info
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.chapters.len()))
+                    .collect();
+                let sizes: std::collections::HashMap<String, u64> = mpls_info
+                    .into_iter()
+                    .map(|(k, v)| (k, v.clip_size))
+                    .collect();
                 let order = crate::index::parse_title_order(mount_path);
                 if did_mount {
                     let _ = disc::unmount_disc(&device_str);
                 }
-                (counts, order)
+                (counts, sizes, order)
             }
-            Err(_) => (std::collections::HashMap::new(), None),
+            Err(_) => (
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+                None,
+            ),
         }
     };
 

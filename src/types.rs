@@ -171,6 +171,7 @@ pub struct RipJob {
     pub episode: Vec<Episode>,
     pub filename: String,
     pub status: PlaylistStatus,
+    pub estimated_size: u64,
 }
 
 #[derive(Debug, Clone, Default)]

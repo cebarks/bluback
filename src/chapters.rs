@@ -2,30 +2,23 @@ use crate::types::ChapterMark;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Count chapters for each playlist by reading MPLS files from a mounted disc.
-/// Returns a map of playlist number → chapter count.
-pub fn count_chapters_for_playlists(
-    mount_point: &Path,
-    playlist_nums: &[&str],
-) -> HashMap<String, usize> {
-    let mut counts = HashMap::new();
-    for &num in playlist_nums {
-        if let Some(chapters) = extract_chapters(mount_point, num) {
-            counts.insert(num.to_string(), chapters.len());
-        }
-    }
-    counts
+/// Data extracted from a single MPLS playlist file.
+pub struct MplsInfo {
+    pub chapters: Vec<ChapterMark>,
+    /// Sum of on-disc `.m2ts` clip file sizes in bytes.
+    /// Zero if the STREAM directory is missing or all clips fail to stat.
+    pub clip_size: u64,
 }
 
-/// Extract chapter marks from an MPLS playlist file on a mounted Blu-ray disc.
+/// Parse an MPLS playlist file and extract chapter marks and clip file sizes.
 ///
-/// `mount_point` is the filesystem root of the mounted disc.
-/// `playlist_num` is the zero-padded playlist number (e.g., "00001").
+/// Reads `BDMV/PLAYLIST/{playlist_num}.mpls` from the mounted disc.
+/// For each PlayItem, stats `BDMV/STREAM/{clip_name}.m2ts` and sums the sizes.
+/// Only the primary clip per PlayItem is used (angle 0), matching bluback's remux behavior.
 ///
-/// Returns chapter marks with timestamps relative to the start of the playlist,
-/// or None if the MPLS file can't be read or has no entry-point marks.
-pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<ChapterMark>> {
-    let mpls_path = Path::new(mount_point)
+/// Returns `None` if the MPLS file can't be read, can't be parsed, or has no entry-point marks.
+pub fn parse_mpls_info(mount_point: &Path, playlist_num: &str) -> Option<MplsInfo> {
+    let mpls_path = mount_point
         .join("BDMV")
         .join("PLAYLIST")
         .join(format!("{}.mpls", playlist_num));
@@ -33,6 +26,7 @@ pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<Ch
     let file = std::fs::File::open(&mpls_path).ok()?;
     let mpls_data = mpls::Mpls::from(file).ok()?;
 
+    // Extract chapter marks from entry-point marks
     let entry_marks: Vec<_> = mpls_data
         .marks
         .iter()
@@ -44,7 +38,6 @@ pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<Ch
     }
 
     let base_secs = entry_marks[0].time_stamp.seconds();
-
     let chapters: Vec<ChapterMark> = entry_marks
         .iter()
         .enumerate()
@@ -54,12 +47,75 @@ pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<Ch
         })
         .collect();
 
-    Some(chapters)
+    // Sum clip file sizes from play items (primary clip only, not multi-angle)
+    let stream_dir = mount_point.join("BDMV").join("STREAM");
+    let clip_size: u64 = mpls_data
+        .play_list
+        .play_items
+        .iter()
+        .map(|item| {
+            let clip_path = stream_dir.join(format!("{}.m2ts", item.clip.file_name));
+            match std::fs::metadata(&clip_path) {
+                Ok(meta) => meta.len(),
+                Err(_) => {
+                    log::debug!(
+                        "Clip file not found: {} (playlist {})",
+                        clip_path.display(),
+                        playlist_num
+                    );
+                    0
+                }
+            }
+        })
+        .sum();
+
+    Some(MplsInfo {
+        chapters,
+        clip_size,
+    })
+}
+
+/// Collect MPLS info (chapters + clip sizes) for multiple playlists in one pass.
+///
+/// Returns a map of playlist number → `MplsInfo`.
+/// Playlists whose MPLS files can't be read are omitted from the result.
+pub fn collect_mpls_info(mount_point: &Path, playlist_nums: &[&str]) -> HashMap<String, MplsInfo> {
+    let mut info = HashMap::new();
+    for &num in playlist_nums {
+        if let Some(mpls_info) = parse_mpls_info(mount_point, num) {
+            info.insert(num.to_string(), mpls_info);
+        }
+    }
+    info
+}
+
+/// Extract chapter marks from an MPLS playlist file on a mounted Blu-ray disc.
+///
+/// Thin wrapper around `parse_mpls_info` — returns only the chapters.
+/// Used by `workflow::prepare_remux_options` during ripping.
+pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<ChapterMark>> {
+    parse_mpls_info(mount_point, playlist_num).map(|info| info.chapters)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_mpls_info_missing_path() {
+        let result = parse_mpls_info(std::path::Path::new("/nonexistent/path"), "00001");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_mpls_info_missing_playlist() {
+        let dir = std::env::temp_dir().join("bluback_test_mpls_info");
+        let playlist_dir = dir.join("BDMV").join("PLAYLIST");
+        std::fs::create_dir_all(&playlist_dir).unwrap();
+        let result = parse_mpls_info(&dir, "99999");
+        assert!(result.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_extract_chapters_missing_path() {
