@@ -204,21 +204,15 @@ pub fn render_dashboard_view(f: &mut Frame, view: &DashboardView, _status: &str,
                     (format!("{} {}%", bar, pct), size_str, eta_str)
                 }
                 PlaylistStatus::Verifying => ("Verifying...".to_string(), est_str, String::new()),
-                PlaylistStatus::Done(sz) => (
-                    "Completed".to_string(),
-                    format!("{}/{}", format_size(*sz), est_str),
-                    String::new(),
-                ),
-                PlaylistStatus::Verified(sz, _) => (
-                    "Verified".to_string(),
-                    format!("{}/{}", format_size(*sz), est_str),
-                    String::new(),
-                ),
-                PlaylistStatus::VerifyFailed(sz, _) => (
-                    "Verify failed".to_string(),
-                    format!("{}/{}", format_size(*sz), est_str),
-                    String::new(),
-                ),
+                PlaylistStatus::Done(sz) => {
+                    ("Completed".to_string(), format_size(*sz), String::new())
+                }
+                PlaylistStatus::Verified(sz, _) => {
+                    ("Verified".to_string(), format_size(*sz), String::new())
+                }
+                PlaylistStatus::VerifyFailed(sz, _) => {
+                    ("Verify failed".to_string(), format_size(*sz), String::new())
+                }
                 PlaylistStatus::Skipped(sz) => (
                     format!("Skipped ({})", format_size(*sz)),
                     est_str,
