@@ -1592,13 +1592,16 @@ pub fn handle_confirm_input_session(session: &mut crate::session::DriveSession, 
                     .get(&pl.num)
                     .cloned()
                     .unwrap_or_default();
-                // Prefer real on-disc clip size; fall back to bitrate estimate
+                // Prefer real on-disc clip size with TS→MKV overhead correction;
+                // fall back to bitrate estimate
+                const TS_TO_MKV_FACTOR: f64 = 0.97;
                 let estimated_size = session
                     .disc
                     .clip_sizes
                     .get(&pl.num)
                     .copied()
                     .filter(|&sz| sz > 0)
+                    .map(|sz| (sz as f64 * TS_TO_MKV_FACTOR) as u64)
                     .unwrap_or_else(|| {
                         const FALLBACK_BYTERATE: u64 = 2_500_000;
                         let byterate = session
