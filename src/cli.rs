@@ -98,6 +98,9 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
                 device, elapsed, timeout
             );
         }),
+        Some(&|current, total, num| {
+            eprint!("\rProbing playlist {} ({}/{})...", num, current, total);
+        }),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
     println!();
@@ -630,6 +633,9 @@ fn scan_disc(
                 "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
                 device, elapsed, timeout
             );
+        }),
+        Some(&|current, total, num| {
+            eprint!("\rProbing playlist {} ({}/{})...", num, current, total);
         }),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;

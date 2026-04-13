@@ -602,6 +602,7 @@ impl DriveSession {
                     crate::disc::set_max_speed(&dev_str);
                 }
                 let tx_progress = tx.clone();
+                let tx_probe = tx.clone();
                 let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>, ProbeCache)> {
                     let (playlists, probe_cache) = crate::media::scan_playlists_with_progress(
                         &dev_str,
@@ -609,6 +610,13 @@ impl DriveSession {
                         Some(&move |elapsed, timeout| {
                             let _ =
                                 tx_progress.send(BackgroundResult::ScanProgress(elapsed, timeout));
+                        }),
+                        Some(&move |current, total, num| {
+                            let _ = tx_probe.send(BackgroundResult::ProbeProgress(
+                                current,
+                                total,
+                                num.to_string(),
+                            ));
                         }),
                     )
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -619,6 +627,7 @@ impl DriveSession {
             .expect("failed to spawn scan thread");
 
         self.pending_rx = Some(rx);
+        self.disc.scan_log.push("Scanning for disc...".into());
         self.status_message = "Scanning for disc...".into();
         self.screen = Screen::Scanning;
     }
@@ -653,6 +662,7 @@ impl DriveSession {
                     self.disc.scan_log.push(msg.clone());
                 }
                 self.status_message = "Waiting for disc...".into();
+                self.emit_snapshot();
                 return false; // Keep pending_rx alive
             }
             BackgroundResult::DiscFound(ref device) => {
@@ -677,14 +687,27 @@ impl DriveSession {
                     return true;
                 }
                 self.disc.scan_log.clear();
-                self.status_message = format!("Scanning {}...", device);
+                let msg = format!("Scanning {}...", device);
+                self.disc.scan_log.push(msg.clone());
+                self.status_message = msg;
+                self.emit_snapshot();
                 return false; // Keep pending_rx alive
             }
             BackgroundResult::ScanProgress(elapsed, timeout) => {
-                self.status_message = format!(
+                let msg = format!(
                     "AACS negotiation in progress ({}s / {}s)...",
                     elapsed, timeout
                 );
+                self.disc.scan_log.push(msg.clone());
+                self.status_message = msg;
+                self.emit_snapshot();
+                return false; // Keep pending_rx alive
+            }
+            BackgroundResult::ProbeProgress(current, total, ref num) => {
+                let msg = format!("Probing playlist {} ({}/{})...", num, current, total);
+                self.disc.scan_log.push(msg.clone());
+                self.status_message = msg;
+                self.emit_snapshot();
                 return false; // Keep pending_rx alive
             }
             _ => {}
@@ -695,7 +718,8 @@ impl DriveSession {
         match result {
             BackgroundResult::WaitingForDisc(_)
             | BackgroundResult::DiscFound(_)
-            | BackgroundResult::ScanProgress(_, _) => unreachable!(),
+            | BackgroundResult::ScanProgress(_, _)
+            | BackgroundResult::ProbeProgress(_, _, _) => unreachable!(),
             BackgroundResult::DiscScan(Ok(_)) | BackgroundResult::DiscScan(Err(_))
                 if self.screen == Screen::Done =>
             {

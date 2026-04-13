@@ -32,7 +32,7 @@ fn label_text(label: &str) -> String {
 pub fn render_scanning_view(
     f: &mut Frame,
     view: &ScanningView,
-    status: &str,
+    _status: &str,
     _spinner: usize,
     area: Rect,
 ) {
@@ -46,16 +46,26 @@ pub fn render_scanning_view(
     );
     f.render_widget(title, chunks[0]);
 
-    let mut lines: Vec<Line> = view
+    let log_len = view.scan_log.len();
+    let lines: Vec<Line> = view
         .scan_log
         .iter()
-        .map(|s| Line::from(s.as_str()).style(Style::default().fg(Color::DarkGray)))
+        .enumerate()
+        .map(|(i, s)| {
+            if i + 1 == log_len {
+                Line::from(s.as_str())
+            } else {
+                Line::from(s.as_str()).style(Style::default().fg(Color::DarkGray))
+            }
+        })
         .collect();
-    if !status.is_empty() {
-        lines.push(Line::from(status.to_string()));
-    }
-    let body =
-        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Scanning"));
+
+    // Auto-scroll: show the tail of the log when it exceeds the viewport
+    let inner_height = chunks[1].height.saturating_sub(2) as usize; // subtract border
+    let scroll_offset = lines.len().saturating_sub(inner_height) as u16;
+    let body = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Scanning"))
+        .scroll((scroll_offset, 0));
     f.render_widget(body, chunks[1]);
 
     let hints = Paragraph::new("q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")

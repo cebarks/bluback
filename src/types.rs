@@ -245,6 +245,8 @@ pub enum BackgroundResult {
     DiscFound(String),
     /// Scan progress: (elapsed_secs, timeout_secs)
     ScanProgress(u64, u64),
+    /// Probe progress: (current_index, total_count, playlist_num)
+    ProbeProgress(usize, usize, String),
     /// Disc scan completed: (device, label, playlists, probe_cache)
     DiscScan(anyhow::Result<(String, String, Vec<Playlist>, ProbeCache)>),
     /// TMDb show search completed

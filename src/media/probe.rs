@@ -66,10 +66,12 @@ fn open_bluray(
 /// prevent the process from exiting). On timeout the child is SIGKILL'd and
 /// the parent continues cleanly. The child writes captured log lines back
 /// through a pipe.
+#[allow(clippy::type_complexity)]
 pub fn scan_playlists_with_progress(
     device: &str,
     min_duration: u32,
     on_progress: Option<&dyn Fn(u64, u64)>,
+    on_probe_progress: Option<&dyn Fn(usize, usize, &str)>,
 ) -> Result<(Vec<Playlist>, ProbeCache), MediaError> {
     ensure_init();
 
@@ -98,19 +100,29 @@ pub fn scan_playlists_with_progress(
     // This replaces the old count_streams loop — a single probe_playlist call
     // gets both stream counts and full MediaInfo/StreamInfo, avoiding redundant
     // device opens downstream.
+    let probe_indices: Vec<usize> = playlists
+        .iter()
+        .enumerate()
+        .filter(|(_, pl)| pl.seconds >= min_duration)
+        .map(|(i, _)| i)
+        .collect();
+    let probe_total = probe_indices.len();
     let mut probe_cache = HashMap::new();
-    for pl in &mut playlists {
-        if pl.seconds >= min_duration {
-            match probe_playlist(device, &pl.num) {
-                Ok((media, streams)) => {
-                    pl.video_streams = streams.video_streams.len() as u32;
-                    pl.audio_streams = streams.audio_streams.len() as u32;
-                    pl.subtitle_streams = streams.subtitle_streams.len() as u32;
-                    probe_cache.insert(pl.num.clone(), (media, streams));
-                }
-                Err(e) => {
-                    log::warn!("Failed to probe playlist {}: {}", pl.num, e);
-                }
+    for (step, pi) in probe_indices.into_iter().enumerate() {
+        if let Some(cb) = &on_probe_progress {
+            cb(step + 1, probe_total, &playlists[pi].num);
+        }
+        let num = playlists[pi].num.clone();
+        match probe_playlist(device, &num) {
+            Ok((media, streams)) => {
+                let pl = &mut playlists[pi];
+                pl.video_streams = streams.video_streams.len() as u32;
+                pl.audio_streams = streams.audio_streams.len() as u32;
+                pl.subtitle_streams = streams.subtitle_streams.len() as u32;
+                probe_cache.insert(num, (media, streams));
+            }
+            Err(e) => {
+                log::warn!("Failed to probe playlist {}: {}", num, e);
             }
         }
     }
