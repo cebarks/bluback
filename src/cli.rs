@@ -61,6 +61,7 @@ fn format_subtitle_column(streams: &[crate::types::SubtitleStream]) -> String {
 }
 
 struct TmdbContext {
+    tmdb_id: Option<u64>,
     episode_assignments: EpisodeAssignments,
     episodes: Vec<Episode>,
     start_episode: u32,
@@ -317,6 +318,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     args: &Args,
     config: &crate::config::Config,
@@ -325,11 +327,44 @@ pub fn run(
     tracks_spec: Option<&str>,
     start_episode_override: Option<u32>,
     skip_eject: bool,
+    history: Option<&crate::history::HistoryDb>,
+    ignore_history: bool,
+    batch_id: Option<&str>,
 ) -> anyhow::Result<(u32, u32)> {
     let device = args.device().to_string_lossy();
 
     let (label, label_info, mut all_playlists, mut episodes_pl, movie_mode, probe_cache) =
         scan_disc(args, config)?;
+
+    // Duplicate detection: check if this disc was previously ripped
+    if let (Some(db), false) = (history, ignore_history) {
+        if let Ok(matches) = db.find_session_by_label(&label) {
+            let completed = matches
+                .iter()
+                .find(|s| s.status == crate::history::SessionStatus::Completed);
+            if let Some(prev) = completed {
+                let date = prev.started_at.get(..10).unwrap_or(&prev.started_at);
+                if headless {
+                    eprintln!(
+                        "history: {} was previously ripped on {}, skipping",
+                        label, date
+                    );
+                    return Ok((0, 0));
+                } else {
+                    eprint!(
+                        "Disc {} was previously ripped ({}). Continue? [y/N] ",
+                        label, date
+                    );
+                    io::stdout().flush()?;
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input)?;
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        return Ok((0, 0));
+                    }
+                }
+            }
+        }
+    }
 
     // Mount disc for chapter counts, clip sizes, and title order
     let (chapter_counts, _clip_sizes, title_order) = {
@@ -365,6 +400,33 @@ pub fn run(
     crate::index::reorder_playlists(&mut all_playlists, title_order.as_deref());
     crate::index::reorder_playlists(&mut episodes_pl, title_order.as_deref());
 
+    // Episode continuation: use history to determine start episode if no explicit override
+    let effective_start_override = if start_episode_override.is_some() || ignore_history {
+        start_episode_override
+    } else if let Some(db) = history {
+        // Try TMDb-based continuation first (requires season to be known at this point)
+        // Season may come from --season flag or volume label parsing
+        let season = args.season.or(label_info.as_ref().map(|l| l.season));
+        if let Some(season) = season {
+            // We don't have tmdb_id yet (it comes from TMDb lookup), so use label-based lookup
+            let label_pattern = label_info
+                .as_ref()
+                .map(|l| format!("{}%", l.show.replace(' ', "_").to_uppercase()))
+                .unwrap_or_else(|| label.clone());
+            if let Ok(Some(last)) = db.last_episode_by_label(&label_pattern, season as i32) {
+                let next = last as u32 + 1;
+                eprintln!("history: continuing from E{:02} (last ripped)", last);
+                Some(next)
+            } else {
+                start_episode_override
+            }
+        } else {
+            start_episode_override
+        }
+    } else {
+        start_episode_override
+    };
+
     let mut tmdb_ctx = lookup_tmdb(
         args,
         config,
@@ -372,7 +434,7 @@ pub fn run(
         &episodes_pl,
         movie_mode,
         headless,
-        start_episode_override,
+        effective_start_override,
     )?;
 
     let selected = display_and_select(
@@ -562,6 +624,65 @@ pub fn run(
         })
         .collect();
 
+    // Record history session (after TMDb lookup, before ripping)
+    let session_id = if let Some(db) = history {
+        let title = if movie_mode {
+            tmdb_ctx
+                .movie_title
+                .as_ref()
+                .map(|(t, _)| t.clone())
+                .unwrap_or_else(|| label.clone())
+        } else {
+            tmdb_ctx.show_name.clone().unwrap_or_else(|| label.clone())
+        };
+        let info = crate::history::SessionInfo {
+            volume_label: label.clone(),
+            device: Some(device.to_string()),
+            tmdb_id: tmdb_ctx.tmdb_id.map(|id| id as i64),
+            tmdb_type: if movie_mode {
+                Some("movie".into())
+            } else {
+                Some("tv".into())
+            },
+            title,
+            season: tmdb_ctx.season_num.map(|s| s as i32),
+            disc_number: label_info.as_ref().map(|l| l.disc as i32),
+            batch_id: batch_id.map(|s| s.to_string()),
+            config_snapshot: Some(
+                serde_json::to_string(&crate::history::ConfigSnapshot::from_config(config))
+                    .unwrap_or_default(),
+            ),
+        };
+        match db.start_session(&info) {
+            Ok(id) => {
+                // Record disc playlists
+                let min_dur = config.min_duration(args.min_duration);
+                let playlist_infos: Vec<crate::history::DiscPlaylistInfo> = all_playlists
+                    .iter()
+                    .map(|pl| crate::history::DiscPlaylistInfo {
+                        playlist: pl.num.clone(),
+                        duration_ms: Some((pl.seconds as i64) * 1000),
+                        video_streams: Some(pl.video_streams as i32),
+                        audio_streams: Some(pl.audio_streams as i32),
+                        subtitle_streams: Some(pl.subtitle_streams as i32),
+                        chapters: chapter_counts.get(&pl.num).map(|&c| c as i32),
+                        is_filtered: pl.seconds < min_dur,
+                    })
+                    .collect();
+                if let Err(e) = db.record_disc_playlists(id, &playlist_infos) {
+                    log::warn!("history: failed to record playlists: {}", e);
+                }
+                Some(id)
+            }
+            Err(e) => {
+                log::warn!("history: failed to start session: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let (success_count, fail_count) = rip_selected(
         args,
         config,
@@ -578,7 +699,21 @@ pub fn run(
         skip_eject,
         &probe_cache,
         movie_mode,
+        history,
+        session_id,
     )?;
+
+    // Finish history session
+    if let (Some(db), Some(sid)) = (history, session_id) {
+        let status = if success_count > 0 {
+            crate::history::SessionStatus::Completed
+        } else {
+            crate::history::SessionStatus::Failed
+        };
+        if let Err(e) = db.finish_session(sid, status) {
+            log::warn!("history: failed to finish session: {}", e);
+        }
+    }
 
     let regular_episodes =
         crate::util::count_assigned_episodes(&tmdb_ctx.episode_assignments, &specials_set);
@@ -685,6 +820,7 @@ fn lookup_tmdb(
     start_episode_override: Option<u32>,
 ) -> anyhow::Result<TmdbContext> {
     let mut ctx = TmdbContext {
+        tmdb_id: None,
         episode_assignments: HashMap::new(),
         episodes: Vec::new(),
         start_episode: 1,
@@ -757,16 +893,17 @@ fn lookup_tmdb(
         let default_query = label_info.as_ref().map(|l| l.show.as_str()).unwrap_or("");
 
         if movie_mode {
-            if headless {
-                ctx.movie_title = headless_tmdb_movie(key, default_query)?;
+            let movie_result = if headless {
+                headless_tmdb_movie(key, default_query)?
             } else {
-                ctx.movie_title = prompt_tmdb_movie(key, default_query)?;
-            }
-            // Use movie year as date_released for metadata
-            if let Some((_, ref year)) = ctx.movie_title {
+                prompt_tmdb_movie(key, default_query)?
+            };
+            if let Some((id, title, year)) = movie_result {
+                ctx.tmdb_id = Some(id);
                 if !year.is_empty() {
                     ctx.date_released = Some(year.clone());
                 }
+                ctx.movie_title = Some((title, year));
             }
         } else {
             if api_key.is_none() && (args.season.is_some() || args.start_episode.is_some()) {
@@ -782,6 +919,7 @@ fn lookup_tmdb(
             };
 
             if let Some(lookup) = lookup {
+                ctx.tmdb_id = Some(lookup.tmdb_id);
                 ctx.season_num = Some(lookup.season);
                 ctx.show_name = Some(lookup.show_name);
                 ctx.date_released = lookup.first_air_date;
@@ -1211,6 +1349,8 @@ fn rip_selected(
     skip_eject: bool,
     probe_cache: &crate::types::ProbeCache,
     movie_mode: bool,
+    history: Option<&crate::history::HistoryDb>,
+    session_id: Option<i64>,
 ) -> anyhow::Result<(u32, u32)> {
     let output_dir = args
         .output
@@ -1253,6 +1393,13 @@ fn rip_selected(
         }
     }
 
+    // Mark session as in_progress
+    if let (Some(db), Some(sid)) = (history, session_id) {
+        if let Err(e) = db.finish_session(sid, crate::history::SessionStatus::InProgress) {
+            log::warn!("history: failed to mark session in_progress: {}", e);
+        }
+    }
+
     let mut success_count = 0u32;
     let mut fail_count = 0u32;
     let mut skip_count = 0u32;
@@ -1280,6 +1427,28 @@ fn rip_selected(
                     filename,
                     format_size(size)
                 );
+                // Record skip in history
+                if let (Some(db), Some(sid)) = (history, session_id) {
+                    let episodes = tmdb_ctx.episode_assignments.get(&pl.num).map(|eps| {
+                        serde_json::to_string(
+                            &eps.iter().map(|e| e.episode_number).collect::<Vec<_>>(),
+                        )
+                        .unwrap_or_default()
+                    });
+                    let file_info = crate::history::RippedFileInfo {
+                        playlist: pl.num.clone(),
+                        episodes,
+                        output_path: outfile.display().to_string(),
+                        file_size: Some(size as i64),
+                        duration_ms: Some((pl.seconds as i64) * 1000),
+                        streams: None,
+                        chapters: None,
+                    };
+                    if let Ok(fid) = db.record_file(sid, &file_info) {
+                        let _ =
+                            db.update_file_status(fid, crate::history::FileStatus::Skipped, None);
+                    }
+                }
                 skip_count += 1;
                 continue;
             }
@@ -1353,6 +1522,32 @@ fn rip_selected(
             config.reserve_index_space(),
             metadata_per_playlist[i].clone(),
         );
+
+        // Record file start in history
+        let episodes_json = tmdb_ctx.episode_assignments.get(&pl.num).map(|eps| {
+            serde_json::to_string(&eps.iter().map(|e| e.episode_number).collect::<Vec<_>>())
+                .unwrap_or_default()
+        });
+        let history_file_id = if let (Some(db), Some(sid)) = (history, session_id) {
+            let file_info = crate::history::RippedFileInfo {
+                playlist: pl.num.clone(),
+                episodes: episodes_json,
+                output_path: outfile.display().to_string(),
+                file_size: None,
+                duration_ms: Some((pl.seconds as i64) * 1000),
+                streams: None,
+                chapters: None,
+            };
+            match db.record_file(sid, &file_info) {
+                Ok(fid) => Some(fid),
+                Err(e) => {
+                    log::warn!("history: failed to record file: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let pl_seconds = pl.seconds;
         let is_tty = crate::atty_stdout();
@@ -1516,6 +1711,43 @@ fn rip_selected(
                 )
             }
         };
+
+        // Update history file status
+        if let (Some(db), Some(fid)) = (history, history_file_id) {
+            let (status, error) = if hook_status == "success" {
+                (crate::history::FileStatus::Completed, None)
+            } else {
+                (
+                    crate::history::FileStatus::Failed,
+                    if hook_error.is_empty() {
+                        None
+                    } else {
+                        Some(hook_error.as_str())
+                    },
+                )
+            };
+            // Update with final size for completed files
+            if status == crate::history::FileStatus::Completed && hook_size > 0 {
+                // Re-record with final size and chapter count, then set completed
+                let episodes_json = tmdb_ctx.episode_assignments.get(&pl.num).map(|eps| {
+                    serde_json::to_string(&eps.iter().map(|e| e.episode_number).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                });
+                let file_info = crate::history::RippedFileInfo {
+                    playlist: pl.num.clone(),
+                    episodes: episodes_json,
+                    output_path: outfile.display().to_string(),
+                    file_size: Some(hook_size as i64),
+                    duration_ms: Some((pl.seconds as i64) * 1000),
+                    streams: None,
+                    chapters: Some(hook_chapters as i32),
+                };
+                let _ = db.record_file(session_id.unwrap_or(0), &file_info);
+            }
+            if let Err(e) = db.update_file_status(fid, status, error) {
+                log::warn!("history: failed to update file status: {}", e);
+            }
+        }
 
         // Post-rip hook
         {
@@ -1779,6 +2011,7 @@ fn prompt_tmdb(
     }
 
     Ok(Some(TmdbLookupResult {
+        tmdb_id: show.id,
         episodes,
         season: season_num,
         show_name: show.name.clone(),
@@ -1789,7 +2022,7 @@ fn prompt_tmdb(
 fn prompt_tmdb_movie(
     api_key: &str,
     default_query: &str,
-) -> anyhow::Result<Option<(String, String)>> {
+) -> anyhow::Result<Option<(u64, String, String)>> {
     let hint = if default_query.is_empty() {
         String::new()
     } else {
@@ -1858,13 +2091,13 @@ fn prompt_tmdb_movie(
         .to_string();
 
     println!("  Selected: {} ({})", movie.title, year);
-    Ok(Some((movie.title.clone(), year)))
+    Ok(Some((movie.id, movie.title.clone(), year)))
 }
 
 fn headless_tmdb_movie(
     api_key: &str,
     default_query: &str,
-) -> anyhow::Result<Option<(String, String)>> {
+) -> anyhow::Result<Option<(u64, String, String)>> {
     if default_query.is_empty() {
         return Ok(None);
     }
@@ -1889,7 +2122,7 @@ fn headless_tmdb_movie(
 
     log::info!("TMDb: auto-selected \"{}\" ({})", movie.title, year);
     println!("TMDb: auto-selected \"{}\" ({})", movie.title, year);
-    Ok(Some((movie.title.clone(), year)))
+    Ok(Some((movie.id, movie.title.clone(), year)))
 }
 
 fn headless_tmdb_tv(
@@ -1927,6 +2160,7 @@ fn headless_tmdb_tv(
     };
 
     Ok(Some(TmdbLookupResult {
+        tmdb_id: show.id,
         episodes,
         season: season_num,
         show_name: show.name.clone(),
@@ -1940,12 +2174,15 @@ pub fn run_batch(
     headless: bool,
     stream_filter: &crate::streams::StreamFilter,
     tracks_spec: Option<&str>,
+    history: Option<&crate::history::HistoryDb>,
+    ignore_history: bool,
 ) -> anyhow::Result<()> {
     let mut disc_count: u32 = 0;
     let mut total_files: u32 = 0;
     let mut total_failures: u32 = 0;
     let mut next_start_episode = args.start_episode.unwrap_or(1);
     let device = args.device().to_string_lossy().to_string();
+    let batch_id = uuid::Uuid::new_v4().to_string();
 
     loop {
         if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1981,6 +2218,9 @@ pub fn run_batch(
             tracks_spec,
             Some(next_start_episode),
             true, // skip_eject: batch loop handles eject
+            history,
+            ignore_history,
+            Some(&batch_id),
         ) {
             Ok((files_ripped, regular_episodes_ripped)) => {
                 total_files += files_ripped;

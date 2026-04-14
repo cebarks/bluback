@@ -28,7 +28,6 @@ pub struct TmdbShow {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TmdbMovie {
-    #[allow(dead_code)] // Used in Task 10 for tmdb_id in SessionInfo
     pub id: u64,
     pub title: String,
     pub release_date: Option<String>,
@@ -233,6 +232,7 @@ pub type EpisodeAssignments = HashMap<String, Vec<Episode>>;
 pub type ProbeCache = HashMap<String, (MediaInfo, StreamInfo)>;
 
 pub struct TmdbLookupResult {
+    pub tmdb_id: u64,
     pub episodes: Vec<Episode>,
     pub season: u32,
     pub show_name: String,

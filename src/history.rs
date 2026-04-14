@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 const SCHEMA_VERSION: i64 = 1;
@@ -214,6 +214,66 @@ pub fn resolve_db_path(config: Option<&crate::config::Config>) -> std::path::Pat
             std::path::PathBuf::from(home).join(".local/share")
         });
     data_dir.join("bluback").join("history.db")
+}
+
+// ============================================================================
+// Config Snapshot
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigSnapshot {
+    pub output_dir: String,
+    pub tv_format: String,
+    pub movie_format: String,
+    pub special_format: String,
+    pub preset: String,
+    pub audio_languages: Vec<String>,
+    pub subtitle_languages: Vec<String>,
+    pub prefer_surround: bool,
+    pub aacs_backend: String,
+    pub reserve_index_space: u32,
+    pub verify: bool,
+    pub verify_level: String,
+}
+
+impl ConfigSnapshot {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            output_dir: config.output_dir.clone().unwrap_or_else(|| ".".to_string()),
+            tv_format: config.tv_format.clone().unwrap_or_default(),
+            movie_format: config.movie_format.clone().unwrap_or_default(),
+            special_format: config.special_format.clone().unwrap_or_default(),
+            preset: config
+                .preset
+                .clone()
+                .unwrap_or_else(|| "default".to_string()),
+            audio_languages: config
+                .streams
+                .as_ref()
+                .and_then(|s| s.audio_languages.clone())
+                .unwrap_or_default(),
+            subtitle_languages: config
+                .streams
+                .as_ref()
+                .and_then(|s| s.subtitle_languages.clone())
+                .unwrap_or_default(),
+            prefer_surround: config
+                .streams
+                .as_ref()
+                .and_then(|s| s.prefer_surround)
+                .unwrap_or(false),
+            aacs_backend: config
+                .aacs_backend
+                .clone()
+                .unwrap_or_else(|| "auto".to_string()),
+            reserve_index_space: config.reserve_index_space.unwrap_or(500),
+            verify: config.verify.unwrap_or(false),
+            verify_level: config
+                .verify_level
+                .clone()
+                .unwrap_or_else(|| "quick".to_string()),
+        }
+    }
 }
 
 // ============================================================================
