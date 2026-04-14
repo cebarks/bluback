@@ -65,6 +65,16 @@ pub struct DriveSession {
     pub history_session_id: Option<i64>,
     /// Skip duplicate detection / episode continuation but still record.
     pub ignore_history: bool,
+
+    // --- History-based TUI hints (informational only) ---
+    /// Warning shown on scanning/tmdb screen if this disc was previously ripped.
+    pub history_duplicate_hint: Option<String>,
+    /// Suggested starting episode from history: (next_episode, hint_text).
+    pub history_episode_hint: Option<(u32, String)>,
+    /// Playlists that were completed in a previous session of this disc.
+    pub history_ripped_playlists: std::collections::HashSet<String>,
+    /// Whether the current session was successfully saved to history on completion.
+    pub history_session_saved: bool,
 }
 
 impl DriveSession {
@@ -122,6 +132,11 @@ impl DriveSession {
             history_db_path: None,
             history_session_id: None,
             ignore_history: false,
+
+            history_duplicate_hint: None,
+            history_episode_hint: None,
+            history_ripped_playlists: std::collections::HashSet::new(),
+            history_session_saved: false,
         }
     }
 
@@ -287,6 +302,11 @@ impl DriveSession {
         // history_db_path and ignore_history survive reset (session-level config).
         // history_session_id is per-disc and must be cleared.
         self.history_session_id = None;
+        // History hints are per-disc state
+        self.history_duplicate_hint = None;
+        self.history_episode_hint = None;
+        self.history_ripped_playlists.clear();
+        self.history_session_saved = false;
     }
 
     /// Returns the next unassigned episode number (max assigned + 1, or 1 if none).
@@ -310,6 +330,7 @@ impl DriveSession {
         Some(ScanningView {
             label: self.disc.label.clone(),
             scan_log: self.disc.scan_log.clone(),
+            history_duplicate_hint: self.history_duplicate_hint.clone(),
         })
     }
 
@@ -329,6 +350,7 @@ impl DriveSession {
             show_name: self.tmdb.show_name.clone(),
             label: self.disc.label.clone(),
             episodes_pl_count: self.disc.episodes_pl.len(),
+            history_duplicate_hint: self.history_duplicate_hint.clone(),
         })
     }
 
@@ -344,6 +366,7 @@ impl DriveSession {
             episodes: self.tmdb.episodes.clone(),
             list_cursor: self.wizard.list_cursor,
             label: self.disc.label.clone(),
+            history_episode_hint: self.history_episode_hint.clone(),
         })
     }
 
@@ -372,6 +395,7 @@ impl DriveSession {
             track_selections: self.wizard.track_selections.clone(),
             expanded_playlist: self.wizard.expanded_playlist,
             detection_results: self.wizard.detection_results.clone(),
+            history_ripped_playlists: self.history_ripped_playlists.clone(),
         })
     }
 
@@ -435,6 +459,7 @@ impl DriveSession {
             status_message: self.status_message.clone(),
             filenames: self.wizard.filenames.clone(),
             batch_disc_count: self.batch_disc_count,
+            history_session_saved: self.history_session_saved,
         })
     }
 
@@ -472,8 +497,16 @@ impl DriveSession {
                     return;
                 }
                 Ok(SessionCommand::KeyEvent(key)) => {
+                    let prev_screen = self.screen.clone();
                     let was_ripping = self.screen == Screen::Ripping;
                     self.handle_key(key);
+                    // Compute episode hint when entering PlaylistManager from Season
+                    if prev_screen == Screen::Season
+                        && self.screen == Screen::PlaylistManager
+                        && self.history_episode_hint.is_none()
+                    {
+                        self.compute_episode_hint(&history_db);
+                    }
                     // Detect user abort: was ripping, now done with abort message
                     if was_ripping
                         && self.screen == Screen::Done
@@ -510,6 +543,7 @@ impl DriveSession {
             if changed || probe_changed {
                 // Record history session when scan completes (transition to TmdbSearch)
                 if self.screen == Screen::TmdbSearch && self.history_session_id.is_none() {
+                    self.compute_duplicate_hint(&history_db);
                     self.record_history_session(&history_db);
                 }
                 self.emit_snapshot();
@@ -1073,6 +1107,74 @@ impl DriveSession {
         crate::tui::dashboard::tick_session(self, history_db)
     }
 
+    /// Compute episode continuation hint from history.
+    /// Called after TMDb/season selection, before entering the Playlist Manager.
+    pub fn compute_episode_hint(&mut self, history_db: &Option<crate::history::HistoryDb>) {
+        if self.ignore_history || self.tmdb.movie_mode {
+            return;
+        }
+        let db = match history_db {
+            Some(db) => db,
+            None => return,
+        };
+        let season = match self.wizard.season_num {
+            Some(s) => s as i32,
+            None => return,
+        };
+        let tmdb_id = self
+            .tmdb
+            .selected_show
+            .and_then(|i| self.tmdb.search_results.get(i))
+            .map(|s| s.id as i64);
+        let last_ep = if let Some(tmdb_id) = tmdb_id {
+            db.last_episode(tmdb_id, season).ok().flatten()
+        } else {
+            None
+        };
+        if let Some(last) = last_ep {
+            let next = last as u32 + 1;
+            self.history_episode_hint = Some((next, format!("Last ripped: E{:02}", last)));
+            // Pre-fill start episode if the user hasn't manually set one
+            // and the CLI didn't provide one
+            if self.wizard.start_episode.is_none() && self.start_episode_arg.is_none() {
+                self.wizard.start_episode = Some(next);
+            }
+        }
+    }
+
+    /// Compute history-based hints after disc scan completes.
+    fn compute_duplicate_hint(&mut self, history_db: &Option<crate::history::HistoryDb>) {
+        if self.ignore_history || self.disc.label.is_empty() {
+            return;
+        }
+        let db = match history_db {
+            Some(db) => db,
+            None => return,
+        };
+        if let Ok(matches) = db.find_session_by_label(&self.disc.label) {
+            if let Some(prev) = matches
+                .iter()
+                .find(|s| s.status == crate::history::SessionStatus::Completed)
+            {
+                self.history_duplicate_hint = Some(format!(
+                    "{} ripped on {} ({}/{} playlists)",
+                    prev.title,
+                    &prev.started_at[..10.min(prev.started_at.len())],
+                    prev.files_completed,
+                    prev.files_total
+                ));
+                if let Ok(Some(detail)) = db.get_session(prev.id) {
+                    self.history_ripped_playlists = detail
+                        .files
+                        .iter()
+                        .filter(|f| f.status == crate::history::FileStatus::Completed)
+                        .map(|f| f.playlist.clone())
+                        .collect();
+                }
+            }
+        }
+    }
+
     /// Record a history session after disc scan completes.
     fn record_history_session(&mut self, history_db: &Option<crate::history::HistoryDb>) {
         let db = match history_db {
@@ -1444,6 +1546,10 @@ mod tests {
         session.history_db_path = Some(PathBuf::from("/tmp/history.db"));
         session.ignore_history = true;
         session.history_session_id = Some(99);
+        session.history_duplicate_hint = Some("test hint".into());
+        session.history_episode_hint = Some((5, "Last ripped: E04".into()));
+        session.history_ripped_playlists.insert("00800".to_string());
+        session.history_session_saved = true;
 
         session.reset_for_rescan();
 
@@ -1455,6 +1561,10 @@ mod tests {
         assert!(session.ignore_history);
         // Per-disc state is cleared
         assert!(session.history_session_id.is_none());
+        assert!(session.history_duplicate_hint.is_none());
+        assert!(session.history_episode_hint.is_none());
+        assert!(session.history_ripped_playlists.is_empty());
+        assert!(!session.history_session_saved);
     }
 
     #[test]

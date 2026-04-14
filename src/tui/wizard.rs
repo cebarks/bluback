@@ -68,6 +68,20 @@ pub fn render_scanning_view(
         .scroll((scroll_offset, 0));
     f.render_widget(body, chunks[1]);
 
+    // History duplicate warning (below scan log, above hints)
+    if let Some(ref hint) = view.history_duplicate_hint {
+        let warn = Paragraph::new(format!(" Previously ripped: {}", hint))
+            .style(Style::default().fg(Color::Yellow));
+        // Render over the last line of the body area
+        let warn_area = Rect {
+            x: chunks[1].x,
+            y: chunks[2].y.saturating_sub(1),
+            width: chunks[1].width,
+            height: 1,
+        };
+        f.render_widget(warn, warn_area);
+    }
+
     let hints = Paragraph::new("q: Quit | Ctrl+E: Eject | Ctrl+R: Rescan | Ctrl+S: Settings")
         .style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
@@ -93,6 +107,19 @@ pub fn render_tmdb_search_view(
     let title =
         Paragraph::new(header_text).block(Block::default().borders(Borders::ALL).title(step_title));
     f.render_widget(title, chunks[0]);
+
+    // History duplicate warning bar
+    if let Some(ref hint) = view.history_duplicate_hint {
+        let warn_area = Rect {
+            x: chunks[0].x,
+            y: chunks[0].y + chunks[0].height,
+            width: chunks[0].width,
+            height: 1.min(chunks[1].height),
+        };
+        let warn = Paragraph::new(format!(" Previously ripped: {}", hint))
+            .style(Style::default().fg(Color::Yellow));
+        f.render_widget(warn, warn_area);
+    }
 
     if !view.has_api_key {
         // API key input mode
@@ -271,6 +298,19 @@ pub fn render_season_view(
     );
     f.render_widget(season_input, content_chunks[0]);
 
+    // History episode continuation hint
+    if let Some((_, ref hint_text)) = view.history_episode_hint {
+        let hint_area = Rect {
+            x: content_chunks[0].x + 1,
+            y: content_chunks[0].y + content_chunks[0].height,
+            width: content_chunks[0].width.saturating_sub(2),
+            height: 1.min(content_chunks[1].height),
+        };
+        let hint =
+            Paragraph::new(format!(" {}", hint_text)).style(Style::default().fg(Color::DarkGray));
+        f.render_widget(hint, hint_area);
+    }
+
     // Episode list preview (when fetched from TMDb)
     if !view.episodes.is_empty() {
         let ep_lines: Vec<Line> = view
@@ -412,7 +452,12 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         } else {
             " "
         };
-        let marker = format!("{} {}", cursor_marker, checked);
+        let history_marker = if view.history_ripped_playlists.contains(&pl.num) {
+            "+"
+        } else {
+            " "
+        };
+        let marker = format!("{}{}{}", cursor_marker, history_marker, checked);
 
         let is_episode_pl = view.episodes_pl.iter().any(|ep| ep.num == pl.num);
         let is_special = view.specials.contains(&pl.num);
@@ -1741,6 +1786,7 @@ mod tests {
             track_selections: HashMap::new(),
             expanded_playlist: None,
             detection_results: Vec::new(),
+            history_ripped_playlists: std::collections::HashSet::new(),
         }
     }
 
