@@ -47,6 +47,14 @@ pub struct HookConfig {
     pub log_output: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct HistoryConfig {
+    pub enabled: Option<bool>,
+    pub path: Option<String>,
+    pub retention: Option<String>,
+    pub retention_statuses: Option<Vec<String>>,
+}
+
 impl HookConfig {
     pub fn on_failure(&self) -> bool {
         self.on_failure.unwrap_or(false)
@@ -95,6 +103,7 @@ pub struct Config {
     pub streams: Option<StreamsConfig>,
     pub post_rip: Option<HookConfig>,
     pub post_session: Option<HookConfig>,
+    pub history: Option<HistoryConfig>,
 }
 
 fn config_dir() -> PathBuf {
@@ -275,6 +284,26 @@ impl Config {
         emit_bool(&mut out, "on_failure", ps.and_then(|h| h.on_failure), false);
         emit_bool(&mut out, "blocking", ps.and_then(|h| h.blocking), true);
         emit_bool(&mut out, "log_output", ps.and_then(|h| h.log_output), true);
+
+        out.push('\n');
+        out.push_str("[history]\n");
+        let h = &self.history;
+        let h_enabled = h.as_ref().and_then(|h| h.enabled);
+        emit_bool(&mut out, "enabled", h_enabled, true);
+        let h_path = h.as_ref().and_then(|h| h.path.clone());
+        emit_str(&mut out, "path", &h_path, "");
+        let h_retention = h.as_ref().and_then(|h| h.retention.clone());
+        emit_str(&mut out, "retention", &h_retention, "");
+        if let Some(statuses) = h.as_ref().and_then(|h| h.retention_statuses.as_ref()) {
+            let arr = statuses
+                .iter()
+                .map(|s| format!("\"{}\"", s))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("retention_statuses = [{}]\n", arr));
+        } else {
+            out.push_str("# retention_statuses = [\"scanned\", \"failed\"]\n");
+        }
 
         out
     }
@@ -473,6 +502,21 @@ impl Config {
             .and_then(|m| m.tags.clone())
             .unwrap_or_default()
     }
+
+    #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
+    pub fn history_enabled(&self) -> bool {
+        self.history.as_ref().and_then(|h| h.enabled).unwrap_or(true)
+    }
+
+    #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
+    pub fn history_path(&self) -> Option<&str> {
+        self.history.as_ref().and_then(|h| h.path.as_deref())
+    }
+
+    #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
+    pub fn history_retention(&self) -> Option<&str> {
+        self.history.as_ref().and_then(|h| h.retention.as_deref())
+    }
 }
 
 fn preset_format(name: &str, is_movie: bool) -> String {
@@ -529,6 +573,11 @@ const KNOWN_KEYS: &[&str] = &[
     "post_session.on_failure",
     "post_session.blocking",
     "post_session.log_output",
+    "history",
+    "history.enabled",
+    "history.path",
+    "history.retention",
+    "history.retention_statuses",
 ];
 
 pub fn validate_raw_toml(raw: &str) -> Vec<String> {
@@ -598,6 +647,16 @@ pub fn validate_config(config: &Config) -> Vec<String> {
                 "verify_level must be \"quick\" or \"full\", got \"{}\"",
                 level
             ));
+        }
+    }
+    if let Some(ref h) = config.history {
+        if let Some(ref retention) = h.retention {
+            if crate::duration::parse_duration(retention).is_err() {
+                warnings.push(format!(
+                    "history.retention '{}' is not a valid duration",
+                    retention
+                ));
+            }
         }
     }
     warnings
@@ -1681,5 +1740,82 @@ prefer_surround = true
         let result = load_from(&path);
         assert!(result.is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_parse_history_config() {
+        let toml_str = r#"
+[history]
+enabled = true
+path = "/tmp/test.db"
+retention = "90d"
+retention_statuses = ["scanned", "failed"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let h = config.history.unwrap();
+        assert_eq!(h.enabled, Some(true));
+        assert_eq!(h.path, Some("/tmp/test.db".to_string()));
+        assert_eq!(h.retention, Some("90d".to_string()));
+        assert_eq!(
+            h.retention_statuses,
+            Some(vec!["scanned".to_string(), "failed".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_history_defaults() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.history.is_none());
+        assert!(config.history_enabled());
+        assert!(config.history_path().is_none());
+    }
+
+    #[test]
+    fn test_history_known_keys() {
+        assert!(KNOWN_KEYS.contains(&"history"));
+        assert!(KNOWN_KEYS.contains(&"history.enabled"));
+        assert!(KNOWN_KEYS.contains(&"history.path"));
+        assert!(KNOWN_KEYS.contains(&"history.retention"));
+        assert!(KNOWN_KEYS.contains(&"history.retention_statuses"));
+    }
+
+    #[test]
+    fn test_toml_string_includes_history() {
+        let config = Config::default();
+        let s = config.to_toml_string();
+        assert!(s.contains("[history]"));
+        assert!(s.contains("# enabled = true"));
+    }
+
+    #[test]
+    fn test_validate_invalid_history_retention_warns() {
+        let config = Config {
+            history: Some(HistoryConfig {
+                enabled: Some(true),
+                path: None,
+                retention: Some("invalid_duration".into()),
+                retention_statuses: None,
+            }),
+            ..Default::default()
+        };
+        let warnings = validate_config(&config);
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("history.retention") && w.contains("invalid_duration")));
+    }
+
+    #[test]
+    fn test_validate_valid_history_retention_no_warn() {
+        let config = Config {
+            history: Some(HistoryConfig {
+                enabled: Some(true),
+                path: None,
+                retention: Some("90d".into()),
+                retention_statuses: None,
+            }),
+            ..Default::default()
+        };
+        let warnings = validate_config(&config);
+        assert!(!warnings.iter().any(|w| w.contains("history.retention")));
     }
 }
