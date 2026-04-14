@@ -876,6 +876,31 @@ impl DriveSession {
                     );
                 }
 
+                // Add synthetic detection entries for pre-classified specials
+                // (above junk threshold but skipped during probe — < 50% of median)
+                if self.auto_detect {
+                    let min_dur =
+                        self.config
+                            .min_probe_duration(self.min_probe_duration_arg);
+                    for pl in &self.disc.playlists {
+                        if pl.seconds >= min_dur
+                            && !self.wizard.stream_infos.contains_key(&pl.num)
+                            && !self.wizard.detection_results.iter().any(|d| d.playlist_num == pl.num)
+                        {
+                            self.wizard.detection_results.push(
+                                crate::detection::DetectionResult {
+                                    playlist_num: pl.num.clone(),
+                                    suggested_type: crate::detection::SuggestedType::Special,
+                                    confidence: crate::detection::Confidence::High,
+                                    reasons: vec![
+                                        "Pre-classified: duration < 50% of median".into(),
+                                    ],
+                                },
+                            );
+                        }
+                    }
+                }
+
                 // Movie mode detection — detection-aware
                 let auto_detect_on = self.auto_detect;
                 let episode_count = if auto_detect_on {

@@ -99,7 +99,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     });
 
     eprint!("Scanning disc at {}...", device);
-    let (mut playlists, probe_cache, _skip_set) = crate::media::scan_playlists_with_progress(
+    let (mut playlists, probe_cache, skip_set) = crate::media::scan_playlists_with_progress(
         &device,
         min_probe_duration,
         auto_detect,
@@ -162,18 +162,32 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     });
 
     // Run detection if enabled (only on probed playlists)
-    let detection_results = if auto_detect {
+    let mut detection_results = if auto_detect {
         let probed_playlists: Vec<Playlist> = playlists
             .iter()
             .filter(|pl| probe_cache.contains_key(&pl.num))
             .cloned()
             .collect();
-        crate::detection::run_detection_with_chapters(
+        let mut results = crate::detection::run_detection_with_chapters(
             &probed_playlists,
             None, // No TMDb context in --list-playlists
             None,
             &chapter_counts,
-        )
+        );
+
+        // Add pre-classified specials as high-confidence detection results
+        for pl in &playlists {
+            if skip_set.contains(&pl.num) {
+                results.push(crate::detection::DetectionResult {
+                    playlist_num: pl.num.clone(),
+                    suggested_type: crate::detection::SuggestedType::Special,
+                    confidence: crate::detection::Confidence::High,
+                    reasons: vec!["Pre-classified: duration < 50% of median".into()],
+                });
+            }
+        }
+
+        results
     } else {
         Vec::new()
     };
@@ -208,6 +222,33 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         } else {
             vec![None; playlists.len()]
         };
+
+    // Re-run detection with full probe data when verbose mode probed pre-classified specials
+    if auto_detect && args.verbose && !skip_set.is_empty() {
+        // Build full playlist set from verbose probe results
+        let all_probed: Vec<Playlist> = playlists
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| verbose_info[*i].is_some())
+            .map(|(_, pl)| pl.clone())
+            .collect();
+        detection_results =
+            crate::detection::run_detection_with_chapters(&all_probed, None, None, &chapter_counts);
+        // Re-add pre-classified entries for any that detection didn't already cover
+        // (in case pre-classified playlists failed to probe in verbose mode)
+        for pl in &playlists {
+            if skip_set.contains(&pl.num)
+                && !detection_results.iter().any(|d| d.playlist_num == pl.num)
+            {
+                detection_results.push(crate::detection::DetectionResult {
+                    playlist_num: pl.num.clone(),
+                    suggested_type: crate::detection::SuggestedType::Special,
+                    confidence: crate::detection::Confidence::High,
+                    reasons: vec!["Pre-classified: duration < 50% of median".into()],
+                });
+            }
+        }
+    }
 
     if args.verbose {
         println!(

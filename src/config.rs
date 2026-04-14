@@ -1152,6 +1152,14 @@ also_unknown = 42"#;
     }
 
     #[test]
+    fn test_old_min_duration_key_triggers_warning() {
+        let raw = r#"min_duration = 900"#;
+        let warnings = validate_raw_toml(raw);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("min_duration"));
+    }
+
+    #[test]
     fn test_validate_min_probe_duration_zero_warns() {
         let config = Config {
             min_probe_duration: Some(0),
