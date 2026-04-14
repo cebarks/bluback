@@ -902,6 +902,19 @@ impl SettingsState {
                     .map(|h| h.log_output())
                     .unwrap_or(true),
             },
+            SettingItem::Separator {
+                label: Some("History".into()),
+            },
+            SettingItem::Toggle {
+                label: "History Tracking".into(),
+                key: "history.enabled".into(),
+                value: config.history_enabled(),
+            },
+            SettingItem::Text {
+                label: "Retention".into(),
+                key: "history.retention".into(),
+                value: config.history_retention().unwrap_or("").to_string(),
+            },
             SettingItem::Separator { label: None },
             SettingItem::Action {
                 label: "Save to Config (Ctrl+S)".into(),
@@ -955,6 +968,8 @@ impl SettingsState {
             ("BLUBACK_AUDIO_LANGUAGES", "audio_languages"),
             ("BLUBACK_SUBTITLE_LANGUAGES", "subtitle_languages"),
             ("BLUBACK_PREFER_SURROUND", "prefer_surround"),
+            ("BLUBACK_HISTORY", "history.enabled"),
+            ("BLUBACK_HISTORY_RETENTION", "history.retention"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -1067,6 +1082,8 @@ impl SettingsState {
             ("BLUBACK_AUDIO_LANGUAGES", "audio_languages"),
             ("BLUBACK_SUBTITLE_LANGUAGES", "subtitle_languages"),
             ("BLUBACK_PREFER_SURROUND", "prefer_surround"),
+            ("BLUBACK_HISTORY", "history.enabled"),
+            ("BLUBACK_HISTORY_RETENTION", "history.retention"),
             ("TMDB_API_KEY", "tmdb_api_key"),
         ];
 
@@ -1133,6 +1150,10 @@ impl SettingsState {
                             streams.subtitle_languages = Some(langs);
                         }
                     }
+                    "history.retention" if !value.is_empty() => {
+                        let history = config.history.get_or_insert_with(Default::default);
+                        history.retention = Some(value.clone());
+                    }
                     _ => {}
                 },
                 SettingItem::Toggle { key, value, .. } => match key.as_str() {
@@ -1176,6 +1197,10 @@ impl SettingsState {
                     "prefer_surround" if *value => {
                         let streams = config.streams.get_or_insert_with(Default::default);
                         streams.prefer_surround = Some(true);
+                    }
+                    "history.enabled" if !*value => {
+                        let history = config.history.get_or_insert_with(Default::default);
+                        history.enabled = Some(false);
                     }
                     _ => {}
                 },
@@ -1390,14 +1415,14 @@ mod tests {
     fn test_settings_state_from_config_item_count() {
         let config = crate::config::Config::default();
         let state = SettingsState::from_config(&config);
-        // 7 separators + 31 settings + 1 action = 39 items
-        // (28 base + 1 verify + 2 verify settings from upstream + 3 streams from this branch)
+        // 8 separators + 33 settings + 1 action = 42 items
+        // (28 base + 1 verify + 2 verify settings + 3 streams + 2 history settings)
         let non_separator_count = state
             .items
             .iter()
             .filter(|i| !matches!(i, SettingItem::Separator { .. }))
             .count();
-        assert_eq!(non_separator_count, 34); // 33 settings + 1 action
+        assert_eq!(non_separator_count, 36); // 35 settings + 1 action
     }
 
     #[test]
