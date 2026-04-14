@@ -41,6 +41,8 @@ pub struct Coordinator {
     drive_event_rx: mpsc::Receiver<DriveEvent>,
     /// Track assigned episodes per (show_name, season) across sessions for overlap detection.
     assigned_episodes: EpisodeAssignmentMap,
+    /// Path to the history database, passed to each session thread.
+    pub history_db_path: Option<PathBuf>,
 }
 
 impl Coordinator {
@@ -64,6 +66,7 @@ impl Coordinator {
             overlay: None,
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
+            history_db_path: None,
         }
     }
 
@@ -105,6 +108,8 @@ impl Coordinator {
         session.auto_detect =
             self.args.auto_detect || (!self.args.no_auto_detect && self.config.auto_detect());
         session.batch = self.args.batch || (!self.args.no_batch && self.config.batch());
+        session.history_db_path = self.history_db_path.clone();
+        session.ignore_history = self.args.ignore_history;
         session.verify_level = match self
             .args
             .verify_level
@@ -873,6 +878,7 @@ mod tests {
             overlay: None,
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
+            history_db_path: None,
         }
     }
 
@@ -972,6 +978,7 @@ mod tests {
             overlay: None,
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
+            history_db_path: None,
         };
 
         let (handle, cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
@@ -1010,6 +1017,7 @@ mod tests {
             overlay: None,
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
+            history_db_path: None,
         };
 
         let (handle, _cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
@@ -1044,6 +1052,7 @@ mod tests {
             overlay: None,
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
+            history_db_path: None,
         };
 
         let (handle, _cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);

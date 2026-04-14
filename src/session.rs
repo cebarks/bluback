@@ -58,6 +58,13 @@ pub struct DriveSession {
     pub batch: bool,
     /// Number of discs processed in this session (0 until first scan completes).
     pub batch_disc_count: u32,
+
+    /// Path to the history database file (each thread opens its own connection).
+    pub history_db_path: Option<std::path::PathBuf>,
+    /// Active history session ID (set after scan completes and session is recorded).
+    pub history_session_id: Option<i64>,
+    /// Skip duplicate detection / episode continuation but still record.
+    pub ignore_history: bool,
 }
 
 impl DriveSession {
@@ -111,6 +118,10 @@ impl DriveSession {
             auto_detect: false,
             batch: false,
             batch_disc_count: 0,
+
+            history_db_path: None,
+            history_session_id: None,
+            ignore_history: false,
         }
     }
 
@@ -273,6 +284,9 @@ impl DriveSession {
         self.pending_rx = None;
         self.probe_rx = None;
         self.disc_detected_label = None;
+        // history_db_path and ignore_history survive reset (session-level config).
+        // history_session_id is per-disc and must be cleared.
+        self.history_session_id = None;
     }
 
     /// Returns the next unassigned episode number (max assigned + 1, or 1 if none).
@@ -428,6 +442,13 @@ impl DriveSession {
 
     /// Main entry point for the session thread. Runs the scan/wizard/rip lifecycle.
     pub fn run(mut self) {
+        // Open a thread-local history DB connection (rusqlite::Connection is !Send)
+        let history_db = self.history_db_path.as_ref().and_then(|path| {
+            crate::history::HistoryDb::open(path)
+                .map_err(|e| log::warn!("history: failed to open DB: {}", e))
+                .ok()
+        });
+
         self.start_disc_scan();
         self.emit_snapshot();
 
@@ -438,6 +459,10 @@ impl DriveSession {
 
             match command {
                 Ok(SessionCommand::Shutdown) => {
+                    // Best-effort: mark session as cancelled
+                    if let (Some(db), Some(sid)) = (&history_db, self.history_session_id) {
+                        let _ = db.finish_session(sid, crate::history::SessionStatus::Cancelled);
+                    }
                     self.rip
                         .cancel
                         .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -447,7 +472,19 @@ impl DriveSession {
                     return;
                 }
                 Ok(SessionCommand::KeyEvent(key)) => {
+                    let was_ripping = self.screen == Screen::Ripping;
                     self.handle_key(key);
+                    // Detect user abort: was ripping, now done with abort message
+                    if was_ripping
+                        && self.screen == Screen::Done
+                        && self.status_message == "Rip aborted."
+                    {
+                        if let (Some(db), Some(sid)) = (&history_db, self.history_session_id) {
+                            let _ =
+                                db.finish_session(sid, crate::history::SessionStatus::Cancelled);
+                        }
+                        self.history_session_id = None;
+                    }
                     self.emit_snapshot();
                 }
                 Ok(SessionCommand::LinkTo { context }) => {
@@ -471,17 +508,25 @@ impl DriveSession {
             let changed = self.poll_background();
             let probe_changed = self.poll_probe();
             if changed || probe_changed {
+                // Record history session when scan completes (transition to TmdbSearch)
+                if self.screen == Screen::TmdbSearch && self.history_session_id.is_none() {
+                    self.record_history_session(&history_db);
+                }
                 self.emit_snapshot();
             }
 
             if self.screen == Screen::Ripping {
-                let rip_changed = self.tick_rip();
+                let rip_changed = self.tick_rip(&history_db);
                 if rip_changed {
                     self.emit_snapshot();
                 }
             }
 
             if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
+                // Best-effort: mark session as cancelled
+                if let (Some(db), Some(sid)) = (&history_db, self.history_session_id) {
+                    let _ = db.finish_session(sid, crate::history::SessionStatus::Cancelled);
+                }
                 self.rip
                     .cancel
                     .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1024,8 +1069,96 @@ impl DriveSession {
     }
 
     /// Tick the rip engine. Returns true if state changed.
-    fn tick_rip(&mut self) -> bool {
-        crate::tui::dashboard::tick_session(self)
+    fn tick_rip(&mut self, history_db: &Option<crate::history::HistoryDb>) -> bool {
+        crate::tui::dashboard::tick_session(self, history_db)
+    }
+
+    /// Record a history session after disc scan completes.
+    fn record_history_session(&mut self, history_db: &Option<crate::history::HistoryDb>) {
+        let db = match history_db {
+            Some(db) => db,
+            None => return,
+        };
+
+        let title = if self.tmdb.movie_mode {
+            self.tmdb
+                .selected_movie
+                .and_then(|i| self.tmdb.movie_results.get(i))
+                .map(|m| m.title.clone())
+                .unwrap_or_else(|| self.disc.label.clone())
+        } else if !self.tmdb.show_name.is_empty() {
+            self.tmdb.show_name.clone()
+        } else {
+            self.disc
+                .label_info
+                .as_ref()
+                .map(|l| l.show.clone())
+                .unwrap_or_else(|| self.disc.label.clone())
+        };
+
+        let tmdb_id = if self.tmdb.movie_mode {
+            self.tmdb
+                .selected_movie
+                .and_then(|i| self.tmdb.movie_results.get(i))
+                .map(|m| m.id as i64)
+        } else {
+            self.tmdb
+                .selected_show
+                .and_then(|i| self.tmdb.search_results.get(i))
+                .map(|s| s.id as i64)
+        };
+
+        let info = crate::history::SessionInfo {
+            volume_label: self.disc.label.clone(),
+            device: Some(self.device.to_string_lossy().to_string()),
+            tmdb_id,
+            tmdb_type: if self.tmdb.movie_mode {
+                Some("movie".into())
+            } else {
+                Some("tv".into())
+            },
+            title,
+            season: self.wizard.season_num.map(|s| s as i32),
+            disc_number: self.disc.label_info.as_ref().map(|l| l.disc as i32),
+            batch_id: if self.batch {
+                Some(format!("tui-{}", self.id.0))
+            } else {
+                None
+            },
+            config_snapshot: Some(
+                serde_json::to_string(&crate::history::ConfigSnapshot::from_config(&self.config))
+                    .unwrap_or_default(),
+            ),
+        };
+
+        match db.start_session(&info) {
+            Ok(id) => {
+                self.history_session_id = Some(id);
+
+                // Record disc playlists
+                let min_dur = self.config.min_duration(self.min_duration_arg);
+                let playlist_infos: Vec<crate::history::DiscPlaylistInfo> = self
+                    .disc
+                    .playlists
+                    .iter()
+                    .map(|pl| crate::history::DiscPlaylistInfo {
+                        playlist: pl.num.clone(),
+                        duration_ms: Some((pl.seconds as i64) * 1000),
+                        video_streams: Some(pl.video_streams as i32),
+                        audio_streams: Some(pl.audio_streams as i32),
+                        subtitle_streams: Some(pl.subtitle_streams as i32),
+                        chapters: self.disc.chapter_counts.get(&pl.num).map(|&c| c as i32),
+                        is_filtered: pl.seconds < min_dur,
+                    })
+                    .collect();
+                if let Err(e) = db.record_disc_playlists(id, &playlist_infos) {
+                    log::warn!("history: failed to record playlists: {}", e);
+                }
+            }
+            Err(e) => {
+                log::warn!("history: failed to start session: {}", e);
+            }
+        }
     }
 
     /// Compute the output filename for a playlist at the given index.
@@ -1268,6 +1401,7 @@ mod tests {
         session.wizard.season_num = Some(2);
         session.screen = Screen::PlaylistManager;
         session.status_message = "Something".into();
+        session.history_session_id = Some(42);
 
         session.reset_for_rescan();
 
@@ -1284,6 +1418,10 @@ mod tests {
         // batch fields survive reset
         assert!(!session.batch);
         assert_eq!(session.batch_disc_count, 0);
+
+        // history_session_id is per-disc state and gets cleared
+        assert!(session.history_session_id.is_none());
+        // history_db_path and ignore_history are session-level config and survive
     }
 
     #[test]
@@ -1298,6 +1436,25 @@ mod tests {
 
         assert!(session.batch);
         assert_eq!(session.batch_disc_count, 3);
+    }
+
+    #[test]
+    fn test_history_config_survives_reset() {
+        let mut session = make_test_session();
+        session.history_db_path = Some(PathBuf::from("/tmp/history.db"));
+        session.ignore_history = true;
+        session.history_session_id = Some(99);
+
+        session.reset_for_rescan();
+
+        // Session-level config survives
+        assert_eq!(
+            session.history_db_path.as_deref(),
+            Some(std::path::Path::new("/tmp/history.db"))
+        );
+        assert!(session.ignore_history);
+        // Per-disc state is cleared
+        assert!(session.history_session_id.is_none());
     }
 
     #[test]
