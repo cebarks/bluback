@@ -410,7 +410,32 @@ fn run_inner() -> anyhow::Result<i32> {
     let history_db_path = if args.no_history || !config.history_enabled() {
         None
     } else {
-        Some(crate::history::resolve_db_path(Some(&config)))
+        let path = crate::history::resolve_db_path(Some(&config));
+        // Run retention auto-prune on startup if configured
+        if let Some(retention) = config.history_retention() {
+            if let Ok(parsed) = crate::duration::parse_duration(retention) {
+                if let Ok(cutoff) = parsed.to_cutoff_date() {
+                    if let Ok(db) = crate::history::HistoryDb::open(&path) {
+                        let statuses = config
+                            .history
+                            .as_ref()
+                            .and_then(|h| h.retention_statuses.as_ref())
+                            .map(|v| {
+                                v.iter()
+                                    .filter_map(|s| crate::history::SessionStatus::from_str(s))
+                                    .collect::<Vec<_>>()
+                            });
+                        let status_slice = statuses.as_deref();
+                        match db.prune(&cutoff, status_slice) {
+                            Ok(0) => {}
+                            Ok(n) => log::info!("history: pruned {} old sessions", n),
+                            Err(e) => log::warn!("history: prune failed: {}", e),
+                        }
+                    }
+                }
+            }
+        }
+        Some(path)
     };
 
     let aacs_backend = args
