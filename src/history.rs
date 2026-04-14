@@ -196,6 +196,27 @@ pub struct HistoryStats {
 }
 
 // ============================================================================
+// Path Resolution
+// ============================================================================
+
+/// Resolve the history DB path: BLUBACK_HISTORY_PATH env → config → XDG default.
+pub fn resolve_db_path(config: Option<&crate::config::Config>) -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("BLUBACK_HISTORY_PATH") {
+        return std::path::PathBuf::from(path);
+    }
+    if let Some(path) = config.and_then(|c| c.history_path()) {
+        return std::path::PathBuf::from(path);
+    }
+    let data_dir = std::env::var("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            std::path::PathBuf::from(home).join(".local/share")
+        });
+    data_dir.join("bluback").join("history.db")
+}
+
+// ============================================================================
 // Database
 // ============================================================================
 
