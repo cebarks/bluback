@@ -230,6 +230,7 @@ pub struct ConfigSnapshot {
     pub audio_languages: Vec<String>,
     pub subtitle_languages: Vec<String>,
     pub prefer_surround: bool,
+    pub stream_selection: String,
     pub aacs_backend: String,
     pub reserve_index_space: u32,
     pub verify: bool,
@@ -262,6 +263,10 @@ impl ConfigSnapshot {
                 .as_ref()
                 .and_then(|s| s.prefer_surround)
                 .unwrap_or(false),
+            stream_selection: config
+                .stream_selection
+                .clone()
+                .unwrap_or_else(|| "all".to_string()),
             aacs_backend: config
                 .aacs_backend
                 .clone()
@@ -415,11 +420,21 @@ impl HistoryDb {
 
     fn cleanup_stale_sessions(&mut self) -> Result<()> {
         let cutoff = now_iso8601_minus_hours(STALE_SESSION_HOURS);
+        let now = now_iso8601();
 
+        // First, mark stale in-progress files as failed
         self.conn
             .execute(
-                "UPDATE sessions SET status = 'failed' WHERE status = 'in_progress' AND started_at < ?1",
-                params![cutoff],
+                "UPDATE ripped_files SET status = 'failed', error = 'session interrupted (stale cleanup)', finished_at = ?1 WHERE session_id IN (SELECT id FROM sessions WHERE status = 'in_progress' AND started_at < ?2) AND status = 'in_progress'",
+                params![now, cutoff],
+            )
+            .context("Failed to clean up stale ripped_files")?;
+
+        // Then mark stale sessions as failed
+        self.conn
+            .execute(
+                "UPDATE sessions SET status = 'failed', finished_at = ?1 WHERE status = 'in_progress' AND started_at < ?2",
+                params![now, cutoff],
             )
             .context("Failed to clean up stale sessions")?;
 
@@ -750,22 +765,35 @@ impl HistoryDb {
             format!("WHERE {}", where_clauses.join(" AND "))
         };
 
-        let limit = filter.limit.unwrap_or(100);
-        let sql = format!(
-            r#"SELECT
-                s.id, s.title, s.volume_label, s.season, s.disc_number,
-                s.started_at, s.status, s.batch_id,
-                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as files_completed,
-                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status IN ('completed', 'failed')), 0) as files_total,
-                COALESCE((SELECT SUM(rf.file_size) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as total_size
-            FROM sessions s
-            {}
-            ORDER BY s.started_at DESC
-            LIMIT ?"#,
-            where_sql
-        );
-
-        params_vec.push(Box::new(limit));
+        let sql = if let Some(limit) = filter.limit {
+            params_vec.push(Box::new(limit));
+            format!(
+                r#"SELECT
+                    s.id, s.title, s.volume_label, s.season, s.disc_number,
+                    s.started_at, s.status, s.batch_id,
+                    COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as files_completed,
+                    COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status IN ('completed', 'failed')), 0) as files_total,
+                    COALESCE((SELECT SUM(rf.file_size) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as total_size
+                FROM sessions s
+                {}
+                ORDER BY s.started_at DESC
+                LIMIT ?"#,
+                where_sql
+            )
+        } else {
+            format!(
+                r#"SELECT
+                    s.id, s.title, s.volume_label, s.season, s.disc_number,
+                    s.started_at, s.status, s.batch_id,
+                    COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as files_completed,
+                    COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status IN ('completed', 'failed')), 0) as files_total,
+                    COALESCE((SELECT SUM(rf.file_size) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as total_size
+                FROM sessions s
+                {}
+                ORDER BY s.started_at DESC"#,
+                where_sql
+            )
+        };
 
         let params_refs: Vec<&dyn rusqlite::ToSql> =
             params_vec.iter().map(|p| p.as_ref()).collect();

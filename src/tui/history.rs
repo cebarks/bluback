@@ -493,12 +493,13 @@ fn format_size(bytes: i64) -> String {
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         s.to_string()
     } else if max_len > 3 {
-        format!("{}...", &s[..max_len - 3])
+        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{}...", truncated)
     } else {
-        s[..max_len].to_string()
+        s.chars().take(max_len).collect()
     }
 }
 

@@ -103,11 +103,18 @@ fn run_list(
         None
     };
 
+    let since_date = if let Some(ref since_str) = since {
+        let parsed = crate::duration::parse_duration(since_str)?;
+        Some(parsed.to_cutoff_date()?)
+    } else {
+        None
+    };
+
     let filter = SessionFilter {
         limit: Some(limit),
         status: parsed_status,
         title,
-        since,
+        since: since_date,
         season,
         batch_id,
     };
@@ -272,11 +279,13 @@ fn run_show(db: &HistoryDb, id: i64) -> Result<()> {
 fn run_stats(db: &HistoryDb) -> Result<()> {
     let stats = db.stats()?;
 
+    let display_completed = stats.completed_sessions - stats.partial_sessions;
+
     println!("History Summary");
     println!(
         "  Sessions:  {} ({} completed, {} partial, {} failed, {} scanned)",
         stats.total_sessions,
-        stats.completed_sessions,
+        display_completed,
         stats.partial_sessions,
         stats.failed_sessions,
         stats.scanned_sessions
@@ -428,9 +437,10 @@ fn format_duration_ms(ms: Option<i64>) -> String {
 }
 
 fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    if s.chars().count() <= max_len {
         s.to_string()
     } else {
-        format!("{}…", &s[..max_len - 1])
+        let truncated: String = s.chars().take(max_len.saturating_sub(1)).collect();
+        format!("{}…", truncated)
     }
 }
