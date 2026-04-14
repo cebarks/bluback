@@ -1,5 +1,6 @@
 pub mod coordinator;
 pub mod dashboard;
+pub mod history;
 pub mod settings;
 pub mod tab_bar;
 pub mod wizard;
@@ -306,6 +307,16 @@ fn run_app(
         config_path,
         stream_filter.clone(),
     );
+
+    // Open a separate HistoryDb connection for the coordinator's overlay queries.
+    // Session threads open their own connections independently.
+    if let Some(ref path) = history_db_path {
+        match crate::history::HistoryDb::open(path) {
+            Ok(db) => coord.history_db = Some(db),
+            Err(e) => log::warn!("failed to open history DB for TUI overlay: {}", e),
+        }
+    }
+
     coord.history_db_path = history_db_path;
     coord.run(terminal)
 }
