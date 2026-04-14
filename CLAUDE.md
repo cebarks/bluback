@@ -64,6 +64,7 @@ FFmpeg development libraries and clang are required at build time (bindgen gener
 - `eject`, `max_speed`, `min_duration`, `show_filtered`, `verbose_libbluray`
 - `output_dir`, `device`, `stream_selection`, `reserve_index_space`
 - `aacs_backend` (auto/libaacs/libmmbd), `overwrite`, `auto_detect`
+- `[history]` section: `enabled` (default true), `path` (DB location), `retention` (auto-prune duration, e.g. "90d"), `retention_statuses` (array of statuses to prune)
 
 ## Build & Test Commands
 
@@ -105,10 +106,13 @@ Before every commit, you MUST run all three of these and verify they pass:
 15. `index.rs` — Blu-ray `index.bdmv` parser: extracts title→playlist ordering for correct episode assignment
 16. `streams.rs` — stream filtering (`StreamFilter::apply()`) and CLI track spec parsing (`parse_track_spec()`)
 17. `detection.rs` — playlist type detection heuristics (duration, stream count, chapter count) and TMDb runtime matching with confidence levels
+18. `history.rs` — SQLite-backed rip history database: schema/migrations, session/file recording (UPSERT), episode/special continuation queries (`json_each`), duplicate detection, listing/filtering/stats, management (delete/prune/clear), JSON export, stale session cleanup, retention auto-prune, `ConfigSnapshot` serialization
+19. `history_cli.rs` — `bluback history` CLI subcommand: argv pre-check dispatch, `list`/`show`/`stats`/`delete`/`clear`/`export` handlers with table formatting
+20. `duration.rs` — duration string parser for history retention and CLI filters (`30d`, `6months`, `1year`, `YYYY-MM-DD`)
 
 ### Two UI Modes
 
-- **TUI mode** (default when stdout is TTY): ratatui wizard (5 screens in TV mode, 4 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`. App struct decomposed into `DiscState`, `TmdbState`, `WizardState`, `RipState` sub-structs. Settings overlay (`tui/settings.rs`) accessible via `Ctrl+S` from any screen, rendered on top of the current screen via `App.overlay: Option<Overlay>`.
+- **TUI mode** (default when stdout is TTY): ratatui wizard (5 screens in TV mode, 4 in movie mode, in `tui/wizard.rs`) → progress dashboard (`tui/dashboard.rs`). State machine in `tui/mod.rs`. App struct decomposed into `DiscState`, `TmdbState`, `WizardState`, `RipState` sub-structs. Settings overlay (`tui/settings.rs`) accessible via `Ctrl+S` from any screen, history overlay (`tui/history.rs`) accessible via `Ctrl+H`, both rendered on top of the current screen via `App.overlay: Option<Overlay>`.
 - **CLI mode** (`--no-tui` or non-TTY): plain-text interactive prompts in `cli.rs`. Supports headless operation via `--yes`/`-y` (auto-enabled when stdin is not a TTY). `--title`, `--year`, `--playlists`, `--list-playlists` flags enable fully scripted workflows.
 
 Both modes use the same underlying disc/rip/tmdb/util functions.
@@ -141,7 +145,7 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **TMDb API key**: looked up from config TOML → flat file `~/.config/bluback/tmdb_api_key` → `TMDB_API_KEY` env var.
 - **Settings overlay** — `App.overlay: Option<Overlay>` renders on top of the current screen. When active, all global key handlers except `Ctrl+C` are blocked; input routes to the overlay handler. `SettingsState` holds typed `SettingItem` variants (Toggle, Choice, Text, Number, Separator, Action). Choice variant has optional `custom_value` for the "Custom..." option (used by device dropdown). `Ctrl+S` in the overlay saves to `config.toml` with commented-out defaults and triggers workflow reset (rescan) unless mid-rip. Toggle/Choice changes apply to the session immediately without saving.
 - **Config path resolution** — Priority: `--config` CLI flag → `BLUBACK_CONFIG` env var → `~/.config/bluback/config.toml`. The resolved path is stored as `config_path: PathBuf` on `App`.
-- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `BLUBACK_AACS_BACKEND`, `BLUBACK_OVERWRITE`, `BLUBACK_BATCH`, `BLUBACK_VERIFY`, `BLUBACK_VERIFY_LEVEL`, `BLUBACK_METADATA`, `BLUBACK_AUDIO_LANGUAGES`, `BLUBACK_SUBTITLE_LANGUAGES`, `BLUBACK_PREFER_SURROUND`, `BLUBACK_AUTO_DETECT`, `TMDB_API_KEY`.
+- **Environment variable overrides** — On settings panel open, `BLUBACK_*` env vars are detected and applied to settings items. The import notification persists until user input. On save, a warning notes which env vars will override the config file. Supported: `BLUBACK_OUTPUT_DIR`, `BLUBACK_DEVICE`, `BLUBACK_EJECT`, `BLUBACK_MAX_SPEED`, `BLUBACK_MIN_DURATION`, `BLUBACK_PRESET`, `BLUBACK_TV_FORMAT`, `BLUBACK_MOVIE_FORMAT`, `BLUBACK_SPECIAL_FORMAT`, `BLUBACK_SHOW_FILTERED`, `BLUBACK_VERBOSE_LIBBLURAY`, `BLUBACK_RESERVE_INDEX_SPACE`, `BLUBACK_AACS_BACKEND`, `BLUBACK_OVERWRITE`, `BLUBACK_BATCH`, `BLUBACK_VERIFY`, `BLUBACK_VERIFY_LEVEL`, `BLUBACK_METADATA`, `BLUBACK_AUDIO_LANGUAGES`, `BLUBACK_SUBTITLE_LANGUAGES`, `BLUBACK_PREFER_SURROUND`, `BLUBACK_AUTO_DETECT`, `BLUBACK_HISTORY`, `BLUBACK_HISTORY_PATH`, `BLUBACK_HISTORY_RETENTION`, `TMDB_API_KEY`.
 - **`--settings` standalone mode** — Opens settings panel without disc detection or dependency checks. Dirty close prompts to save. Exits after panel close.
 - **Signal handling** — `ctrlc` crate registers handler for SIGINT/SIGTERM. First signal sets global `AtomicBool` cancel flag (propagated to remux cancel). Second signal within 2 seconds force-exits with code 130. Partial MKV files are deleted on cancel or error in both CLI and TUI modes.
 - **MountGuard** — RAII struct in `disc.rs` with both explicit `cleanup()` and `Drop` impl for disc unmount. Primary cleanup is explicit (called before `std::process::exit()`); `Drop` is a safety net for panics.
@@ -153,25 +157,27 @@ Priority chain (highest to lowest): `--format` CLI flag → `--format-preset` CL
 - **Post-rip hooks** — `[post_rip]` and `[post_session]` config tables with `command`, `on_failure`, `blocking`, `log_output` fields. Commands run via `sh -c` with `{var}` template expansion (TODO(debt): shell injection risk from unescaped values). Per-file hook fires after each playlist remux; per-session hook fires after all jobs complete. Both called from CLI (`cli.rs`) and TUI (`tui/dashboard.rs`). `--no-hooks` disables for the run. Hook failures are logged but never fail the rip.
 - **Rip verification** — Optional post-remux validation. `verify` config (default false) + `verify_level` ("quick" or "full"). Quick: probe output MKV headers — check duration (2% tolerance), stream counts, chapter count. Full: adds sample frame decode at 5 seek points. `--verify`, `--verify-level`, `--no-verify` CLI flags. TUI prompts on failure (delete & retry / keep / skip). CLI logs warning. Hook vars: `{verify}` (passed/failed/skipped), `{verify_detail}` (comma-separated failed check names).
 - **Batch mode** — `--batch` flag + `batch` config option enables continuous multi-disc ripping. After rip completes, auto-ejects and waits for next disc. TUI: auto-restarts wizard on disc detection (skip popup). CLI: outer loop with disc polling via `get_volume_label()`, 2-second interval. Episode numbers auto-advance across discs (specials excluded). `--batch` conflicts with `--dry-run`, `--list-playlists`, `--check`, `--settings`, `--no-eject`. Settings panel toggle + `BLUBACK_BATCH` env var. Disc counter shown in TUI block title.
+- **Rip history** — SQLite database at `$XDG_DATA_HOME/bluback/history.db` (default `~/.local/share/bluback/history.db`). Records every disc scan and rip session. `HistoryDb` wraps `rusqlite::Connection` with `&self` methods (interior mutability). Each TUI session thread opens its own connection (WAL mode for safe concurrency); CLI is single-threaded. Episode/special continuation queries use `json_each()` over JSON episode arrays. Duplicate detection checks volume label (exact) and TMDb ID (historical). Stale sessions (in_progress > 4 hours) auto-cleaned on open. Retention auto-prune runs on startup if configured. `--no-history` disables all DB access; `--ignore-history` disables reads but still records. `bluback history` subcommand uses argv pre-check before clap parsing (avoids `--title` collision with flatten approach). Schema versioned via `schema_version` table with embedded migration array.
 - **Auto-detection** — Optional heuristic system (`auto_detect` config, `--auto-detect` CLI) that pre-marks likely specials and multi-episode playlists. Layer 1: duration outliers (<50% median = high special, 50-75% = medium, >200% = multi-episode), stream count anomalies, chapter count anomalies. Layer 2: TMDb runtime matching (±10% or ±3min tolerance) with season 0 fetch for specials. Three confidence levels (High/Medium/Low); high-confidence pre-marked in TUI, auto-applied in headless CLI. `--specials` takes precedence over auto-detection.
 
 ## Testing
 
 Unit tests live in `#[cfg(test)] mod tests` blocks within each module. Integration tests in `tests/` directory. No tests require hardware or network access.
 
-**Unit tests (483):**
+**Unit tests (625):**
 - `util.rs` — duration parsing, filename sanitization, selection parsing, episode input parsing, episode assignment, multi-episode filename rendering, template rendering, episode counting for batch auto-advance
 - `disc.rs` — volume label parsing, playlist filtering
 - `detection.rs` — duration heuristics, stream/chapter count analysis, TMDb runtime matching, confidence stacking, edge cases
 - `media/probe.rs` — HDR classification, channel layout formatting, framerate/aspect ratio formatting, playlist log line parsing, GCD, DTS profile formatting
 - `media/remux.rs` — stream selection logic (all, prefer_surround, manual), map arg building, progress line parsing, size/ETA estimation, chapter OGM formatting
-- `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output, validation (unknown keys, numeric bounds, template braces), aacs_backend parsing, overwrite/batch option, should_batch resolution
+- `config.rs` — TOML parsing, format resolution priority chain, config path resolution, save/load roundtrip, commented-defaults output, validation (unknown keys, numeric bounds, template braces), aacs_backend parsing, overwrite/batch option, should_batch resolution, history config parsing/defaults/known_keys/validation
 - `types.rs` — MediaInfo field mapping, ChapterMark struct, SettingsState construction/roundtrip, cursor navigation, env var overrides, batch toggle
 - `tui/settings.rs` — truncate/mask helpers, input handling (toggle, choice, text edit, number validation, cursor movement, confirm close prompt)
 - `tui/dashboard.rs` — rendering modes, key hints, progress display, done screen layout
 - `tui/wizard.rs` — playlist manager rendering, key handling, focus states
-- `tui/coordinator.rs` — session lifecycle, tab management
+- `tui/coordinator.rs` — session lifecycle, tab management, history overlay open/close
 - `tui/tab_bar.rs` — tab rendering, active tab switching
+- `tui/history.rs` — overlay navigation (up/down/wrap), detail view open/close, delete confirm/cancel, clear all confirm/cancel, empty state, format helpers
 - `cli.rs` — stream selection integration, batch summary formatting
 - `streams.rs` — stream filtering by language, surround preference, track spec parsing
 - `hooks.rs` — template expansion, hook execution config, command building
@@ -179,17 +185,20 @@ Unit tests live in `#[cfg(test)] mod tests` blocks within each module. Integrati
 - `verify.rs` — verification level config, result classification, check logic
 - `workflow.rs` — filename building, overwrite handling, remux option setup
 - `rip.rs` — progress tracking, job status transitions
-- `session.rs` — state machine transitions, rescan preservation, batch field survival
+- `session.rs` — state machine transitions, rescan preservation, batch field survival, history config survival across reset
 - `aacs.rs` — command_exists, is_libmmbd path detection
 - `chapters.rs` — chapter extraction with missing paths/playlists
 - `index.rs` — Blu-ray index.bdmv parsing, playlist reordering logic
 - `drive_monitor.rs` — drive detection, event classification
 - `check.rs` — environment validation
+- `history.rs` — schema creation/migration, WAL mode, CHECK/UNIQUE constraints, CASCADE delete, session lifecycle (start/finish), disc playlist recording, file recording with UPSERT (ID preservation), episode continuation (TMDb match, label match, multi-episode, specials, cross-season prevention), duplicate detection (label match, TMDb match, multiple matches), session listing (status filter, title search), session detail, stats aggregation, display_status partial derivation (excludes skipped), delete/clear/prune with cascade, stale session cleanup
+- `duration.rs` — days/months/years parsing (singular/plural), absolute date parsing, invalid input rejection, cutoff date conversion (relative/absolute)
 
-**Integration tests (11):**
+**Integration tests (20):**
 - `tests/tmdb_parsing.rs` — TMDb JSON deserialization from fixture files (`tests/fixtures/tmdb/`)
 - `tests/cli_batch_conflicts.rs` — clap argument conflict validation for --batch
 - `tests/cli_flag_conflicts.rs` — clap argument conflict validation for stream flags
+- `tests/history_integration.rs` — history CLI subcommand end-to-end (list/stats/export on empty DB, default subcommand, help output, show nonexistent, clear confirmation), clap regression (existing flags + `--title history` not confused with subcommand)
 
 **Test fixtures:**
 - `tests/fixtures/media/` — synthetic MKV files generated via `tests/generate_fixtures.sh`
@@ -240,12 +249,36 @@ bluback [OPTIONS]
       --settings               Open settings panel (no disc/ffmpeg required)
       --batch                  Batch mode: rip → eject → wait → repeat
       --no-batch               Disable batch mode (overrides config)
+      --no-history             Disable history for this run (no recording, no queries)
+      --ignore-history         Skip duplicate detection and episode continuation (still records)
       --config <PATH>          Path to config file (also: BLUBACK_CONFIG env var)
+```
+
+**History subcommand:**
+```
+bluback history                            # alias for 'list'
+bluback history list [OPTIONS]             # list past sessions
+    --limit <N>                            # default 20
+    --status <STATUS>                      # completed, failed, cancelled, scanned
+    --title <SEARCH>                       # fuzzy match
+    --since <DURATION>                     # "2026-04-01", "7d", "1month"
+    --season <N>
+    --batch-id <UUID>                      # filter by batch run
+    --json                                 # machine-readable output
+bluback history show <ID>                  # full session detail + files
+bluback history stats                      # aggregate summary
+bluback history delete <ID> [<ID>...]      # delete sessions (with confirmation)
+bluback history clear                      # delete all (with confirmation)
+    --older-than <DURATION>                # prune by age
+    --status <STATUS>                      # prune by status
+    --yes                                  # skip confirmation
+bluback history export                     # JSON dump to stdout
 ```
 
 `--format` and `--format-preset` are mutually exclusive (clap argument group).
 `--yes` auto-enables when stdin is not a TTY (headless/scripted contexts).
 `--auto-detect` conflicts with `--movie`.
+`--no-history` and `--ignore-history` are mutually exclusive.
 
 ### Exit Codes
 
@@ -261,6 +294,7 @@ bluback [OPTIONS]
 
 **Global (all screens):**
 - `Ctrl+S` — Open settings panel (overlay; all other globals blocked while open)
+- `Ctrl+H` — Open history overlay (overlay; browse/manage rip history)
 - `Ctrl+R` — Rescan disc and restart wizard (confirms first during ripping)
 - `Ctrl+E` — Eject disc
 - `Ctrl+C` — Quit immediately
@@ -304,6 +338,14 @@ bluback [OPTIONS]
 - `Esc` — Cancel edit (if editing), otherwise close panel
 - `Ctrl+S` — Save to config (confirms edit first if editing)
 
+**History overlay (`Ctrl+H`):**
+- `Up/Down` — Navigate session list
+- `Enter` — Toggle detail view (show/hide files)
+- `d` — Delete selected session (with confirmation)
+- `D` — Clear all sessions (with confirmation)
+- `y/n` — Confirm/cancel when prompted
+- `Esc` — Close detail view, or close overlay
+
 ## Dependencies
 
 | Crate | Purpose |
@@ -319,3 +361,5 @@ bluback [OPTIONS]
 | `mpls` | MPLS playlist parsing for chapter extraction |
 | `ctrlc` | Signal handling (SIGINT/SIGTERM) |
 | `libc` | POSIX waitpid for zombie process reaping |
+| `rusqlite` (bundled) | SQLite bindings for rip history database |
+| `uuid` | Batch ID generation (v4 random UUIDs) |
