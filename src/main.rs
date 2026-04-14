@@ -407,7 +407,6 @@ fn run_inner() -> anyhow::Result<i32> {
     }
 
     // Initialize history DB (or None if disabled)
-    #[allow(unused_variables)]
     let history_db = if args.no_history || !config.history_enabled() {
         None
     } else {
@@ -519,6 +518,8 @@ fn run_inner() -> anyhow::Result<i32> {
             headless,
             &stream_filter,
             tracks_spec.as_deref(),
+            history_db.as_ref(),
+            args.ignore_history,
         )?;
     } else {
         let _ = cli::run(
@@ -529,6 +530,9 @@ fn run_inner() -> anyhow::Result<i32> {
             tracks_spec.as_deref(),
             None,  // no start_episode override
             false, // don't skip eject
+            history_db.as_ref(),
+            args.ignore_history,
+            None, // no batch_id
         )?;
     }
 
