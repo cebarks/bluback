@@ -509,6 +509,23 @@ pub struct DoneView {
 
 pub enum Overlay {
     Settings(SettingsState),
+    History(Box<HistoryOverlayState>),
+}
+
+pub struct HistoryOverlayState {
+    pub sessions: Vec<crate::history::SessionSummary>,
+    pub selected: usize,
+    #[allow(dead_code)] // Placeholder for future filter-by-text feature
+    pub filter_text: String,
+    #[allow(dead_code)] // Placeholder for future filter-by-status feature
+    pub status_filter: Option<crate::history::SessionStatus>,
+    pub detail_view: Option<crate::history::SessionDetail>,
+    pub confirm_action: Option<HistoryConfirmAction>,
+}
+
+pub enum HistoryConfirmAction {
+    Delete(i64),
+    ClearAll,
 }
 
 pub struct SettingsState {

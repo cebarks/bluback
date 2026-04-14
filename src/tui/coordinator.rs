@@ -43,6 +43,8 @@ pub struct Coordinator {
     assigned_episodes: EpisodeAssignmentMap,
     /// Path to the history database, passed to each session thread.
     pub history_db_path: Option<PathBuf>,
+    /// Separate HistoryDb connection for the main thread (overlay queries).
+    pub history_db: Option<crate::history::HistoryDb>,
 }
 
 impl Coordinator {
@@ -67,6 +69,7 @@ impl Coordinator {
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
             history_db_path: None,
+            history_db: None,
         }
     }
 
@@ -282,9 +285,15 @@ impl Coordinator {
                 }
             }
 
-            // Render settings overlay on top if present
-            if let Some(Overlay::Settings(ref state)) = self.overlay {
-                settings::render(f, state);
+            // Render overlay on top if present
+            match self.overlay {
+                Some(Overlay::Settings(ref state)) => {
+                    settings::render(f, state);
+                }
+                Some(Overlay::History(ref state)) => {
+                    super::history::render(f, state);
+                }
+                None => {}
             }
         })?;
 
@@ -331,6 +340,12 @@ impl Coordinator {
         // Ctrl+S: open settings
         if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.open_settings();
+            return;
+        }
+
+        // Ctrl+H: open history overlay
+        if key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.open_history();
             return;
         }
 
@@ -729,6 +744,14 @@ impl Coordinator {
     }
 
     fn handle_overlay_key(&mut self, key: crossterm::event::KeyEvent) {
+        match self.overlay {
+            Some(Overlay::Settings(_)) => self.handle_settings_overlay_key(key),
+            Some(Overlay::History(_)) => self.handle_history_overlay_key(key),
+            None => {}
+        }
+    }
+
+    fn handle_settings_overlay_key(&mut self, key: crossterm::event::KeyEvent) {
         let action = {
             let state = match self.overlay {
                 Some(Overlay::Settings(ref mut s)) => s,
@@ -760,6 +783,32 @@ impl Coordinator {
                 };
                 self.config = new_config;
             }
+        }
+    }
+
+    fn handle_history_overlay_key(&mut self, key: crossterm::event::KeyEvent) {
+        // Also allow Ctrl+H to close the history overlay
+        if key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.overlay = None;
+            return;
+        }
+
+        let action = {
+            let (state, db) = match (&mut self.overlay, &self.history_db) {
+                (Some(Overlay::History(ref mut s)), Some(db)) => (s, db),
+                _ => return,
+            };
+            super::history::handle_input(state, key, db)
+        };
+
+        match action {
+            super::history::HistoryAction::Close => {
+                self.overlay = None;
+            }
+            super::history::HistoryAction::Refresh => {
+                self.refresh_history_overlay();
+            }
+            super::history::HistoryAction::None => {}
         }
     }
 
@@ -809,6 +858,52 @@ impl Coordinator {
                     state.save_message = Some(format!("Error: {}", e));
                     state.save_message_at = Some(std::time::Instant::now());
                 }
+            }
+        }
+    }
+
+    // --- History overlay ---
+
+    fn open_history(&mut self) {
+        if self.overlay.is_some() {
+            return;
+        }
+        if let Some(ref db) = self.history_db {
+            let filter = crate::history::SessionFilter {
+                limit: Some(50),
+                ..Default::default()
+            };
+            let sessions = db.list_sessions(&filter).unwrap_or_default();
+            self.overlay = Some(Overlay::History(Box::new(
+                crate::types::HistoryOverlayState {
+                    sessions,
+                    selected: 0,
+                    filter_text: String::new(),
+                    status_filter: None,
+                    detail_view: None,
+                    confirm_action: None,
+                },
+            )));
+        }
+    }
+
+    fn refresh_history_overlay(&mut self) {
+        if let Some(ref db) = self.history_db {
+            let filter = crate::history::SessionFilter {
+                limit: Some(50),
+                ..Default::default()
+            };
+            let sessions = db.list_sessions(&filter).unwrap_or_default();
+            if let Some(Overlay::History(ref mut state)) = self.overlay {
+                // Clamp selection to new list bounds
+                state.selected = if sessions.is_empty() {
+                    0
+                } else {
+                    state.selected.min(sessions.len() - 1)
+                };
+                state.sessions = sessions;
+                state.detail_view = None;
+                state.confirm_action = None;
             }
         }
     }
@@ -879,6 +974,7 @@ mod tests {
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
             history_db_path: None,
+            history_db: None,
         }
     }
 
@@ -979,6 +1075,7 @@ mod tests {
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
             history_db_path: None,
+            history_db: None,
         };
 
         let (handle, cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
@@ -1018,6 +1115,7 @@ mod tests {
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
             history_db_path: None,
+            history_db: None,
         };
 
         let (handle, _cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
@@ -1053,6 +1151,7 @@ mod tests {
             drive_event_rx: drive_rx,
             assigned_episodes: HashMap::new(),
             history_db_path: None,
+            history_db: None,
         };
 
         let (handle, _cmd_rx) = make_test_session_handle("/dev/sr0", TabState::Ripping);
