@@ -430,7 +430,7 @@ pub struct TmdbView {
     #[allow(dead_code)] // Part of multi-drive view API; populated by session snapshot
     pub show_name: String,
     pub label: String,
-    pub episodes_pl_count: usize,
+    pub probed_count: usize,
     pub history_duplicate_hint: Option<String>,
 }
 
@@ -452,7 +452,7 @@ pub struct PlaylistView {
     pub show_name: String,
     pub season_num: Option<u32>,
     pub playlists: Vec<Playlist>,
-    pub episodes_pl: Vec<Playlist>,
+    pub show_specials: bool,
     pub playlist_selected: Vec<bool>,
     pub episode_assignments: EpisodeAssignments,
     pub specials: HashSet<String>,
@@ -470,6 +470,8 @@ pub struct PlaylistView {
     pub expanded_playlist: Option<usize>,
     pub detection_results: Vec<crate::detection::DetectionResult>,
     pub history_ripped_playlists: std::collections::HashSet<String>,
+    pub start_episode_popup: bool,
+    pub min_probe_duration: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -646,9 +648,11 @@ impl SettingsState {
                 value: config.max_speed.unwrap_or(true),
             },
             SettingItem::Number {
-                label: "Min Duration (secs)".into(),
-                key: "min_duration".into(),
-                value: config.min_duration.unwrap_or(DEFAULT_MIN_DURATION),
+                label: "Min Probe Duration (secs)".into(),
+                key: "min_probe_duration".into(),
+                value: config
+                    .min_probe_duration
+                    .unwrap_or(DEFAULT_MIN_PROBE_DURATION),
             },
             SettingItem::Toggle {
                 label: "Verbose libbluray".into(),
@@ -750,7 +754,7 @@ impl SettingsState {
             SettingItem::Toggle {
                 label: "Auto-Detect Episodes/Specials".into(),
                 key: "auto_detect".into(),
-                value: config.auto_detect.unwrap_or(false),
+                value: config.auto_detect.unwrap_or(true),
             },
             SettingItem::Separator {
                 label: Some("Logging".into()),
@@ -950,7 +954,7 @@ impl SettingsState {
             ("BLUBACK_DEVICE", "device"),
             ("BLUBACK_EJECT", "eject"),
             ("BLUBACK_MAX_SPEED", "max_speed"),
-            ("BLUBACK_MIN_DURATION", "min_duration"),
+            ("BLUBACK_MIN_PROBE_DURATION", "min_probe_duration"),
             ("BLUBACK_PRESET", "preset"),
             ("BLUBACK_TV_FORMAT", "tv_format"),
             ("BLUBACK_MOVIE_FORMAT", "movie_format"),
@@ -1064,7 +1068,7 @@ impl SettingsState {
             ("BLUBACK_DEVICE", "device"),
             ("BLUBACK_EJECT", "eject"),
             ("BLUBACK_MAX_SPEED", "max_speed"),
-            ("BLUBACK_MIN_DURATION", "min_duration"),
+            ("BLUBACK_MIN_PROBE_DURATION", "min_probe_duration"),
             ("BLUBACK_PRESET", "preset"),
             ("BLUBACK_TV_FORMAT", "tv_format"),
             ("BLUBACK_MOVIE_FORMAT", "movie_format"),
@@ -1205,8 +1209,8 @@ impl SettingsState {
                     _ => {}
                 },
                 SettingItem::Number { key, value, .. } => match key.as_str() {
-                    "min_duration" if *value != DEFAULT_MIN_DURATION => {
-                        config.min_duration = Some(*value)
+                    "min_probe_duration" if *value != DEFAULT_MIN_PROBE_DURATION => {
+                        config.min_probe_duration = Some(*value)
                     }
                     "reserve_index_space" if *value != DEFAULT_RESERVE_INDEX_SPACE => {
                         config.reserve_index_space = Some(*value)
@@ -1429,7 +1433,7 @@ mod tests {
     fn test_settings_state_from_config_values() {
         let config = crate::config::Config {
             eject: Some(true),
-            min_duration: Some(600),
+            min_probe_duration: Some(600),
             ..Default::default()
         };
         let state = SettingsState::from_config(&config);
@@ -1441,12 +1445,12 @@ mod tests {
             eject,
             Some(SettingItem::Toggle { value: true, .. })
         ));
-        let min_dur = state
+        let min_probe_dur = state
             .items
             .iter()
-            .find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"));
+            .find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_probe_duration"));
         assert!(matches!(
-            min_dur,
+            min_probe_dur,
             Some(SettingItem::Number { value: 600, .. })
         ));
     }
@@ -1583,11 +1587,11 @@ mod tests {
     fn test_env_override_number() {
         let config = crate::config::Config::default();
         let mut state = SettingsState::from_config(&config);
-        assert!(state.apply_env_value("min_duration", "600"));
+        assert!(state.apply_env_value("min_probe_duration", "600"));
         let md = state
             .items
             .iter()
-            .find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"))
+            .find(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_probe_duration"))
             .unwrap();
         assert!(matches!(md, SettingItem::Number { value: 600, .. }));
     }
@@ -1596,8 +1600,8 @@ mod tests {
     fn test_env_override_number_invalid() {
         let config = crate::config::Config::default();
         let mut state = SettingsState::from_config(&config);
-        assert!(!state.apply_env_value("min_duration", "abc"));
-        assert!(!state.apply_env_value("min_duration", "0"));
+        assert!(!state.apply_env_value("min_probe_duration", "abc"));
+        assert!(!state.apply_env_value("min_probe_duration", "0"));
     }
 
     #[test]
@@ -1734,7 +1738,7 @@ mod tests {
         let config = crate::config::Config {
             eject: Some(true),
             preset: Some("plex".into()),
-            min_duration: Some(600),
+            min_probe_duration: Some(600),
             output_dir: Some("/tmp/rips".into()),
             ..Default::default()
         };
@@ -1742,7 +1746,7 @@ mod tests {
         let restored = state.to_config();
         assert_eq!(restored.eject, Some(true));
         assert_eq!(restored.preset.as_deref(), Some("plex"));
-        assert_eq!(restored.min_duration, Some(600));
+        assert_eq!(restored.min_probe_duration, Some(600));
         assert_eq!(restored.output_dir.as_deref(), Some("/tmp/rips"));
     }
 

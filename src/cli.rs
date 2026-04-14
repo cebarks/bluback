@@ -87,12 +87,22 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         println!("Volume label: {}", label);
     }
 
-    let min_duration = config.min_duration(args.min_duration);
+    let min_probe_duration = config.min_probe_duration(args.min_probe_duration);
+
+    // Resolve auto_detect setting
+    let auto_detect = config.should_auto_detect(if args.auto_detect {
+        Some(true)
+    } else if args.no_auto_detect {
+        Some(false)
+    } else {
+        None
+    });
 
     eprint!("Scanning disc at {}...", device);
-    let (mut playlists, probe_cache) = crate::media::scan_playlists_with_progress(
+    let (mut playlists, probe_cache, _skip_set) = crate::media::scan_playlists_with_progress(
         &device,
-        min_duration,
+        min_probe_duration,
+        auto_detect,
         Some(&|elapsed, timeout| {
             eprint!(
                 "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
@@ -151,11 +161,15 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         None
     });
 
-    // Run detection if enabled
+    // Run detection if enabled (only on probed playlists)
     let detection_results = if auto_detect {
+        let probed_playlists: Vec<Playlist> = playlists
+            .iter()
+            .filter(|pl| probe_cache.contains_key(&pl.num))
+            .cloned()
+            .collect();
         crate::detection::run_detection_with_chapters(
-            &playlists,
-            min_duration,
+            &probed_playlists,
             None, // No TMDb context in --list-playlists
             None,
             &chapter_counts,
@@ -173,7 +187,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         std::collections::HashMap::new();
     let mut sel_idx = 1usize;
     for pl in &playlists {
-        if pl.seconds >= min_duration {
+        if pl.seconds >= min_probe_duration {
             filtered_index.insert(pl.num.clone(), sel_idx);
             sel_idx += 1;
         }
@@ -313,7 +327,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         episode_count,
         short_count,
     );
-    println!("  * = below min_duration ({}s)", min_duration);
+    println!("  * = below min_probe_duration ({}s)", min_probe_duration);
 
     Ok(())
 }
@@ -333,8 +347,15 @@ pub fn run(
 ) -> anyhow::Result<(u32, u32)> {
     let device = args.device().to_string_lossy();
 
-    let (label, label_info, mut all_playlists, mut episodes_pl, movie_mode, probe_cache) =
+    let (label, label_info, mut all_playlists, mut movie_mode, probe_cache) =
         scan_disc(args, config)?;
+
+    // Build episodes_pl from probe_cache membership (probed playlists in disc order)
+    let mut episodes_pl: Vec<Playlist> = all_playlists
+        .iter()
+        .filter(|pl| probe_cache.contains_key(&pl.num))
+        .cloned()
+        .collect();
 
     // Duplicate detection: check if this disc was previously ripped
     if let (Some(db), false) = (history, ignore_history) {
@@ -400,6 +421,49 @@ pub fn run(
     crate::index::reorder_playlists(&mut all_playlists, title_order.as_deref());
     crate::index::reorder_playlists(&mut episodes_pl, title_order.as_deref());
 
+    // Detection-aware movie_mode override (mirrors TUI logic in session.rs)
+    if !args.movie {
+        let auto_detect = config.should_auto_detect(if args.auto_detect {
+            Some(true)
+        } else if args.no_auto_detect {
+            Some(false)
+        } else {
+            None
+        });
+        if auto_detect {
+            let probed_playlists: Vec<&Playlist> = all_playlists
+                .iter()
+                .filter(|pl| probe_cache.contains_key(&pl.num))
+                .collect();
+            let early_detection = crate::detection::run_detection_with_chapters(
+                &probed_playlists
+                    .iter()
+                    .map(|p| (*p).clone())
+                    .collect::<Vec<_>>(),
+                None, // no TMDb episodes yet
+                None,
+                &chapter_counts,
+            );
+            let episode_count = early_detection
+                .iter()
+                .filter(|d| {
+                    matches!(
+                        d.suggested_type,
+                        crate::detection::SuggestedType::Episode
+                            | crate::detection::SuggestedType::MultiEpisode
+                    )
+                })
+                .count();
+            let new_movie_mode = episode_count == 1 && args.season.is_none();
+            if new_movie_mode != movie_mode {
+                movie_mode = new_movie_mode;
+                if movie_mode {
+                    println!("  (Single episode detected — using movie mode. Use --season to force TV mode.)");
+                }
+            }
+        }
+    }
+
     // Episode continuation: use history to determine start episode if no explicit override
     let effective_start_override = if start_episode_override.is_some() || ignore_history {
         start_episode_override
@@ -457,7 +521,7 @@ pub fn run(
 
     // Resolve --specials flag to playlist numbers, or run auto-detection
     let specials_set: std::collections::HashSet<String> =
-        if auto_detect && !movie_mode && args.specials.is_none() {
+        if (auto_detect || args.hide_specials) && !movie_mode && args.specials.is_none() {
             // Extract TMDb episodes from episode_assignments for detection
             let tmdb_episodes: Vec<Episode> = tmdb_ctx
                 .episode_assignments
@@ -466,9 +530,13 @@ pub fn run(
                 .cloned()
                 .collect();
 
+            let probed_playlists: Vec<Playlist> = all_playlists
+                .iter()
+                .filter(|pl| probe_cache.contains_key(&pl.num))
+                .cloned()
+                .collect();
             let detection_results = crate::detection::run_detection_with_chapters(
-                &all_playlists,
-                config.min_duration(args.min_duration),
+                &probed_playlists,
                 if tmdb_episodes.is_empty() {
                     None
                 } else {
@@ -480,7 +548,19 @@ pub fn run(
 
             let mut specials = std::collections::HashSet::new();
 
-            if headless {
+            if args.hide_specials {
+                // --hide-specials: collect all detected specials (any confidence)
+                for det in &detection_results {
+                    if det.suggested_type == crate::detection::SuggestedType::Special {
+                        eprintln!(
+                            "Hiding special: playlist {} ({})",
+                            det.playlist_num,
+                            det.reasons.join(", ")
+                        );
+                        specials.insert(det.playlist_num.clone());
+                    }
+                }
+            } else if headless {
                 // Auto-apply high-confidence specials only
                 for det in &detection_results {
                     if det.suggested_type == crate::detection::SuggestedType::Special
@@ -586,6 +666,20 @@ pub fn run(
         );
     }
 
+    // --hide-specials: exclude detected specials from the rip set
+    let selected = if args.hide_specials && !specials_set.is_empty() {
+        let filtered: Vec<usize> = selected
+            .into_iter()
+            .filter(|&idx| !specials_set.contains(&episodes_pl[idx].num))
+            .collect();
+        if filtered.is_empty() {
+            anyhow::bail!("No playlists remaining after hiding specials.");
+        }
+        filtered
+    } else {
+        selected
+    };
+
     let outfiles = build_filenames(
         args,
         config,
@@ -656,7 +750,7 @@ pub fn run(
         match db.start_session(&info) {
             Ok(id) => {
                 // Record disc playlists
-                let min_dur = config.min_duration(args.min_duration);
+                let min_dur = config.min_probe_duration(args.min_probe_duration);
                 let playlist_infos: Vec<crate::history::DiscPlaylistInfo> = all_playlists
                     .iter()
                     .map(|pl| crate::history::DiscPlaylistInfo {
@@ -730,14 +824,13 @@ pub fn run(
     Ok((success_count, regular_episodes))
 }
 
-#[allow(clippy::type_complexity)] // 6-tuple is clear in context; a struct for one call site is over-engineering
+#[allow(clippy::type_complexity)] // 5-tuple is clear in context; a struct for one call site is over-engineering
 fn scan_disc(
     args: &Args,
     config: &crate::config::Config,
 ) -> anyhow::Result<(
     String,
     Option<LabelInfo>,
-    Vec<Playlist>,
     Vec<Playlist>,
     bool,
     crate::types::ProbeCache,
@@ -758,12 +851,22 @@ fn scan_disc(
         println!("Volume label: {}", label);
     }
 
-    let min_duration = config.min_duration(args.min_duration);
+    let min_probe_duration = config.min_probe_duration(args.min_probe_duration);
+
+    // Resolve auto_detect setting
+    let auto_detect = config.should_auto_detect(if args.auto_detect {
+        Some(true)
+    } else if args.no_auto_detect {
+        Some(false)
+    } else {
+        None
+    });
 
     eprint!("Scanning disc at {}...", device);
-    let (playlists, probe_cache) = crate::media::scan_playlists_with_progress(
+    let (playlists, probe_cache, _skip_set) = crate::media::scan_playlists_with_progress(
         &device,
-        min_duration,
+        min_probe_duration,
+        auto_detect,
         Some(&|elapsed, timeout| {
             eprint!(
                 "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
@@ -780,35 +883,25 @@ fn scan_disc(
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
 
-    let episodes_pl: Vec<Playlist> = disc::filter_episodes(&playlists, min_duration)
-        .into_iter()
-        .cloned()
-        .collect();
-    let short_count = playlists.len() - episodes_pl.len();
+    let probed_count = probe_cache.len();
+    let short_count = playlists.len() - probed_count;
     println!(
         "Found {} playlists ({} episode-length, {} short/extras).\n",
         playlists.len(),
-        episodes_pl.len(),
+        probed_count,
         short_count
     );
 
-    if episodes_pl.is_empty() {
-        anyhow::bail!("No episode-length playlists found. Try lowering --min-duration.");
+    if probe_cache.is_empty() {
+        anyhow::bail!("No episode-length playlists found. Try lowering --min-probe-duration.");
     }
 
-    let movie_mode = args.movie || (episodes_pl.len() == 1 && args.season.is_none());
+    let movie_mode = args.movie || (probed_count == 1 && args.season.is_none());
     if movie_mode && !args.movie {
         println!("  (Single playlist detected — using movie mode. Use --season to force TV mode.)");
     }
 
-    Ok((
-        label,
-        label_info,
-        playlists,
-        episodes_pl,
-        movie_mode,
-        probe_cache,
-    ))
+    Ok((label, label_info, playlists, movie_mode, probe_cache))
 }
 
 fn lookup_tmdb(

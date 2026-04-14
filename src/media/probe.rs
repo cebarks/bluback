@@ -49,11 +49,12 @@ fn open_bluray(
 }
 
 /// Scan a Blu-ray device for available playlists, probing full stream info
-/// for episode-length playlists (those meeting `min_duration`).
+/// for episode-length playlists (those meeting `min_probe_duration`).
 ///
-/// Returns the playlist list and a probe cache mapping playlist number to
-/// `(MediaInfo, StreamInfo)` for every playlist that was successfully probed.
-/// Playlists below `min_duration` are left with zero stream counts and are
+/// Returns the playlist list, a probe cache mapping playlist number to
+/// `(MediaInfo, StreamInfo)` for every playlist that was successfully probed,
+/// and a set of playlist numbers that were pre-classified and skipped.
+/// Playlists below `min_probe_duration` are left with zero stream counts and are
 /// not in the cache.
 ///
 /// Because the FFmpeg API doesn't expose playlist enumeration directly, libbluray
@@ -69,10 +70,11 @@ fn open_bluray(
 #[allow(clippy::type_complexity)]
 pub fn scan_playlists_with_progress(
     device: &str,
-    min_duration: u32,
+    min_probe_duration: u32,
+    auto_detect: bool,
     on_progress: Option<&dyn Fn(u64, u64)>,
     on_probe_progress: Option<&dyn Fn(usize, usize, &str)>,
-) -> Result<(Vec<Playlist>, ProbeCache), MediaError> {
+) -> Result<(Vec<Playlist>, ProbeCache, std::collections::HashSet<String>), MediaError> {
     ensure_init();
 
     let playlist_re = Regex::new(r"playlist (\d+)\.mpls \((\d+:\d+:\d+)\)").expect("valid regex");
@@ -91,19 +93,25 @@ pub fn scan_playlists_with_progress(
     if let Some(err_msg) = scan_error {
         if !playlists.is_empty() {
             log::info!("Scan complete: found {} playlists", playlists.len());
-            return Ok((playlists, HashMap::new()));
+            return Ok((playlists, HashMap::new(), std::collections::HashSet::new()));
         }
         return Err(MediaError::AacsAuthFailed(err_msg));
     }
 
-    // Probe full stream info for episode-length playlists (above min_duration).
+    let skip_set = if auto_detect {
+        crate::detection::pre_classify_playlists(&playlists, min_probe_duration)
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Probe full stream info for episode-length playlists (above min_probe_duration).
     // This replaces the old count_streams loop — a single probe_playlist call
     // gets both stream counts and full MediaInfo/StreamInfo, avoiding redundant
     // device opens downstream.
     let probe_indices: Vec<usize> = playlists
         .iter()
         .enumerate()
-        .filter(|(_, pl)| pl.seconds >= min_duration)
+        .filter(|(_, pl)| pl.seconds >= min_probe_duration && !skip_set.contains(&pl.num))
         .map(|(i, _)| i)
         .collect();
     let probe_total = probe_indices.len();
@@ -128,7 +136,7 @@ pub fn scan_playlists_with_progress(
     }
 
     log::info!("Scan complete: found {} playlists", playlists.len());
-    Ok((playlists, probe_cache))
+    Ok((playlists, probe_cache, skip_set))
 }
 
 /// Run the disc scan with log capture. Returns (captured_lines, optional_error_message).

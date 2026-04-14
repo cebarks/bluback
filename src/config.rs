@@ -16,7 +16,7 @@ pub const JELLYFIN_MOVIE_FORMAT: &str = "{title} ({year})/{title} ({year}).mkv";
 
 pub const DEFAULT_OUTPUT_DIR: &str = ".";
 pub const DEFAULT_DEVICE: &str = "auto-detect";
-pub const DEFAULT_MIN_DURATION: u32 = 900;
+pub const DEFAULT_MIN_PROBE_DURATION: u32 = 30;
 pub const DEFAULT_RESERVE_INDEX_SPACE: u32 = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub struct Config {
     pub special_format: Option<String>,
     pub eject: Option<bool>,
     pub max_speed: Option<bool>,
-    pub min_duration: Option<u32>,
+    pub min_probe_duration: Option<u32>,
     pub show_filtered: Option<bool>,
     pub output_dir: Option<String>,
     pub device: Option<String>,
@@ -171,9 +171,9 @@ impl Config {
         emit_bool(&mut out, "max_speed", self.max_speed, true);
         emit_u32(
             &mut out,
-            "min_duration",
-            self.min_duration,
-            DEFAULT_MIN_DURATION,
+            "min_probe_duration",
+            self.min_probe_duration,
+            DEFAULT_MIN_PROBE_DURATION,
         );
         out.push('\n');
         emit_str(&mut out, "preset", &self.preset, "");
@@ -193,7 +193,7 @@ impl Config {
         emit_bool(&mut out, "show_filtered", self.show_filtered, false);
         emit_bool(&mut out, "overwrite", self.overwrite, false);
         emit_bool(&mut out, "batch", self.batch, false);
-        emit_bool(&mut out, "auto_detect", self.auto_detect, false);
+        emit_bool(&mut out, "auto_detect", self.auto_detect, true);
         emit_bool(&mut out, "verify", self.verify, false);
         emit_str(&mut out, "verify_level", &self.verify_level, "quick");
         emit_str(&mut out, "stream_selection", &self.stream_selection, "all");
@@ -381,8 +381,8 @@ impl Config {
         self.max_speed.unwrap_or(true)
     }
 
-    pub fn min_duration(&self, cli_min_duration: Option<u32>) -> u32 {
-        cli_min_duration.unwrap_or_else(|| self.min_duration.unwrap_or(900))
+    pub fn min_probe_duration(&self, cli_min_probe_duration: Option<u32>) -> u32 {
+        cli_min_probe_duration.unwrap_or_else(|| self.min_probe_duration.unwrap_or(30))
     }
 
     pub fn show_filtered(&self) -> bool {
@@ -407,7 +407,7 @@ impl Config {
 
     #[allow(dead_code)] // Part of Task 5 (auto-detection config); used by TUI/CLI after wiring
     pub fn auto_detect(&self) -> bool {
-        self.auto_detect.unwrap_or(false)
+        self.auto_detect.unwrap_or(true)
     }
 
     #[allow(dead_code)] // Part of Task 5 (auto-detection config); used by TUI/CLI after wiring
@@ -541,7 +541,7 @@ const KNOWN_KEYS: &[&str] = &[
     "special_format",
     "eject",
     "max_speed",
-    "min_duration",
+    "min_probe_duration",
     "show_filtered",
     "output_dir",
     "device",
@@ -597,9 +597,9 @@ pub fn validate_raw_toml(raw: &str) -> Vec<String> {
 
 pub fn validate_config(config: &Config) -> Vec<String> {
     let mut warnings = Vec::new();
-    if let Some(d) = config.min_duration {
+    if let Some(d) = config.min_probe_duration {
         if d == 0 {
-            warnings.push("min_duration must be > 0".into());
+            warnings.push("min_probe_duration must be > 0".into());
         }
     }
     if let Some(r) = config.reserve_index_space {
@@ -898,43 +898,43 @@ mod tests {
     }
 
     #[test]
-    fn test_min_duration_default() {
+    fn test_min_probe_duration_default() {
         let config = Config::default();
-        assert_eq!(config.min_duration(None), 900);
+        assert_eq!(config.min_probe_duration(None), 30);
     }
 
     #[test]
-    fn test_min_duration_config_overrides_default() {
+    fn test_min_probe_duration_config_overrides_default() {
         let config = Config {
-            min_duration: Some(600),
+            min_probe_duration: Some(600),
             ..Default::default()
         };
-        assert_eq!(config.min_duration(None), 600);
+        assert_eq!(config.min_probe_duration(None), 600);
     }
 
     #[test]
-    fn test_min_duration_cli_overrides_config() {
+    fn test_min_probe_duration_cli_overrides_config() {
         let config = Config {
-            min_duration: Some(600),
+            min_probe_duration: Some(600),
             ..Default::default()
         };
-        assert_eq!(config.min_duration(Some(1200)), 1200);
+        assert_eq!(config.min_probe_duration(Some(1200)), 1200);
     }
 
     #[test]
-    fn test_min_duration_cli_explicit_default_overrides_config() {
+    fn test_min_probe_duration_cli_explicit_default_overrides_config() {
         let config = Config {
-            min_duration: Some(600),
+            min_probe_duration: Some(600),
             ..Default::default()
         };
-        // Explicitly passing 900 on CLI should override config's 600
-        assert_eq!(config.min_duration(Some(900)), 900);
+        // Explicitly passing 30 on CLI should override config's 600
+        assert_eq!(config.min_probe_duration(Some(30)), 30);
     }
 
     #[test]
-    fn test_parse_min_duration() {
-        let config: Config = toml::from_str("min_duration = 600").unwrap();
-        assert_eq!(config.min_duration, Some(600));
+    fn test_parse_min_probe_duration() {
+        let config: Config = toml::from_str("min_probe_duration = 600").unwrap();
+        assert_eq!(config.min_probe_duration, Some(600));
     }
 
     #[test]
@@ -996,7 +996,7 @@ mod tests {
         }
         assert!(output.contains("# eject = false"));
         assert!(output.contains("# max_speed = true"));
-        assert!(output.contains("# min_duration = 900"));
+        assert!(output.contains("# min_probe_duration = 30"));
         assert!(output.contains("# show_filtered = false"));
     }
 
@@ -1004,21 +1004,21 @@ mod tests {
     fn test_save_modified_config_mixed() {
         let config = Config {
             eject: Some(true),
-            min_duration: Some(600),
+            min_probe_duration: Some(600),
             ..Default::default()
         };
         let output = config.to_toml_string();
         assert!(output.contains("eject = true"));
-        assert!(output.contains("min_duration = 600"));
+        assert!(output.contains("min_probe_duration = 600"));
         // Make sure modified values don't have # prefix
         for line in output.lines() {
             if line.contains("eject = true") {
                 assert!(!line.starts_with('#'), "eject should not be commented");
             }
-            if line.contains("min_duration = 600") {
+            if line.contains("min_probe_duration = 600") {
                 assert!(
                     !line.starts_with('#'),
-                    "min_duration should not be commented"
+                    "min_probe_duration should not be commented"
                 );
             }
         }
@@ -1031,7 +1031,7 @@ mod tests {
         let config = Config {
             eject: Some(true),
             preset: Some("plex".into()),
-            min_duration: Some(600),
+            min_probe_duration: Some(600),
             output_dir: Some("/tmp/rips".into()),
             ..Default::default()
         };
@@ -1039,7 +1039,7 @@ mod tests {
         let reparsed: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(reparsed.eject, Some(true));
         assert_eq!(reparsed.preset.as_deref(), Some("plex"));
-        assert_eq!(reparsed.min_duration, Some(600));
+        assert_eq!(reparsed.min_probe_duration, Some(600));
         assert_eq!(reparsed.output_dir.as_deref(), Some("/tmp/rips"));
         assert!(reparsed.max_speed.is_none());
         assert!(reparsed.show_filtered.is_none());
@@ -1152,13 +1152,13 @@ also_unknown = 42"#;
     }
 
     #[test]
-    fn test_validate_min_duration_zero_warns() {
+    fn test_validate_min_probe_duration_zero_warns() {
         let config = Config {
-            min_duration: Some(0),
+            min_probe_duration: Some(0),
             ..Default::default()
         };
         let warnings = validate_config(&config);
-        assert!(warnings.iter().any(|w| w.contains("min_duration")));
+        assert!(warnings.iter().any(|w| w.contains("min_probe_duration")));
     }
 
     #[test]
@@ -1695,14 +1695,14 @@ prefer_surround = true
 
         let default_config = Config::default();
         let default_toml = default_config.to_toml_string();
-        assert!(default_toml.contains("# auto_detect = false"));
+        assert!(default_toml.contains("# auto_detect = true"));
     }
 
     #[test]
     fn test_load_from_missing_file_returns_default() {
         let path = std::path::Path::new("/tmp/bluback_test_nonexistent_config.toml");
         let config = load_from(path).unwrap();
-        assert_eq!(config.min_duration, None);
+        assert_eq!(config.min_probe_duration, None);
         assert_eq!(config.eject, None);
     }
 
@@ -1711,9 +1711,9 @@ prefer_surround = true
         let dir = std::env::temp_dir().join("bluback_test_valid_config");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
-        std::fs::write(&path, "min_duration = 600\n").unwrap();
+        std::fs::write(&path, "min_probe_duration = 600\n").unwrap();
         let config = load_from(&path).unwrap();
-        assert_eq!(config.min_duration, Some(600));
+        assert_eq!(config.min_probe_duration, Some(600));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1722,7 +1722,7 @@ prefer_surround = true
         let dir = std::env::temp_dir().join("bluback_test_invalid_config");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.toml");
-        std::fs::write(&path, "min_duration = \"not_a_number\"\n").unwrap();
+        std::fs::write(&path, "min_probe_duration = \"not_a_number\"\n").unwrap();
         let result = load_from(&path);
         assert!(result.is_err());
         let err_msg = format!("{:#}", result.unwrap_err());

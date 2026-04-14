@@ -1,5 +1,5 @@
 use crate::types::{Episode, Playlist};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
@@ -24,33 +24,57 @@ pub struct DetectionResult {
 }
 
 /// Run detection without chapter information.
-#[allow(dead_code)] // Used by tests, will be used by CLI in Task 7
+#[allow(dead_code)]
 pub fn run_detection(
     all_playlists: &[Playlist],
-    min_duration: u32,
     tmdb_episodes: Option<&[Episode]>,
     tmdb_specials: Option<&[Episode]>,
 ) -> Vec<DetectionResult> {
-    run_detection_with_chapters(
-        all_playlists,
-        min_duration,
-        tmdb_episodes,
-        tmdb_specials,
-        &HashMap::new(),
-    )
+    run_detection_with_chapters(all_playlists, tmdb_episodes, tmdb_specials, &HashMap::new())
 }
 
 /// Run detection with optional chapter counts.
 pub fn run_detection_with_chapters(
     all_playlists: &[Playlist],
-    min_duration: u32,
     tmdb_episodes: Option<&[Episode]>,
     tmdb_specials: Option<&[Episode]>,
     chapter_counts: &HashMap<String, usize>,
 ) -> Vec<DetectionResult> {
-    let mut results = run_heuristics(all_playlists, min_duration, chapter_counts);
+    let mut results = run_heuristics(all_playlists, chapter_counts);
     apply_tmdb_layer(&mut results, all_playlists, tmdb_episodes, tmdb_specials);
     results
+}
+
+/// Identify obvious specials before the probe phase by duration analysis.
+///
+/// Returns the set of playlist `num` values that are high-confidence specials
+/// (< 50% of median duration among playlists >= min_probe_duration).
+///
+/// # Logic
+/// 1. Filter input to playlists with `seconds >= min_probe_duration`
+/// 2. If fewer than 2 playlists above threshold, return empty set
+/// 3. Compute median duration of above-threshold playlists
+/// 4. Return playlist nums where `seconds < median / 2`
+pub fn pre_classify_playlists(playlists: &[Playlist], min_probe_duration: u32) -> HashSet<String> {
+    // Filter to playlists >= min_probe_duration
+    let baseline: Vec<&Playlist> = playlists
+        .iter()
+        .filter(|p| p.seconds >= min_probe_duration)
+        .collect();
+
+    // Need at least 2 baseline playlists for meaningful median
+    if baseline.len() < 2 {
+        return HashSet::new();
+    }
+
+    let median_duration = compute_median(&baseline);
+
+    // Return playlist nums where duration < 50% of median
+    playlists
+        .iter()
+        .filter(|p| p.seconds < median_duration / 2)
+        .map(|p| p.num.clone())
+        .collect()
 }
 
 // =============================================================================
@@ -59,14 +83,10 @@ pub fn run_detection_with_chapters(
 
 fn run_heuristics(
     all_playlists: &[Playlist],
-    min_duration: u32,
     chapter_counts: &HashMap<String, usize>,
 ) -> Vec<DetectionResult> {
-    // Baseline: playlists >= min_duration
-    let baseline: Vec<&Playlist> = all_playlists
-        .iter()
-        .filter(|p| p.seconds >= min_duration)
-        .collect();
+    // Baseline: all input playlists (callers filter to probed playlists)
+    let baseline: Vec<&Playlist> = all_playlists.iter().collect();
 
     // Need at least 2 baseline playlists for meaningful detection
     if baseline.len() < 2 {
@@ -367,7 +387,7 @@ mod tests {
             make_playlist("00002", 1500, 2, 2),
             make_playlist("00003", 600, 2, 2), // < 50% of median
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::Special);
         assert_eq!(r.confidence, Confidence::High);
@@ -381,7 +401,7 @@ mod tests {
             make_playlist("00002", 1500, 2, 2),
             make_playlist("00003", 1000, 2, 2), // 50-75% of median
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::Special);
         assert_eq!(r.confidence, Confidence::Medium);
@@ -395,7 +415,7 @@ mod tests {
             make_playlist("00002", 1500, 2, 2),
             make_playlist("00003", 3500, 2, 2), // > 200% of median
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::MultiEpisode);
         assert_eq!(r.confidence, Confidence::High);
@@ -409,7 +429,7 @@ mod tests {
             make_playlist("00002", 1500, 2, 2),
             make_playlist("00003", 1500, 2, 2),
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[0];
         assert_eq!(r.suggested_type, SuggestedType::Episode);
         assert_eq!(r.confidence, Confidence::Medium);
@@ -419,7 +439,7 @@ mod tests {
     #[test]
     fn test_single_playlist() {
         let playlists = vec![make_playlist("00001", 1500, 2, 2)];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[0];
         assert_eq!(r.suggested_type, SuggestedType::Episode);
         assert_eq!(r.confidence, Confidence::Low);
@@ -427,29 +447,31 @@ mod tests {
     }
 
     #[test]
-    fn test_all_below_min_duration() {
+    fn test_two_similar_playlists_form_baseline() {
+        // With the parameter removed, any 2+ playlists form a valid baseline
         let playlists = vec![
             make_playlist("00001", 500, 2, 2),
             make_playlist("00002", 600, 2, 2),
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         assert_eq!(results.len(), 2);
+        // Both are near the median (550s), so Episode/Medium
         for r in &results {
             assert_eq!(r.suggested_type, SuggestedType::Episode);
-            assert_eq!(r.confidence, Confidence::Low);
+            assert_eq!(r.confidence, Confidence::Medium);
         }
     }
 
     #[test]
-    fn test_below_min_duration_evaluated_against_baseline() {
+    fn test_below_min_probe_duration_evaluated_against_baseline() {
         let playlists = vec![
             make_playlist("00001", 1500, 2, 2),
             make_playlist("00002", 1500, 2, 2),
-            make_playlist("00003", 600, 2, 2), // below min_duration but compared to baseline
+            make_playlist("00003", 600, 2, 2), // below min_probe_duration but compared to baseline
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
-        // Even though it's below min_duration, it's compared to baseline median
+        // Even though it's below min_probe_duration, it's compared to baseline median
         assert_eq!(r.suggested_type, SuggestedType::Special);
         assert_eq!(r.confidence, Confidence::High);
     }
@@ -465,7 +487,7 @@ mod tests {
             make_playlist("00002", 1500, 4, 4),
             make_playlist("00003", 1500, 1, 1), // < half mode
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
         // Starts as Episode (Medium), bumps to Special (Low), then bumped to Medium
         assert_eq!(r.suggested_type, SuggestedType::Special);
@@ -480,7 +502,7 @@ mod tests {
             make_playlist("00002", 1500, 4, 4),
             make_playlist("00003", 1500, 1, 1),
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
         // Started as Episode, changed to Special with Low confidence, then bumped to Medium
         assert_eq!(r.suggested_type, SuggestedType::Special);
@@ -494,7 +516,7 @@ mod tests {
             make_playlist("00002", 1500, 2, 2),
             make_playlist("00003", 1500, 2, 2),
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::Episode);
         assert_eq!(r.confidence, Confidence::Medium);
@@ -508,7 +530,7 @@ mod tests {
             make_playlist("00002", 1500, 4, 4),
             make_playlist("00003", 3500, 1, 1), // MultiEpisode with low stream count
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::MultiEpisode);
         assert_eq!(r.confidence, Confidence::High); // Not bumped
@@ -530,7 +552,7 @@ mod tests {
         chapters.insert("00002".into(), 12);
         chapters.insert("00003".into(), 3); // < half mode
 
-        let results = run_detection_with_chapters(&playlists, 900, None, None, &chapters);
+        let results = run_detection_with_chapters(&playlists, None, None, &chapters);
         let r = &results[2];
         // Starts as Episode (Medium), changed to Special (Low), bumped to Medium
         assert_eq!(r.suggested_type, SuggestedType::Special);
@@ -550,7 +572,7 @@ mod tests {
         chapters.insert("00002".into(), 12);
         chapters.insert("00003".into(), 0);
 
-        let results = run_detection_with_chapters(&playlists, 900, None, None, &chapters);
+        let results = run_detection_with_chapters(&playlists, None, None, &chapters);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::Special);
         assert!(r.reasons.iter().any(|s| s.contains("low chapter count")));
@@ -568,7 +590,7 @@ mod tests {
         chapters.insert("00002".into(), 12);
         chapters.insert("00003".into(), 0);
 
-        let results = run_detection_with_chapters(&playlists, 900, None, None, &chapters);
+        let results = run_detection_with_chapters(&playlists, None, None, &chapters);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::MultiEpisode);
         assert_eq!(r.confidence, Confidence::High); // Not bumped
@@ -582,7 +604,7 @@ mod tests {
         ];
         let chapters = HashMap::new(); // No chapter data
 
-        let results = run_detection_with_chapters(&playlists, 900, None, None, &chapters);
+        let results = run_detection_with_chapters(&playlists, None, None, &chapters);
         let r = &results[0];
         // No chapter-based reasoning
         assert!(!r.reasons.iter().any(|s| s.contains("chapter")));
@@ -604,7 +626,7 @@ mod tests {
         chapters.insert("00002".into(), 12);
         chapters.insert("00003".into(), 0);
 
-        let results = run_detection_with_chapters(&playlists, 900, None, None, &chapters);
+        let results = run_detection_with_chapters(&playlists, None, None, &chapters);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::Special);
         assert_eq!(r.confidence, Confidence::High); // Multiple bumps capped
@@ -627,7 +649,7 @@ mod tests {
             runtime: Some(17), // 1020 seconds (matches 1000 within tolerance)
         }];
 
-        let results = run_detection(&playlists, 900, Some(&episodes), None);
+        let results = run_detection(&playlists, Some(&episodes), None);
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::Episode);
         assert_eq!(r.confidence, Confidence::High);
@@ -650,7 +672,7 @@ mod tests {
             runtime: Some(17), // 1020 seconds
         }];
 
-        let results = run_detection(&playlists, 900, None, Some(&specials));
+        let results = run_detection(&playlists, None, Some(&specials));
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::Special);
         assert!(r
@@ -672,7 +694,7 @@ mod tests {
             runtime: Some(58), // 3480 seconds (matches 3500)
         }];
 
-        let results = run_detection(&playlists, 900, None, Some(&specials));
+        let results = run_detection(&playlists, None, Some(&specials));
         let r = &results[2];
         assert_eq!(r.suggested_type, SuggestedType::MultiEpisode);
         // Not bumped toward Special
@@ -695,8 +717,8 @@ mod tests {
             runtime: None,
         }];
 
-        let results_without = run_detection(&playlists, 900, None, None);
-        let results_with = run_detection(&playlists, 900, Some(&episodes), None);
+        let results_without = run_detection(&playlists, None, None);
+        let results_with = run_detection(&playlists, Some(&episodes), None);
 
         // Should be identical
         assert_eq!(
@@ -818,7 +840,7 @@ mod tests {
             make_playlist("00001", 1500, 2, 2),
             make_playlist("00002", 1500, 2, 2),
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         // Should have enough baseline to detect
         assert_eq!(results[0].suggested_type, SuggestedType::Episode);
         assert_eq!(results[0].confidence, Confidence::Medium);
@@ -833,14 +855,14 @@ mod tests {
             make_playlist("00002", 2700, 6, 4),
             make_playlist("00003", 5500, 2, 1), // long + fewer streams
         ];
-        let results = run_detection(&playlists, 900, None, None);
+        let results = run_detection(&playlists, None, None);
         let r = results.iter().find(|r| r.playlist_num == "00003").unwrap();
         assert_eq!(r.suggested_type, SuggestedType::MultiEpisode);
     }
 
     #[test]
     fn test_empty_playlists() {
-        let results = run_detection(&[], 900, None, None);
+        let results = run_detection(&[], None, None);
         assert!(results.is_empty());
     }
 
@@ -851,5 +873,53 @@ mod tests {
         assert_eq!(format_duration(60), "1:00");
         assert_eq!(format_duration(3600), "1:00:00");
         assert_eq!(format_duration(3661), "1:01:01");
+    }
+
+    // =========================================================================
+    // pre_classify_playlists
+    // =========================================================================
+
+    #[test]
+    fn test_pre_classify_empty() {
+        let result = pre_classify_playlists(&[], 30);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_pre_classify_all_below_threshold() {
+        let playlists = vec![make_playlist("1", 10, 2, 2), make_playlist("2", 20, 2, 2)];
+        let result = pre_classify_playlists(&playlists, 30);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_pre_classify_skips_obvious_specials() {
+        let playlists = vec![
+            make_playlist("1", 2400, 2, 2),
+            make_playlist("2", 2700, 2, 2),
+            make_playlist("3", 2500, 2, 2),
+            make_playlist("4", 600, 2, 2),
+        ];
+        let result = pre_classify_playlists(&playlists, 30);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains("4"));
+    }
+
+    #[test]
+    fn test_pre_classify_keeps_medium_confidence() {
+        let playlists = vec![
+            make_playlist("1", 2520, 2, 2),
+            make_playlist("2", 2520, 2, 2),
+            make_playlist("3", 1680, 2, 2),
+        ];
+        let result = pre_classify_playlists(&playlists, 30);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_pre_classify_single_playlist_no_skip() {
+        let playlists = vec![make_playlist("1", 2400, 2, 2)];
+        let result = pre_classify_playlists(&playlists, 30);
+        assert!(result.is_empty());
     }
 }

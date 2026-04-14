@@ -697,7 +697,9 @@ mod tests {
         let min_dur_idx = state
             .items
             .iter()
-            .position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"))
+            .position(
+                |i| matches!(i, SettingItem::Number { key, .. } if key == "min_probe_duration"),
+            )
             .unwrap();
         state.cursor = min_dur_idx;
 
@@ -713,7 +715,9 @@ mod tests {
         let min_dur_idx = state
             .items
             .iter()
-            .position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"))
+            .position(
+                |i| matches!(i, SettingItem::Number { key, .. } if key == "min_probe_duration"),
+            )
             .unwrap();
         state.cursor = min_dur_idx;
 
@@ -722,10 +726,10 @@ mod tests {
         state.cursor_pos = 1;
         handle_input(&mut state, key(KeyCode::Enter));
 
-        // Should revert to original value (900)
+        // Should revert to original value (30)
         assert!(matches!(
             &state.items[min_dur_idx],
-            SettingItem::Number { value: 900, .. }
+            SettingItem::Number { value: 30, .. }
         ));
     }
 
@@ -735,7 +739,9 @@ mod tests {
         let min_dur_idx = state
             .items
             .iter()
-            .position(|i| matches!(i, SettingItem::Number { key, .. } if key == "min_duration"))
+            .position(
+                |i| matches!(i, SettingItem::Number { key, .. } if key == "min_probe_duration"),
+            )
             .unwrap();
         state.cursor = min_dur_idx;
 

@@ -100,9 +100,9 @@ pub fn render_tmdb_search_view(
     let step_title = format!("Step 1: TMDb Search ({})", mode_label);
     let disc_text = label_text(&view.label);
     let header_text = if disc_text.is_empty() {
-        format!("{} playlists", view.episodes_pl_count)
+        format!("{} playlists", view.probed_count)
     } else {
-        format!("{}  |  {} playlists", disc_text, view.episodes_pl_count)
+        format!("{}  |  {} playlists", disc_text, view.probed_count)
     };
     let title =
         Paragraph::new(header_text).block(Block::default().borders(Borders::ALL).title(step_title));
@@ -371,13 +371,15 @@ fn visible_playlists_view(view: &PlaylistView) -> Vec<(usize, &crate::types::Pla
         .iter()
         .enumerate()
         .filter(|(_, pl)| {
-            view.show_filtered
-                || view.episodes_pl.iter().any(|ep| ep.num == pl.num)
+            let above_threshold = pl.seconds >= view.min_probe_duration || view.show_filtered;
+            let is_special = view.specials.contains(&pl.num)
                 || view.detection_results.iter().any(|d| {
                     d.playlist_num == pl.num
-                        && d.suggested_type != crate::detection::SuggestedType::Episode
-                        && d.confidence >= crate::detection::Confidence::Medium
-                })
+                        && d.suggested_type == crate::detection::SuggestedType::Special
+                        && d.confidence >= crate::detection::Confidence::High
+                });
+            let visible_by_special = !is_special || view.show_specials;
+            above_threshold && visible_by_special
         })
         .collect()
 }
@@ -459,7 +461,7 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         };
         let marker = format!("{}{}{}", cursor_marker, history_marker, checked);
 
-        let is_episode_pl = view.episodes_pl.iter().any(|ep| ep.num == pl.num);
+        let is_episode_pl = view.stream_infos.contains_key(&pl.num);
         let is_special = view.specials.contains(&pl.num);
         let is_editing = matches!(view.input_focus, InputFocus::InlineEdit(r) if r == vis_idx);
 
@@ -744,6 +746,7 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         let mut parts = vec!["Space: Toggle", "e: Edit", "t: Tracks"];
         if is_tv {
             parts.push("s: Special");
+            parts.push("E: Start episode");
         }
         let has_suggestions = is_tv
             && view.detection_results.iter().any(|d| {
@@ -756,6 +759,27 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
         }
         parts.push("r/R: Reset");
         parts.push("f: Show filtered");
+        let special_hint;
+        if is_tv {
+            let special_count = view
+                .playlists
+                .iter()
+                .filter(|pl| {
+                    view.specials.contains(&pl.num)
+                        || view.detection_results.iter().any(|d| {
+                            d.playlist_num == pl.num
+                                && d.suggested_type == crate::detection::SuggestedType::Special
+                                && d.confidence >= crate::detection::Confidence::High
+                        })
+                })
+                .count();
+            if view.show_specials {
+                parts.push("S: Hide specials");
+            } else if special_count > 0 {
+                special_hint = format!("S: Show specials ({special_count} hidden)");
+                parts.push(&special_hint);
+            }
+        }
         parts.push("Enter: Confirm");
         parts.push("Esc: Back");
         parts.push("Ctrl+S: Settings");
@@ -781,6 +805,30 @@ pub fn render_playlist_manager_view(f: &mut Frame, view: &PlaylistView, status: 
     };
     let hints = Paragraph::new(status_line).style(Style::default().fg(Color::DarkGray));
     f.render_widget(hints, chunks[2]);
+
+    // Start episode popup overlay
+    if view.start_episode_popup {
+        use ratatui::widgets::Clear;
+        let popup_area = centered_popup(area, 32, 5);
+        f.render_widget(Clear, popup_area);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Start Episode ")
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let inner = block.inner(popup_area);
+        f.render_widget(block, popup_area);
+
+        let text = Paragraph::new(format!("Episode: {}|", view.input_buffer));
+        f.render_widget(text, inner);
+    }
+}
+
+fn centered_popup(area: Rect, width: u16, height: u16) -> Rect {
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    Rect::new(x, y, width.min(area.width), height.min(area.height))
 }
 
 pub fn render_confirm_view(f: &mut Frame, view: &ConfirmView, _status: &str, area: Rect) {
@@ -877,12 +925,10 @@ pub fn render_confirm_view(f: &mut Frame, view: &ConfirmView, _status: &str, are
 /// Clears detection_results if auto_detect is disabled.
 pub fn run_detection_if_enabled(session: &mut crate::session::DriveSession) {
     if session.auto_detect {
+        let probed: Vec<crate::types::Playlist> =
+            session.probed_playlists().into_iter().cloned().collect();
         session.wizard.detection_results = crate::detection::run_detection_with_chapters(
-            &session.disc.playlists,
-            session
-                .config
-                .min_duration
-                .unwrap_or(crate::config::DEFAULT_MIN_DURATION),
+            &probed,
             if session.tmdb.episodes.is_empty() {
                 None
             } else {
@@ -992,20 +1038,21 @@ fn accept_detection_suggestions(session: &mut crate::session::DriveSession) {
 /// result with existing special assignments. This ensures episode numbers
 /// shift correctly when specials are added or removed.
 fn reassign_regular_episodes(session: &mut crate::session::DriveSession) {
-    let non_special_pl: Vec<crate::types::Playlist> = session
-        .disc
-        .episodes_pl
+    let probed: Vec<crate::types::Playlist> =
+        session.probed_playlists().into_iter().cloned().collect();
+    let non_special_pl: Vec<crate::types::Playlist> = probed
         .iter()
         .filter(|pl| !session.wizard.specials.contains(&pl.num))
         .cloned()
         .collect();
 
     let disc_num = session.disc.label_info.as_ref().map(|l| l.disc);
-    // Use total episode playlist count (not non-special count) to match
+    // Use total probed playlist count (not non-special count) to match
     // the initial guess_start_episode calculation on multi-disc sets.
-    let start_ep = session.wizard.start_episode.unwrap_or_else(|| {
-        crate::util::guess_start_episode(disc_num, session.disc.episodes_pl.len())
-    });
+    let start_ep = session
+        .wizard
+        .start_episode
+        .unwrap_or_else(|| crate::util::guess_start_episode(disc_num, probed.len()));
 
     let new_assignments =
         crate::util::assign_episodes(&non_special_pl, &session.tmdb.episodes, start_ep);
@@ -1233,13 +1280,17 @@ pub fn handle_season_input_session(session: &mut crate::session::DriveSession, k
                     }
                 } else {
                     let disc_num = session.disc.label_info.as_ref().map(|l| l.disc);
-                    let guessed = guess_start_episode(disc_num, session.disc.episodes_pl.len());
+                    let probed_count = session.probed_playlists().len();
+                    let probed_non_special: Vec<crate::types::Playlist> = session
+                        .probed_playlists()
+                        .into_iter()
+                        .filter(|pl| !session.wizard.specials.contains(&pl.num))
+                        .cloned()
+                        .collect();
+                    let guessed = guess_start_episode(disc_num, probed_count);
                     let start_ep = session.wizard.start_episode.unwrap_or(guessed);
-                    session.wizard.episode_assignments = assign_episodes(
-                        &session.disc.episodes_pl,
-                        &session.tmdb.episodes,
-                        start_ep,
-                    );
+                    session.wizard.episode_assignments =
+                        assign_episodes(&probed_non_special, &session.tmdb.episodes, start_ep);
                     run_detection_if_enabled(session);
                     session.wizard.input_focus = InputFocus::List;
                     session.wizard.input_buffer.clear();
@@ -1292,6 +1343,37 @@ pub fn handle_playlist_manager_input_session(
     session: &mut crate::session::DriveSession,
     key: KeyEvent,
 ) {
+    // Start episode popup intercepts all input when active
+    if session.wizard.start_episode_popup {
+        match key.code {
+            KeyCode::Enter => {
+                if let Ok(n) = session.wizard.input_buffer.parse::<u32>() {
+                    if n > 0 {
+                        session.wizard.start_episode = Some(n);
+                        reassign_regular_episodes(session);
+                    }
+                }
+                session.wizard.start_episode_popup = false;
+                session.wizard.input_buffer.clear();
+                return;
+            }
+            KeyCode::Esc => {
+                session.wizard.start_episode_popup = false;
+                session.wizard.input_buffer.clear();
+                return;
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                session.wizard.input_buffer.push(c);
+                return;
+            }
+            KeyCode::Backspace => {
+                session.wizard.input_buffer.pop();
+                return;
+            }
+            _ => return,
+        }
+    }
+
     if let InputFocus::TrackEdit(sub_row) = session.wizard.input_focus {
         match key.code {
             KeyCode::Up if sub_row > 0 => {
@@ -1497,22 +1579,10 @@ pub fn handle_playlist_manager_input_session(
                     session.wizard.input_focus = InputFocus::List;
                 } else {
                     session.wizard.expanded_playlist = Some(real_idx);
-                    let pl_num = &session.disc.playlists[real_idx].num;
+                    let pl_num = session.disc.playlists[real_idx].num.clone();
 
-                    if !session.wizard.stream_infos.contains_key(pl_num) {
-                        let device = session.device.to_string_lossy().to_string();
-                        let num = pl_num.clone();
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        std::thread::spawn(move || {
-                            let mut results = std::collections::HashMap::new();
-                            if let Ok((media, streams)) =
-                                crate::media::probe::probe_playlist(&device, &num)
-                            {
-                                results.insert(num, (media, streams));
-                            }
-                            let _ = tx.send(crate::types::BackgroundResult::BulkProbe(results));
-                        });
-                        session.probe_rx = Some(rx);
+                    if !session.wizard.stream_infos.contains_key(&pl_num) {
+                        session.start_on_demand_probe(&pl_num);
                         session.status_message = "Probing streams...".into();
                     } else {
                         session.wizard.input_focus = InputFocus::TrackEdit(0);
@@ -1531,6 +1601,42 @@ pub fn handle_playlist_manager_input_session(
                 session.wizard.list_cursor = new_visible.len().saturating_sub(1);
             }
         }
+        KeyCode::Char('S') if !session.tmdb.movie_mode => {
+            session.wizard.expanded_playlist = None;
+            if matches!(session.wizard.input_focus, InputFocus::TrackEdit(_)) {
+                session.wizard.input_focus = InputFocus::List;
+            }
+            session.wizard.show_specials = !session.wizard.show_specials;
+            // When hiding specials, deselect them so they aren't included in the rip
+            if !session.wizard.show_specials {
+                for (i, pl) in session.disc.playlists.iter().enumerate() {
+                    let is_special = session.wizard.specials.contains(&pl.num)
+                        || session.wizard.detection_results.iter().any(|d| {
+                            d.playlist_num == pl.num
+                                && d.suggested_type == crate::detection::SuggestedType::Special
+                                && d.confidence >= crate::detection::Confidence::High
+                        });
+                    if is_special {
+                        if let Some(sel) = session.wizard.playlist_selected.get_mut(i) {
+                            *sel = false;
+                        }
+                    }
+                }
+            }
+            let new_visible = session.visible_playlists();
+            if session.wizard.list_cursor >= new_visible.len() {
+                session.wizard.list_cursor = new_visible.len().saturating_sub(1);
+            }
+            reassign_regular_episodes(session);
+        }
+        KeyCode::Char('E') if !session.tmdb.movie_mode => {
+            session.wizard.start_episode_popup = true;
+            let current = session.wizard.start_episode.unwrap_or_else(|| {
+                let disc_num = session.disc.label_info.as_ref().map(|l| l.disc);
+                crate::util::guess_start_episode(disc_num, session.wizard.stream_infos.len())
+            });
+            session.wizard.input_buffer = current.to_string();
+        }
         KeyCode::Enter => {
             let selected_indices: Vec<usize> = session
                 .disc
@@ -1547,6 +1653,25 @@ pub fn handle_playlist_manager_input_session(
                 })
                 .map(|(i, _)| i)
                 .collect();
+
+            // Probe any unprobed selected playlists synchronously before proceeding
+            let unprobed_selected: Vec<String> = selected_indices
+                .iter()
+                .map(|&i| &session.disc.playlists[i])
+                .filter(|pl| !session.wizard.stream_infos.contains_key(&pl.num))
+                .map(|pl| pl.num.clone())
+                .collect();
+
+            if !unprobed_selected.is_empty() {
+                let device = session.device.to_string_lossy().to_string();
+                for num in &unprobed_selected {
+                    if let Ok((media, streams)) = crate::media::probe::probe_playlist(&device, num)
+                    {
+                        session.wizard.stream_infos.insert(num.clone(), streams);
+                        session.wizard.media_infos.insert(num.clone(), media);
+                    }
+                }
+            }
 
             let filenames: Vec<String> = selected_indices
                 .iter()
@@ -1770,7 +1895,7 @@ mod tests {
             show_name: "Test Show".into(),
             season_num: Some(1),
             playlists: vec![playlist.clone()],
-            episodes_pl: vec![playlist],
+            show_specials: true,
             playlist_selected: vec![true],
             episode_assignments: HashMap::new(),
             specials: std::collections::HashSet::new(),
@@ -1787,6 +1912,8 @@ mod tests {
             expanded_playlist: None,
             detection_results: Vec::new(),
             history_ripped_playlists: std::collections::HashSet::new(),
+            start_episode_popup: false,
+            min_probe_duration: 30,
         }
     }
 
@@ -1810,7 +1937,6 @@ mod tests {
             audio_streams: 2,
             subtitle_streams: 1,
         }];
-        session.disc.episodes_pl = session.disc.playlists.clone();
         session.wizard.playlist_selected = vec![true];
         session.wizard.input_focus = InputFocus::List;
         session
@@ -1986,6 +2112,50 @@ mod tests {
     }
 
     #[test]
+    fn test_uppercase_s_toggles_show_specials() {
+        let mut session = make_test_session();
+        assert!(session.wizard.show_specials, "default should be true");
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('S')));
+        assert!(
+            !session.wizard.show_specials,
+            "S should toggle show_specials off"
+        );
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('S')));
+        assert!(
+            session.wizard.show_specials,
+            "S should toggle show_specials back on"
+        );
+    }
+
+    #[test]
+    fn test_uppercase_s_collapses_expansion() {
+        let mut session = make_test_session();
+        session.wizard.expanded_playlist = Some(0);
+        session.wizard.input_focus = InputFocus::List;
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('S')));
+        assert_eq!(
+            session.wizard.expanded_playlist, None,
+            "S should collapse expansion"
+        );
+        assert!(
+            !session.wizard.show_specials,
+            "S should toggle show_specials"
+        );
+    }
+
+    #[test]
+    fn test_uppercase_s_noop_in_movie_mode() {
+        let mut session = make_test_session();
+        session.tmdb.movie_mode = true;
+        session.wizard.show_specials = true;
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('S')));
+        assert!(
+            session.wizard.show_specials,
+            "S should not toggle in movie mode"
+        );
+    }
+
+    #[test]
     fn test_down_navigates_tracks() {
         let mut session = make_test_session();
         session.wizard.expanded_playlist = Some(0);
@@ -2020,5 +2190,142 @@ mod tests {
             session.wizard.input_focus,
             InputFocus::TrackEdit(0)
         ));
+    }
+
+    // --- Start episode popup tests ---
+
+    #[test]
+    fn test_uppercase_e_opens_start_episode_popup() {
+        let mut session = make_test_session();
+        session.tmdb.movie_mode = false;
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('E')));
+        assert!(session.wizard.start_episode_popup);
+        assert!(
+            !session.wizard.input_buffer.is_empty(),
+            "input_buffer should be pre-filled with current start episode"
+        );
+    }
+
+    #[test]
+    fn test_uppercase_e_noop_in_movie_mode() {
+        let mut session = make_test_session();
+        session.tmdb.movie_mode = true;
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('E')));
+        assert!(
+            !session.wizard.start_episode_popup,
+            "E should not open popup in movie mode"
+        );
+    }
+
+    #[test]
+    fn test_start_episode_popup_enter_confirms() {
+        let mut session = make_test_session();
+        session.wizard.start_episode_popup = true;
+        session.wizard.input_buffer = "5".into();
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Enter));
+        assert!(!session.wizard.start_episode_popup);
+        assert_eq!(session.wizard.start_episode, Some(5));
+        assert!(session.wizard.input_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_start_episode_popup_enter_zero_ignored() {
+        let mut session = make_test_session();
+        session.wizard.start_episode_popup = true;
+        session.wizard.input_buffer = "0".into();
+        let original = session.wizard.start_episode;
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Enter));
+        assert!(!session.wizard.start_episode_popup);
+        assert_eq!(session.wizard.start_episode, original);
+    }
+
+    #[test]
+    fn test_start_episode_popup_esc_cancels() {
+        let mut session = make_test_session();
+        session.wizard.start_episode_popup = true;
+        session.wizard.input_buffer = "5".into();
+        let original = session.wizard.start_episode;
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Esc));
+        assert!(!session.wizard.start_episode_popup);
+        assert_eq!(session.wizard.start_episode, original);
+        assert!(session.wizard.input_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_start_episode_popup_digit_input() {
+        let mut session = make_test_session();
+        session.wizard.start_episode_popup = true;
+        session.wizard.input_buffer.clear();
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char('3')));
+        assert_eq!(session.wizard.input_buffer, "3");
+        assert!(
+            session.wizard.start_episode_popup,
+            "popup should remain open after digit"
+        );
+    }
+
+    #[test]
+    fn test_start_episode_popup_backspace() {
+        let mut session = make_test_session();
+        session.wizard.start_episode_popup = true;
+        session.wizard.input_buffer = "12".into();
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Backspace));
+        assert_eq!(session.wizard.input_buffer, "1");
+        assert!(session.wizard.start_episode_popup);
+    }
+
+    #[test]
+    fn test_start_episode_popup_blocks_other_keys() {
+        let mut session = make_test_session();
+        session.wizard.start_episode_popup = true;
+        session.wizard.input_buffer = "5".into();
+        // Space should not toggle playlist selection
+        let was_selected = session
+            .wizard
+            .playlist_selected
+            .get(0)
+            .copied()
+            .unwrap_or(false);
+        handle_playlist_manager_input_session(&mut session, make_key(KeyCode::Char(' ')));
+        assert_eq!(
+            session
+                .wizard
+                .playlist_selected
+                .get(0)
+                .copied()
+                .unwrap_or(false),
+            was_selected,
+            "popup should block space from toggling playlist"
+        );
+        assert!(
+            session.wizard.start_episode_popup,
+            "popup should remain open"
+        );
+    }
+
+    #[test]
+    fn test_start_episode_popup_rendering() {
+        let mut view = make_test_playlist_view();
+        view.start_episode_popup = true;
+        view.input_buffer = "7".into();
+
+        let backend = TestBackend::new(120, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_playlist_manager_view(f, &view, "", f.area());
+            })
+            .unwrap();
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("Start Episode"),
+            "should show popup title: {}",
+            text
+        );
+        assert!(
+            text.contains("Episode: 7|"),
+            "should show input with cursor: {}",
+            text
+        );
     }
 }

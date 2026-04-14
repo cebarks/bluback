@@ -47,7 +47,6 @@ pub struct DiscState {
     pub label: String,
     pub label_info: Option<LabelInfo>,
     pub playlists: Vec<Playlist>,
-    pub episodes_pl: Vec<Playlist>,
     pub scan_log: Vec<String>,
     pub mount_point: Option<String>,
     pub did_mount: bool,
@@ -71,7 +70,6 @@ pub struct TmdbState {
     pub specials: Vec<Episode>,
 }
 
-#[derive(Default)]
 pub struct WizardState {
     pub list_cursor: usize,
     pub input_buffer: String,
@@ -82,12 +80,38 @@ pub struct WizardState {
     pub playlist_selected: Vec<bool>,
     pub specials: std::collections::HashSet<String>,
     pub show_filtered: bool,
+    pub show_specials: bool,
+    pub start_episode_popup: bool,
     pub filenames: Vec<String>,
     pub media_infos: std::collections::HashMap<String, MediaInfo>,
     pub stream_infos: std::collections::HashMap<String, StreamInfo>,
     pub track_selections: std::collections::HashMap<String, Vec<usize>>,
     pub expanded_playlist: Option<usize>,
     pub detection_results: Vec<crate::detection::DetectionResult>,
+}
+
+impl Default for WizardState {
+    fn default() -> Self {
+        Self {
+            list_cursor: 0,
+            input_buffer: String::new(),
+            input_focus: InputFocus::default(),
+            season_num: None,
+            start_episode: None,
+            episode_assignments: EpisodeAssignments::default(),
+            playlist_selected: Vec::new(),
+            specials: std::collections::HashSet::new(),
+            show_filtered: false,
+            show_specials: true,
+            start_episode_popup: false,
+            filenames: Vec::new(),
+            media_infos: std::collections::HashMap::new(),
+            stream_infos: std::collections::HashMap::new(),
+            track_selections: std::collections::HashMap::new(),
+            expanded_playlist: None,
+            detection_results: Vec::new(),
+        }
+    }
 }
 
 pub struct RipState {
