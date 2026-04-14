@@ -1715,7 +1715,7 @@ fn rip_selected(
         };
 
         // Update history file status
-        if let (Some(db), Some(fid)) = (history, history_file_id) {
+        if let (Some(db), Some(fid), Some(sid)) = (history, history_file_id, session_id) {
             let (status, error) = if hook_status == "success" {
                 (crate::history::FileStatus::Completed, None)
             } else {
@@ -1744,7 +1744,7 @@ fn rip_selected(
                     streams: None,
                     chapters: Some(hook_chapters as i32),
                 };
-                let _ = db.record_file(session_id.unwrap_or(0), &file_info);
+                let _ = db.record_file(sid, &file_info);
             }
             if let Err(e) = db.update_file_status(fid, status, error) {
                 log::warn!("history: failed to update file status: {}", e);

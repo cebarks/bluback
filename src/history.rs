@@ -342,6 +342,7 @@ impl HistoryDb {
         match version {
             Ok(v) => Ok(v),
             Err(rusqlite::Error::SqliteFailure(_, _)) => Ok(0),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
             Err(e) => Err(e.into()),
         }
     }
@@ -521,11 +522,10 @@ impl HistoryDb {
                    ON CONFLICT(session_id, playlist) DO UPDATE SET
                        episodes = excluded.episodes,
                        output_path = excluded.output_path,
-                       file_size = excluded.file_size,
-                       duration_ms = excluded.duration_ms,
-                       streams = excluded.streams,
-                       chapters = excluded.chapters,
-                       started_at = excluded.started_at"#,
+                       file_size = COALESCE(excluded.file_size, ripped_files.file_size),
+                       duration_ms = COALESCE(excluded.duration_ms, ripped_files.duration_ms),
+                       streams = COALESCE(excluded.streams, ripped_files.streams),
+                       chapters = COALESCE(excluded.chapters, ripped_files.chapters)"#,
                 params![
                     session_id,
                     file.playlist,
