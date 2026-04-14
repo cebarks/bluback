@@ -33,11 +33,10 @@ fn remux_with_metadata(input: &str, output: &str, tags: &HashMap<String, String>
     }
 
     // Inject metadata
-    let mut dict = ffmpeg_the_third::Dictionary::new();
+    let mut md = octx.metadata_mut();
     for (k, v) in tags {
-        dict.set(k, v);
+        md.set(k, v);
     }
-    octx.set_metadata(dict);
 
     // Write header and packets
     octx.write_header().expect("write header");
