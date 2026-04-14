@@ -205,6 +205,14 @@ pub struct Args {
     /// Select streams by type-local index (e.g. "a:0,2;s:0-1")
     #[arg(long, conflicts_with_all = ["audio_lang", "subtitle_lang", "prefer_surround", "all_streams"])]
     tracks: Option<String>,
+
+    /// Disable history for this run
+    #[arg(long)]
+    no_history: bool,
+
+    /// Ignore history (skip duplicate detection and episode continuation, still records)
+    #[arg(long, conflicts_with = "no_history")]
+    ignore_history: bool,
 }
 
 impl Args {
@@ -385,6 +393,21 @@ fn run_inner() -> anyhow::Result<i32> {
     if args.check {
         return Ok(check::run_check(&config, &config_path));
     }
+
+    // Initialize history DB (or None if disabled)
+    #[allow(unused_variables)]
+    let history_db = if args.no_history || !config.history_enabled() {
+        None
+    } else {
+        let db_path = crate::history::resolve_db_path(Some(&config));
+        match crate::history::HistoryDb::open(&db_path) {
+            Ok(db) => Some(db),
+            Err(e) => {
+                log::warn!("failed to open history DB: {}", e);
+                None
+            }
+        }
+    };
 
     let aacs_backend = args
         .aacs_backend
