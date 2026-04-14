@@ -350,6 +350,34 @@ pub fn run_check(config: &crate::config::Config, config_path: &std::path::Path) 
         });
     }
 
+    // History database
+    if config.history_enabled() {
+        let db_path = crate::history::resolve_db_path(Some(config));
+        match crate::history::HistoryDb::open(&db_path) {
+            Ok(db) => {
+                let stats = db.stats().unwrap_or_default();
+                results.push(CheckResult {
+                    label: "History DB".into(),
+                    status: CheckStatus::Pass,
+                    detail: format!("{} sessions, {}", stats.total_sessions, db_path.display()),
+                });
+            }
+            Err(e) => {
+                results.push(CheckResult {
+                    label: "History DB".into(),
+                    status: CheckStatus::Warn,
+                    detail: format!("cannot open: {}", e),
+                });
+            }
+        }
+    } else {
+        results.push(CheckResult {
+            label: "History DB".into(),
+            status: CheckStatus::Miss,
+            detail: "disabled in config".into(),
+        });
+    }
+
     print_results(&results);
     if any_required_failed {
         2

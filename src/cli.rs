@@ -701,6 +701,7 @@ pub fn run(
         movie_mode,
         history,
         session_id,
+        label_info.as_ref().map(|l| l.disc),
     )?;
 
     // Finish history session
@@ -1351,6 +1352,7 @@ fn rip_selected(
     movie_mode: bool,
     history: Option<&crate::history::HistoryDb>,
     session_id: Option<i64>,
+    disc_number: Option<u32>,
 ) -> anyhow::Result<(u32, u32)> {
     let output_dir = args
         .output
@@ -1797,6 +1799,23 @@ fn rip_selected(
             vars.insert("error", hook_error);
             vars.insert("verify", verify_hook_status);
             vars.insert("verify_detail", verify_hook_detail);
+            vars.insert(
+                "session_id",
+                session_id.map(|id| id.to_string()).unwrap_or_default(),
+            );
+            vars.insert(
+                "disc_number",
+                disc_number.map(|n| n.to_string()).unwrap_or_default(),
+            );
+            vars.insert(
+                "history_status",
+                if history.is_some() && session_id.is_some() {
+                    "saved"
+                } else {
+                    "disabled"
+                }
+                .to_string(),
+            );
             crate::hooks::run_post_rip(config, &vars, no_hooks);
         }
 
@@ -1837,6 +1856,23 @@ fn rip_selected(
         vars.insert("succeeded", success_count.to_string());
         vars.insert("failed", fail_count.to_string());
         vars.insert("skipped", skip_count.to_string());
+        vars.insert(
+            "session_id",
+            session_id.map(|id| id.to_string()).unwrap_or_default(),
+        );
+        vars.insert(
+            "disc_number",
+            disc_number.map(|n| n.to_string()).unwrap_or_default(),
+        );
+        vars.insert(
+            "history_status",
+            if history.is_some() && session_id.is_some() {
+                "saved"
+            } else {
+                "disabled"
+            }
+            .to_string(),
+        );
         crate::hooks::run_post_session(config, &vars, no_hooks);
     }
 
