@@ -455,6 +455,74 @@ impl HistoryDb {
 
         Ok(())
     }
+
+    // ========================================================================
+    // Query Methods
+    // ========================================================================
+
+    pub fn last_episode(&self, tmdb_id: i64, season: i32) -> Result<Option<i32>> {
+        let result = self.conn
+            .query_row(
+                r#"SELECT MAX(CAST(je.value AS INTEGER))
+                   FROM sessions s
+                   JOIN ripped_files rf ON rf.session_id = s.id, json_each(rf.episodes) je
+                   WHERE s.tmdb_id = ?1 AND s.season = ?2 AND rf.status = 'completed'
+                     AND typeof(je.value) = 'integer'"#,
+                params![tmdb_id, season],
+                |row| row.get::<_, Option<i32>>(0),
+            )
+            .context("Failed to query last episode")?;
+
+        Ok(result)
+    }
+
+    pub fn last_episode_by_label(&self, label_pattern: &str, season: i32) -> Result<Option<i32>> {
+        let result = self.conn
+            .query_row(
+                r#"SELECT MAX(CAST(je.value AS INTEGER))
+                   FROM sessions s
+                   JOIN ripped_files rf ON rf.session_id = s.id, json_each(rf.episodes) je
+                   WHERE s.volume_label LIKE ?1 AND s.season = ?2 AND rf.status = 'completed'
+                     AND typeof(je.value) = 'integer'"#,
+                params![label_pattern, season],
+                |row| row.get::<_, Option<i32>>(0),
+            )
+            .context("Failed to query last episode by label")?;
+
+        Ok(result)
+    }
+
+    pub fn last_special(&self, tmdb_id: i64, season: i32) -> Result<Option<i32>> {
+        let result = self.conn
+            .query_row(
+                r#"SELECT MAX(CAST(SUBSTR(je.value, 3) AS INTEGER))
+                   FROM sessions s
+                   JOIN ripped_files rf ON rf.session_id = s.id, json_each(rf.episodes) je
+                   WHERE s.tmdb_id = ?1 AND s.season = ?2 AND rf.status = 'completed'
+                     AND typeof(je.value) = 'text' AND je.value LIKE 'SP%'"#,
+                params![tmdb_id, season],
+                |row| row.get::<_, Option<i32>>(0),
+            )
+            .context("Failed to query last special")?;
+
+        Ok(result)
+    }
+
+    pub fn last_special_by_label(&self, label_pattern: &str, season: i32) -> Result<Option<i32>> {
+        let result = self.conn
+            .query_row(
+                r#"SELECT MAX(CAST(SUBSTR(je.value, 3) AS INTEGER))
+                   FROM sessions s
+                   JOIN ripped_files rf ON rf.session_id = s.id, json_each(rf.episodes) je
+                   WHERE s.volume_label LIKE ?1 AND s.season = ?2 AND rf.status = 'completed'
+                     AND typeof(je.value) = 'text' AND je.value LIKE 'SP%'"#,
+                params![label_pattern, season],
+                |row| row.get::<_, Option<i32>>(0),
+            )
+            .context("Failed to query last special by label")?;
+
+        Ok(result)
+    }
 }
 
 // ============================================================================
@@ -753,5 +821,154 @@ mod tests {
         };
         let file_id_2 = db.record_file(session_id, &file_info_retry).unwrap();
         assert_eq!(file_id_1, file_id_2);
+    }
+
+    #[test]
+    fn test_last_episode_by_tmdb() {
+        let db = HistoryDb::open_memory().unwrap();
+        let mut info = make_session_info("BB_S1_D1", "Breaking Bad");
+        info.tmdb_id = Some(1396);
+        info.tmdb_type = Some("tv".to_string());
+        info.season = Some(1);
+        let sid = db.start_session(&info).unwrap();
+
+        for ep in 1..=4 {
+            let f = RippedFileInfo {
+                playlist: format!("008{:02}", ep),
+                episodes: Some(format!("[{}]", ep)),
+                output_path: format!("/tmp/S01E{:02}.mkv", ep),
+                file_size: Some(5_000_000_000),
+                duration_ms: Some(2700000),
+                streams: None,
+                chapters: None,
+            };
+            let fid = db.record_file(sid, &f).unwrap();
+            db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        }
+        db.finish_session(sid, SessionStatus::Completed).unwrap();
+
+        let last = db.last_episode(1396, 1).unwrap();
+        assert_eq!(last, Some(4));
+    }
+
+    #[test]
+    fn test_last_episode_only_counts_completed() {
+        let db = HistoryDb::open_memory().unwrap();
+        let mut info = make_session_info("BB_S1_D1", "Breaking Bad");
+        info.tmdb_id = Some(1396);
+        info.tmdb_type = Some("tv".to_string());
+        info.season = Some(1);
+        let sid = db.start_session(&info).unwrap();
+
+        let f1 = RippedFileInfo {
+            playlist: "00800".to_string(),
+            episodes: Some("[1]".to_string()),
+            output_path: "/tmp/S01E01.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        };
+        let fid1 = db.record_file(sid, &f1).unwrap();
+        db.update_file_status(fid1, FileStatus::Completed, None).unwrap();
+
+        let f2 = RippedFileInfo {
+            playlist: "00801".to_string(),
+            episodes: Some("[2]".to_string()),
+            output_path: "/tmp/S01E02.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        };
+        let fid2 = db.record_file(sid, &f2).unwrap();
+        db.update_file_status(fid2, FileStatus::Failed, Some("AACS error")).unwrap();
+
+        let last = db.last_episode(1396, 1).unwrap();
+        assert_eq!(last, Some(1));
+    }
+
+    #[test]
+    fn test_last_episode_multi_episode_playlist() {
+        let db = HistoryDb::open_memory().unwrap();
+        let mut info = make_session_info("BB_S1_D1", "Breaking Bad");
+        info.tmdb_id = Some(1396);
+        info.tmdb_type = Some("tv".to_string());
+        info.season = Some(1);
+        let sid = db.start_session(&info).unwrap();
+
+        let f = RippedFileInfo {
+            playlist: "00800".to_string(),
+            episodes: Some("[3,4]".to_string()),
+            output_path: "/tmp/S01E03-E04.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        };
+        let fid = db.record_file(sid, &f).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+
+        let last = db.last_episode(1396, 1).unwrap();
+        assert_eq!(last, Some(4));
+    }
+
+    #[test]
+    fn test_last_episode_no_match() {
+        let db = HistoryDb::open_memory().unwrap();
+        let last = db.last_episode(9999, 1).unwrap();
+        assert_eq!(last, None);
+    }
+
+    #[test]
+    fn test_last_special_by_tmdb() {
+        let db = HistoryDb::open_memory().unwrap();
+        let mut info = make_session_info("BB_S1_D1", "Breaking Bad");
+        info.tmdb_id = Some(1396);
+        info.tmdb_type = Some("tv".to_string());
+        info.season = Some(1);
+        let sid = db.start_session(&info).unwrap();
+
+        let f = RippedFileInfo {
+            playlist: "00810".to_string(),
+            episodes: Some(r#"["SP1","SP2"]"#.to_string()),
+            output_path: "/tmp/S01SP01.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        };
+        let fid = db.record_file(sid, &f).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+
+        let last = db.last_special(1396, 1).unwrap();
+        assert_eq!(last, Some(2));
+    }
+
+    #[test]
+    fn test_last_episode_by_label() {
+        let db = HistoryDb::open_memory().unwrap();
+        let mut info = make_session_info("BREAKING_BAD_S1_D1", "Breaking Bad");
+        info.season = Some(1);
+        let sid = db.start_session(&info).unwrap();
+
+        let f = RippedFileInfo {
+            playlist: "00800".to_string(),
+            episodes: Some("[7]".to_string()),
+            output_path: "/tmp/S01E07.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        };
+        let fid = db.record_file(sid, &f).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+
+        let last = db.last_episode_by_label("BREAKING_BAD%", 1).unwrap();
+        assert_eq!(last, Some(7));
+    }
+
+    #[test]
+    fn test_last_episode_by_label_no_cross_season() {
+        let db = HistoryDb::open_memory().unwrap();
+        let mut info = make_session_info("BB_S1_D1", "Breaking Bad");
+        info.season = Some(1);
+        let sid = db.start_session(&info).unwrap();
+        let f = RippedFileInfo {
+            playlist: "00800".to_string(),
+            episodes: Some("[7]".to_string()),
+            output_path: "/tmp/S01E07.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        };
+        let fid = db.record_file(sid, &f).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+
+        let last = db.last_episode_by_label("BB%", 2).unwrap();
+        assert_eq!(last, None);
     }
 }
