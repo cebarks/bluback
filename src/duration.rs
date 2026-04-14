@@ -7,8 +7,8 @@ use regex::Regex;
 #[allow(dead_code)] // Public API — used by config and CLI modules (tasks 7+)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedDuration {
-    Relative(u32),     // days
-    Absolute(String),  // ISO date string "YYYY-MM-DD"
+    Relative(u32),    // days
+    Absolute(String), // ISO date string "YYYY-MM-DD"
 }
 
 /// Parse a duration string into a ParsedDuration.
@@ -117,15 +117,30 @@ mod tests {
 
     #[test]
     fn test_parse_months() {
-        assert_eq!(parse_duration("6months").unwrap(), ParsedDuration::Relative(180));
-        assert_eq!(parse_duration("6month").unwrap(), ParsedDuration::Relative(180));
-        assert_eq!(parse_duration("1month").unwrap(), ParsedDuration::Relative(30));
+        assert_eq!(
+            parse_duration("6months").unwrap(),
+            ParsedDuration::Relative(180)
+        );
+        assert_eq!(
+            parse_duration("6month").unwrap(),
+            ParsedDuration::Relative(180)
+        );
+        assert_eq!(
+            parse_duration("1month").unwrap(),
+            ParsedDuration::Relative(30)
+        );
     }
 
     #[test]
     fn test_parse_years() {
-        assert_eq!(parse_duration("1year").unwrap(), ParsedDuration::Relative(365));
-        assert_eq!(parse_duration("2years").unwrap(), ParsedDuration::Relative(730));
+        assert_eq!(
+            parse_duration("1year").unwrap(),
+            ParsedDuration::Relative(365)
+        );
+        assert_eq!(
+            parse_duration("2years").unwrap(),
+            ParsedDuration::Relative(730)
+        );
     }
 
     #[test]
