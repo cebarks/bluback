@@ -253,11 +253,10 @@ where
 
     // Inject MKV metadata tags before writing header
     if let Some(ref meta) = options.metadata {
-        let mut dict = Dictionary::new();
+        let mut md = octx.metadata_mut();
         for (k, v) in &meta.tags {
-            dict.set(k, v);
+            md.set(k, v);
         }
-        octx.set_metadata(dict);
         log::debug!("Injected {} metadata tag(s)", meta.tags.len());
     }
 
@@ -265,7 +264,7 @@ where
     // so they can be written at the front of the file for faster seeking.
     let reserve_bytes = (options.reserve_index_space_kb as u64) * 1024;
     let mut muxer_opts = Dictionary::new();
-    muxer_opts.set("reserve_index_space", &reserve_bytes.to_string());
+    muxer_opts.set("reserve_index_space", reserve_bytes.to_string());
     octx.write_header_with(muxer_opts)
         .map_err(|e| MediaError::RemuxFailed(format!("Failed to write header: {}", e)))?;
 
