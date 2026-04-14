@@ -85,7 +85,11 @@ fn test_clap_regression_existing_flags() {
     // --check exits 0 or 2
     assert!(out.status.code().unwrap() <= 2);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!stderr.contains("unexpected argument"), "stderr: {}", stderr);
+    assert!(
+        !stderr.contains("unexpected argument"),
+        "stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -103,7 +107,11 @@ fn test_clap_regression_title_flag() {
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Should fail because no disc, not because of arg parsing
-    assert!(!stderr.contains("unexpected argument"), "stderr: {}", stderr);
+    assert!(
+        !stderr.contains("unexpected argument"),
+        "stderr: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -150,10 +158,6 @@ fn test_history_show_nonexistent() {
         .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("not found"),
-        "stderr: {}",
-        stderr
-    );
+    assert!(stderr.contains("not found"), "stderr: {}", stderr);
     let _ = std::fs::remove_file(&db_path);
 }
