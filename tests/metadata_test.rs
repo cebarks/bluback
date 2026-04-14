@@ -43,16 +43,11 @@ fn remux_with_metadata(input: &str, output: &str, tags: &HashMap<String, String>
     octx.write_header().expect("write header");
 
     let mut packet = ffmpeg_the_third::Packet::empty();
-    loop {
-        match packet.read(&mut ictx) {
-            Ok(()) => {
-                let in_idx = packet.stream();
-                if in_idx < stream_map.len() {
-                    packet.set_stream(in_idx);
-                    packet.write_interleaved(&mut octx).ok();
-                }
-            }
-            Err(_) => break,
+    while packet.read(&mut ictx).is_ok() {
+        let in_idx = packet.stream();
+        if in_idx < stream_map.len() {
+            packet.set_stream(in_idx);
+            packet.write_interleaved(&mut octx).ok();
         }
     }
     octx.write_trailer().expect("write trailer");
