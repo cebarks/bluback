@@ -493,6 +493,61 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
 
 // --- Session variants of dashboard handlers ---
 
+/// Record a file status event in history. Best-effort: logs and continues on error.
+fn record_file_event(
+    session: &crate::session::DriveSession,
+    history_db: &Option<crate::history::HistoryDb>,
+    job_idx: usize,
+    status: crate::history::FileStatus,
+    error: Option<&str>,
+) {
+    let (db, sid) = match (history_db, session.history_session_id) {
+        (Some(db), Some(sid)) => (db, sid),
+        _ => return,
+    };
+    let job = &session.rip.jobs[job_idx];
+
+    // Build episode JSON from assignments
+    let episodes_json = session
+        .wizard
+        .episode_assignments
+        .get(&job.playlist.num)
+        .map(|eps| {
+            serde_json::to_string(&eps.iter().map(|e| e.episode_number).collect::<Vec<_>>())
+                .unwrap_or_default()
+        });
+
+    let file_size = match &job.status {
+        crate::types::PlaylistStatus::Done(sz)
+        | crate::types::PlaylistStatus::Verified(sz, _)
+        | crate::types::PlaylistStatus::VerifyFailed(sz, _) => Some(*sz as i64),
+        crate::types::PlaylistStatus::Skipped(sz) => Some(*sz as i64),
+        _ => None,
+    };
+
+    let outfile = session.output_dir.join(&job.filename);
+    let file_info = crate::history::RippedFileInfo {
+        playlist: job.playlist.num.clone(),
+        episodes: episodes_json,
+        output_path: outfile.display().to_string(),
+        file_size,
+        duration_ms: Some((job.playlist.seconds as i64) * 1000),
+        streams: None,
+        chapters: None,
+    };
+
+    match db.record_file(sid, &file_info) {
+        Ok(fid) => {
+            if let Err(e) = db.update_file_status(fid, status, error) {
+                log::warn!("history: failed to update file status: {}", e);
+            }
+        }
+        Err(e) => {
+            log::warn!("history: failed to record file: {}", e);
+        }
+    }
+}
+
 pub fn handle_input_session(session: &mut crate::session::DriveSession, key: KeyEvent) {
     if let Some(fail_idx) = session.rip.verify_failed_idx {
         match key.code {
@@ -550,20 +605,26 @@ pub fn handle_input_session(session: &mut crate::session::DriveSession, key: Key
 }
 
 /// Tick the rip engine for a DriveSession. Returns true if state changed.
-pub fn tick_session(session: &mut crate::session::DriveSession) -> bool {
-    if check_all_done_session(session) {
+pub fn tick_session(
+    session: &mut crate::session::DriveSession,
+    history_db: &Option<crate::history::HistoryDb>,
+) -> bool {
+    if check_all_done_session(session, history_db) {
         return true;
     }
 
     if session.rip.progress_rx.is_none() {
-        let started = start_next_job_session(session);
+        let started = start_next_job_session(session, history_db);
         return started;
     }
 
-    poll_active_job_session(session)
+    poll_active_job_session(session, history_db)
 }
 
-fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
+fn check_all_done_session(
+    session: &mut crate::session::DriveSession,
+    history_db: &Option<crate::history::HistoryDb>,
+) -> bool {
     let all_done = session.rip.jobs.iter().all(|j| {
         matches!(
             j.status,
@@ -578,6 +639,26 @@ fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
     if all_done && !session.rip.jobs.is_empty() {
         session.rip.progress_rx = None;
         session.screen = Screen::Done;
+
+        // Finish history session
+        if let (Some(db), Some(sid)) = (history_db, session.history_session_id) {
+            let has_success = session.rip.jobs.iter().any(|j| {
+                matches!(
+                    j.status,
+                    PlaylistStatus::Done(_) | PlaylistStatus::Verified(..)
+                )
+            });
+            let status = if has_success {
+                crate::history::SessionStatus::Completed
+            } else {
+                crate::history::SessionStatus::Failed
+            };
+            if let Err(e) = db.finish_session(sid, status) {
+                log::warn!("history: failed to finish session: {}", e);
+            }
+            // Clear session ID so rescan starts a fresh session
+            session.history_session_id = None;
+        }
         if session.disc.did_mount {
             let _ = crate::disc::unmount_disc(&session.device.to_string_lossy());
             session.disc.did_mount = false;
@@ -659,7 +740,10 @@ fn check_all_done_session(session: &mut crate::session::DriveSession) -> bool {
     }
 }
 
-fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
+fn start_next_job_session(
+    session: &mut crate::session::DriveSession,
+    history_db: &Option<crate::history::HistoryDb>,
+) -> bool {
     let next_idx = session
         .rip
         .jobs
@@ -692,6 +776,14 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         Ok(crate::workflow::OverwriteAction::Proceed) => {}
         Ok(crate::workflow::OverwriteAction::Skip(size)) => {
             session.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
+            // Record skip in history
+            record_file_event(
+                session,
+                history_db,
+                idx,
+                crate::history::FileStatus::Skipped,
+                None,
+            );
             return true;
         }
         Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
@@ -769,6 +861,38 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
         metadata,
     );
 
+    // Mark session as in_progress and record file start in history
+    if let (Some(db), Some(sid)) = (history_db, session.history_session_id) {
+        // Mark in_progress on first rip job only
+        if idx == 0 {
+            if let Err(e) = db.finish_session(sid, crate::history::SessionStatus::InProgress) {
+                log::warn!("history: failed to mark session in_progress: {}", e);
+            }
+        }
+        // Record file start
+        let episodes_json = session
+            .wizard
+            .episode_assignments
+            .get(&job_playlist.num)
+            .map(|eps| {
+                serde_json::to_string(&eps.iter().map(|e| e.episode_number).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            });
+        let file_info = crate::history::RippedFileInfo {
+            playlist: job_playlist.num.clone(),
+            episodes: episodes_json,
+            output_path: outfile.display().to_string(),
+            file_size: None,
+            duration_ms: Some((job_playlist.seconds as i64) * 1000),
+            streams: None,
+            chapters: None,
+        };
+        match db.record_file(sid, &file_info) {
+            Ok(_fid) => {}
+            Err(e) => log::warn!("history: failed to record file: {}", e),
+        }
+    }
+
     session.rip.chapters_added.store(0, Ordering::Relaxed);
     let chapters_added_arc = session.rip.chapters_added.clone();
 
@@ -794,7 +918,10 @@ fn start_next_job_session(session: &mut crate::session::DriveSession) -> bool {
     true
 }
 
-fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
+fn poll_active_job_session(
+    session: &mut crate::session::DriveSession,
+    history_db: &Option<crate::history::HistoryDb>,
+) -> bool {
     let rx = match session.rip.progress_rx {
         Some(ref rx) => rx,
         None => return false,
@@ -816,6 +943,13 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                 }
                 session.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
                 session.rip.progress_rx = None;
+                record_file_event(
+                    session,
+                    history_db,
+                    idx,
+                    crate::history::FileStatus::Failed,
+                    Some("Cancelled"),
+                );
                 let vars = build_post_rip_vars(session, idx, "failed", "Cancelled");
                 crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 return true;
@@ -829,6 +963,13 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                 }
                 session.rip.jobs[idx].status = PlaylistStatus::Failed(err_msg.clone());
                 session.rip.progress_rx = None;
+                record_file_event(
+                    session,
+                    history_db,
+                    idx,
+                    crate::history::FileStatus::Failed,
+                    Some(&err_msg),
+                );
                 let vars = build_post_rip_vars(session, idx, "failed", &err_msg);
                 crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 return true;
@@ -914,6 +1055,14 @@ fn poll_active_job_session(session: &mut crate::session::DriveSession) -> bool {
                     } else {
                         session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
                     }
+                    // Record file completion in history
+                    record_file_event(
+                        session,
+                        history_db,
+                        idx,
+                        crate::history::FileStatus::Completed,
+                        None,
+                    );
                     let vars = build_post_rip_vars(session, idx, "success", "");
                     crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 }

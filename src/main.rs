@@ -406,18 +406,11 @@ fn run_inner() -> anyhow::Result<i32> {
         return Ok(check::run_check(&config, &config_path));
     }
 
-    // Initialize history DB (or None if disabled)
-    let history_db = if args.no_history || !config.history_enabled() {
+    // Resolve history DB path (TUI opens per-thread connections; CLI opens eagerly below)
+    let history_db_path = if args.no_history || !config.history_enabled() {
         None
     } else {
-        let db_path = crate::history::resolve_db_path(Some(&config));
-        match crate::history::HistoryDb::open(&db_path) {
-            Ok(db) => Some(db),
-            Err(e) => {
-                log::warn!("failed to open history DB: {}", e);
-                None
-            }
-        }
+        Some(crate::history::resolve_db_path(Some(&config)))
     };
 
     let aacs_backend = args
@@ -510,30 +503,44 @@ fn run_inner() -> anyhow::Result<i32> {
     let batch = config.should_batch(args.cli_batch());
 
     if use_tui {
-        tui::run(&args, &config, config_path, &stream_filter)?;
-    } else if batch {
-        cli::run_batch(
-            &args,
-            &config,
-            headless,
-            &stream_filter,
-            tracks_spec.as_deref(),
-            history_db.as_ref(),
-            args.ignore_history,
-        )?;
+        tui::run(&args, &config, config_path, &stream_filter, history_db_path)?;
     } else {
-        let _ = cli::run(
-            &args,
-            &config,
-            headless,
-            &stream_filter,
-            tracks_spec.as_deref(),
-            None,  // no start_episode override
-            false, // don't skip eject
-            history_db.as_ref(),
-            args.ignore_history,
-            None, // no batch_id
-        )?;
+        // CLI mode: open DB eagerly (single-threaded, one connection is fine)
+        let history_db =
+            history_db_path
+                .as_ref()
+                .and_then(|path| match crate::history::HistoryDb::open(path) {
+                    Ok(db) => Some(db),
+                    Err(e) => {
+                        log::warn!("failed to open history DB: {}", e);
+                        None
+                    }
+                });
+
+        if batch {
+            cli::run_batch(
+                &args,
+                &config,
+                headless,
+                &stream_filter,
+                tracks_spec.as_deref(),
+                history_db.as_ref(),
+                args.ignore_history,
+            )?;
+        } else {
+            let _ = cli::run(
+                &args,
+                &config,
+                headless,
+                &stream_filter,
+                tracks_spec.as_deref(),
+                None,  // no start_episode override
+                false, // don't skip eject
+                history_db.as_ref(),
+                args.ignore_history,
+                None, // no batch_id
+            )?;
+        }
     }
 
     Ok(EXIT_SUCCESS)
