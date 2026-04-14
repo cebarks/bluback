@@ -249,6 +249,18 @@ const EXIT_NO_DEVICE: i32 = 3;
 const EXIT_CANCELLED: i32 = 4;
 
 fn main() {
+    // Early intercept for history subcommand
+    let raw_args: Vec<String> = std::env::args().collect();
+    if raw_args.get(1).map(|s| s.as_str()) == Some("history") {
+        use clap::Parser;
+        let history_args = history_cli::HistoryArgs::parse_from(&raw_args[1..]);
+        if let Err(e) = history_cli::run_history(history_args) {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // Become a subreaper so that orphaned descendant processes (e.g.,
     // makemkvcon spawned by libmmbd via double-fork) get reparented to
     // us instead of PID 1. This ensures kill_makemkvcon_children() can

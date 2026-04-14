@@ -405,8 +405,14 @@ impl HistoryDb {
         Ok(())
     }
 
-    pub fn record_disc_playlists(&self, session_id: i64, playlists: &[DiscPlaylistInfo]) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()
+    pub fn record_disc_playlists(
+        &self,
+        session_id: i64,
+        playlists: &[DiscPlaylistInfo],
+    ) -> Result<()> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
             .context("Failed to begin transaction")?;
 
         for playlist in playlists {
@@ -427,7 +433,8 @@ impl HistoryDb {
             .context("Failed to insert playlist")?;
         }
 
-        tx.commit().context("Failed to commit playlist transaction")?;
+        tx.commit()
+            .context("Failed to commit playlist transaction")?;
         Ok(())
     }
 
@@ -459,17 +466,24 @@ impl HistoryDb {
             .context("Failed to upsert ripped file")?;
 
         // Query the stable ID after upsert
-        let id: i64 = self.conn.query_row(
-            "SELECT id FROM ripped_files WHERE session_id = ?1 AND playlist = ?2",
-            params![session_id, file.playlist],
-            |row| row.get(0),
-        )
-        .context("Failed to retrieve file ID after upsert")?;
+        let id: i64 = self
+            .conn
+            .query_row(
+                "SELECT id FROM ripped_files WHERE session_id = ?1 AND playlist = ?2",
+                params![session_id, file.playlist],
+                |row| row.get(0),
+            )
+            .context("Failed to retrieve file ID after upsert")?;
 
         Ok(id)
     }
 
-    pub fn update_file_status(&self, file_id: i64, status: FileStatus, error: Option<&str>) -> Result<()> {
+    pub fn update_file_status(
+        &self,
+        file_id: i64,
+        status: FileStatus,
+        error: Option<&str>,
+    ) -> Result<()> {
         self.conn
             .execute(
                 "UPDATE ripped_files SET status = ?1, finished_at = ?2, error = ?3 WHERE id = ?4",
@@ -485,7 +499,8 @@ impl HistoryDb {
     // ========================================================================
 
     pub fn last_episode(&self, tmdb_id: i64, season: i32) -> Result<Option<i32>> {
-        let result = self.conn
+        let result = self
+            .conn
             .query_row(
                 r#"SELECT MAX(CAST(je.value AS INTEGER))
                    FROM sessions s
@@ -501,7 +516,8 @@ impl HistoryDb {
     }
 
     pub fn last_episode_by_label(&self, label_pattern: &str, season: i32) -> Result<Option<i32>> {
-        let result = self.conn
+        let result = self
+            .conn
             .query_row(
                 r#"SELECT MAX(CAST(je.value AS INTEGER))
                    FROM sessions s
@@ -517,7 +533,8 @@ impl HistoryDb {
     }
 
     pub fn last_special(&self, tmdb_id: i64, season: i32) -> Result<Option<i32>> {
-        let result = self.conn
+        let result = self
+            .conn
             .query_row(
                 r#"SELECT MAX(CAST(SUBSTR(je.value, 3) AS INTEGER))
                    FROM sessions s
@@ -533,7 +550,8 @@ impl HistoryDb {
     }
 
     pub fn last_special_by_label(&self, label_pattern: &str, season: i32) -> Result<Option<i32>> {
-        let result = self.conn
+        let result = self
+            .conn
             .query_row(
                 r#"SELECT MAX(CAST(SUBSTR(je.value, 3) AS INTEGER))
                    FROM sessions s
@@ -847,7 +865,14 @@ impl HistoryDb {
             scanned_sessions,
             first_session,
             last_session,
-        ): (i64, Option<i64>, Option<i64>, Option<i64>, Option<String>, Option<String>) = self
+        ): (
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        ) = self
             .conn
             .query_row(
                 r#"SELECT
@@ -872,7 +897,12 @@ impl HistoryDb {
             )
             .context("Failed to query session stats")?;
 
-        let (total_files, failed_files, skipped_files, total_size): (i64, Option<i64>, Option<i64>, i64) = self
+        let (total_files, failed_files, skipped_files, total_size): (
+            i64,
+            Option<i64>,
+            Option<i64>,
+            i64,
+        ) = self
             .conn
             .query_row(
                 r#"SELECT
@@ -1189,12 +1219,16 @@ mod tests {
     #[test]
     fn test_finish_session() {
         let db = HistoryDb::open_memory().unwrap();
-        let id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let id = db
+            .start_session(&make_session_info("DISC", "Test"))
+            .unwrap();
         db.finish_session(id, SessionStatus::Completed).unwrap();
 
         let status: String = db
             .conn
-            .query_row("SELECT status FROM sessions WHERE id = ?1", [id], |r| r.get(0))
+            .query_row("SELECT status FROM sessions WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(status, "completed");
 
@@ -1212,7 +1246,9 @@ mod tests {
     #[test]
     fn test_record_disc_playlists() {
         let db = HistoryDb::open_memory().unwrap();
-        let id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let id = db
+            .start_session(&make_session_info("DISC", "Test"))
+            .unwrap();
         let playlists = vec![
             DiscPlaylistInfo {
                 playlist: "00800".to_string(),
@@ -1249,7 +1285,9 @@ mod tests {
     #[test]
     fn test_record_file_and_update_status() {
         let db = HistoryDb::open_memory().unwrap();
-        let session_id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let session_id = db
+            .start_session(&make_session_info("DISC", "Test"))
+            .unwrap();
         let file_info = RippedFileInfo {
             playlist: "00800".to_string(),
             episodes: Some("[1,2]".to_string()),
@@ -1278,7 +1316,9 @@ mod tests {
     #[test]
     fn test_upsert_preserves_file_id() {
         let db = HistoryDb::open_memory().unwrap();
-        let session_id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let session_id = db
+            .start_session(&make_session_info("DISC", "Test"))
+            .unwrap();
         let file_info = RippedFileInfo {
             playlist: "00800".to_string(),
             episodes: Some("[1]".to_string()),
@@ -1324,7 +1364,8 @@ mod tests {
                 chapters: None,
             };
             let fid = db.record_file(sid, &f).unwrap();
-            db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+            db.update_file_status(fid, FileStatus::Completed, None)
+                .unwrap();
         }
         db.finish_session(sid, SessionStatus::Completed).unwrap();
 
@@ -1345,19 +1386,27 @@ mod tests {
             playlist: "00800".to_string(),
             episodes: Some("[1]".to_string()),
             output_path: "/tmp/S01E01.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
         };
         let fid1 = db.record_file(sid, &f1).unwrap();
-        db.update_file_status(fid1, FileStatus::Completed, None).unwrap();
+        db.update_file_status(fid1, FileStatus::Completed, None)
+            .unwrap();
 
         let f2 = RippedFileInfo {
             playlist: "00801".to_string(),
             episodes: Some("[2]".to_string()),
             output_path: "/tmp/S01E02.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
         };
         let fid2 = db.record_file(sid, &f2).unwrap();
-        db.update_file_status(fid2, FileStatus::Failed, Some("AACS error")).unwrap();
+        db.update_file_status(fid2, FileStatus::Failed, Some("AACS error"))
+            .unwrap();
 
         let last = db.last_episode(1396, 1).unwrap();
         assert_eq!(last, Some(1));
@@ -1376,10 +1425,14 @@ mod tests {
             playlist: "00800".to_string(),
             episodes: Some("[3,4]".to_string()),
             output_path: "/tmp/S01E03-E04.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
         };
         let fid = db.record_file(sid, &f).unwrap();
-        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None)
+            .unwrap();
 
         let last = db.last_episode(1396, 1).unwrap();
         assert_eq!(last, Some(4));
@@ -1405,10 +1458,14 @@ mod tests {
             playlist: "00810".to_string(),
             episodes: Some(r#"["SP1","SP2"]"#.to_string()),
             output_path: "/tmp/S01SP01.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
         };
         let fid = db.record_file(sid, &f).unwrap();
-        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None)
+            .unwrap();
 
         let last = db.last_special(1396, 1).unwrap();
         assert_eq!(last, Some(2));
@@ -1425,10 +1482,14 @@ mod tests {
             playlist: "00800".to_string(),
             episodes: Some("[7]".to_string()),
             output_path: "/tmp/S01E07.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
         };
         let fid = db.record_file(sid, &f).unwrap();
-        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None)
+            .unwrap();
 
         let last = db.last_episode_by_label("BREAKING_BAD%", 1).unwrap();
         assert_eq!(last, Some(7));
@@ -1444,10 +1505,14 @@ mod tests {
             playlist: "00800".to_string(),
             episodes: Some("[7]".to_string()),
             output_path: "/tmp/S01E07.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
         };
         let fid = db.record_file(sid, &f).unwrap();
-        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None)
+            .unwrap();
 
         let last = db.last_episode_by_label("BB%", 2).unwrap();
         assert_eq!(last, None);
@@ -1456,7 +1521,9 @@ mod tests {
     #[test]
     fn test_find_session_by_label() {
         let db = HistoryDb::open_memory().unwrap();
-        let sid = db.start_session(&make_session_info("MY_DISC", "Test")).unwrap();
+        let sid = db
+            .start_session(&make_session_info("MY_DISC", "Test"))
+            .unwrap();
         db.finish_session(sid, SessionStatus::Completed).unwrap();
         let results = db.find_session_by_label("MY_DISC").unwrap();
         assert_eq!(results.len(), 1);
@@ -1466,9 +1533,13 @@ mod tests {
     #[test]
     fn test_find_session_by_label_multiple_matches() {
         let db = HistoryDb::open_memory().unwrap();
-        let sid1 = db.start_session(&make_session_info("DISC1", "Test")).unwrap();
+        let sid1 = db
+            .start_session(&make_session_info("DISC1", "Test"))
+            .unwrap();
         db.finish_session(sid1, SessionStatus::Failed).unwrap();
-        let sid2 = db.start_session(&make_session_info("DISC1", "Test")).unwrap();
+        let sid2 = db
+            .start_session(&make_session_info("DISC1", "Test"))
+            .unwrap();
         db.finish_session(sid2, SessionStatus::Completed).unwrap();
         let results = db.find_session_by_label("DISC1").unwrap();
         assert_eq!(results.len(), 2);
@@ -1490,11 +1561,18 @@ mod tests {
     #[test]
     fn test_list_sessions_with_filter() {
         let db = HistoryDb::open_memory().unwrap();
-        let s1 = db.start_session(&make_session_info("D1", "Show A")).unwrap();
+        let s1 = db
+            .start_session(&make_session_info("D1", "Show A"))
+            .unwrap();
         db.finish_session(s1, SessionStatus::Completed).unwrap();
-        let s2 = db.start_session(&make_session_info("D2", "Show B")).unwrap();
+        let s2 = db
+            .start_session(&make_session_info("D2", "Show B"))
+            .unwrap();
         db.finish_session(s2, SessionStatus::Failed).unwrap();
-        let filter = SessionFilter { status: Some(SessionStatus::Completed), ..Default::default() };
+        let filter = SessionFilter {
+            status: Some(SessionStatus::Completed),
+            ..Default::default()
+        };
         let results = db.list_sessions(&filter).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].title, "Show A");
@@ -1503,9 +1581,14 @@ mod tests {
     #[test]
     fn test_list_sessions_title_search() {
         let db = HistoryDb::open_memory().unwrap();
-        db.start_session(&make_session_info("D1", "Breaking Bad")).unwrap();
-        db.start_session(&make_session_info("D2", "Better Call Saul")).unwrap();
-        let filter = SessionFilter { title: Some("breaking".to_string()), ..Default::default() };
+        db.start_session(&make_session_info("D1", "Breaking Bad"))
+            .unwrap();
+        db.start_session(&make_session_info("D2", "Better Call Saul"))
+            .unwrap();
+        let filter = SessionFilter {
+            title: Some("breaking".to_string()),
+            ..Default::default()
+        };
         let results = db.list_sessions(&filter).unwrap();
         assert_eq!(results.len(), 1);
     }
@@ -1513,18 +1596,38 @@ mod tests {
     #[test]
     fn test_get_session_detail() {
         let db = HistoryDb::open_memory().unwrap();
-        let sid = db.start_session(&make_session_info("DISC", "Test")).unwrap();
-        db.record_disc_playlists(sid, &[DiscPlaylistInfo {
-            playlist: "00800".to_string(), duration_ms: Some(2700000),
-            video_streams: Some(1), audio_streams: Some(2), subtitle_streams: Some(1),
-            chapters: Some(12), is_filtered: false,
-        }]).unwrap();
-        let fid = db.record_file(sid, &RippedFileInfo {
-            playlist: "00800".to_string(), episodes: Some("[1]".to_string()),
-            output_path: "/tmp/test.mkv".to_string(), file_size: Some(5_000_000_000),
-            duration_ms: Some(2700000), streams: None, chapters: Some(12),
-        }).unwrap();
-        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        let sid = db
+            .start_session(&make_session_info("DISC", "Test"))
+            .unwrap();
+        db.record_disc_playlists(
+            sid,
+            &[DiscPlaylistInfo {
+                playlist: "00800".to_string(),
+                duration_ms: Some(2700000),
+                video_streams: Some(1),
+                audio_streams: Some(2),
+                subtitle_streams: Some(1),
+                chapters: Some(12),
+                is_filtered: false,
+            }],
+        )
+        .unwrap();
+        let fid = db
+            .record_file(
+                sid,
+                &RippedFileInfo {
+                    playlist: "00800".to_string(),
+                    episodes: Some("[1]".to_string()),
+                    output_path: "/tmp/test.mkv".to_string(),
+                    file_size: Some(5_000_000_000),
+                    duration_ms: Some(2700000),
+                    streams: None,
+                    chapters: Some(12),
+                },
+            )
+            .unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None)
+            .unwrap();
         db.finish_session(sid, SessionStatus::Completed).unwrap();
         let detail = db.get_session(sid).unwrap().unwrap();
         assert_eq!(detail.summary.title, "Test");
@@ -1537,12 +1640,22 @@ mod tests {
     fn test_stats() {
         let db = HistoryDb::open_memory().unwrap();
         let s1 = db.start_session(&make_session_info("D1", "Show")).unwrap();
-        let fid = db.record_file(s1, &RippedFileInfo {
-            playlist: "00800".to_string(), episodes: None,
-            output_path: "/tmp/t.mkv".to_string(), file_size: Some(1_000_000),
-            duration_ms: None, streams: None, chapters: None,
-        }).unwrap();
-        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        let fid = db
+            .record_file(
+                s1,
+                &RippedFileInfo {
+                    playlist: "00800".to_string(),
+                    episodes: None,
+                    output_path: "/tmp/t.mkv".to_string(),
+                    file_size: Some(1_000_000),
+                    duration_ms: None,
+                    streams: None,
+                    chapters: None,
+                },
+            )
+            .unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None)
+            .unwrap();
         db.finish_session(s1, SessionStatus::Completed).unwrap();
         let stats = db.stats().unwrap();
         assert_eq!(stats.total_sessions, 1);
@@ -1554,7 +1667,9 @@ mod tests {
     #[test]
     fn test_delete_session() {
         let db = HistoryDb::open_memory().unwrap();
-        let sid = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let sid = db
+            .start_session(&make_session_info("DISC", "Test"))
+            .unwrap();
         assert!(db.delete_session(sid).unwrap());
         assert!(db.get_session(sid).unwrap().is_none());
     }
@@ -1577,7 +1692,8 @@ mod tests {
             "INSERT INTO sessions (volume_label, title, started_at, status) VALUES ('OLD', 'Old Show', '2025-01-01T00:00:00', 'completed')",
             [],
         ).unwrap();
-        db.start_session(&make_session_info("NEW", "New Show")).unwrap();
+        db.start_session(&make_session_info("NEW", "New Show"))
+            .unwrap();
         let pruned = db.prune("2026-01-01T00:00:00", None).unwrap();
         assert_eq!(pruned, 1);
         let remaining = db.list_sessions(&SessionFilter::default()).unwrap();
@@ -1589,18 +1705,38 @@ mod tests {
     fn test_display_status_partial() {
         let db = HistoryDb::open_memory().unwrap();
         let sid = db.start_session(&make_session_info("D", "T")).unwrap();
-        let f1 = db.record_file(sid, &RippedFileInfo {
-            playlist: "00800".to_string(), episodes: Some("[1]".to_string()),
-            output_path: "/tmp/1.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
-        }).unwrap();
-        db.update_file_status(f1, FileStatus::Completed, None).unwrap();
-        let f2 = db.record_file(sid, &RippedFileInfo {
-            playlist: "00801".to_string(), episodes: Some("[2]".to_string()),
-            output_path: "/tmp/2.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
-        }).unwrap();
-        db.update_file_status(f2, FileStatus::Failed, Some("error")).unwrap();
+        let f1 = db
+            .record_file(
+                sid,
+                &RippedFileInfo {
+                    playlist: "00800".to_string(),
+                    episodes: Some("[1]".to_string()),
+                    output_path: "/tmp/1.mkv".to_string(),
+                    file_size: None,
+                    duration_ms: None,
+                    streams: None,
+                    chapters: None,
+                },
+            )
+            .unwrap();
+        db.update_file_status(f1, FileStatus::Completed, None)
+            .unwrap();
+        let f2 = db
+            .record_file(
+                sid,
+                &RippedFileInfo {
+                    playlist: "00801".to_string(),
+                    episodes: Some("[2]".to_string()),
+                    output_path: "/tmp/2.mkv".to_string(),
+                    file_size: None,
+                    duration_ms: None,
+                    streams: None,
+                    chapters: None,
+                },
+            )
+            .unwrap();
+        db.update_file_status(f2, FileStatus::Failed, Some("error"))
+            .unwrap();
         db.finish_session(sid, SessionStatus::Completed).unwrap();
         let sessions = db.list_sessions(&SessionFilter::default()).unwrap();
         assert_eq!(sessions[0].display_status(), "partial");
@@ -1612,18 +1748,38 @@ mod tests {
     fn test_display_status_excludes_skipped() {
         let db = HistoryDb::open_memory().unwrap();
         let sid = db.start_session(&make_session_info("D", "T")).unwrap();
-        let f1 = db.record_file(sid, &RippedFileInfo {
-            playlist: "00800".to_string(), episodes: Some("[1]".to_string()),
-            output_path: "/tmp/1.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
-        }).unwrap();
-        db.update_file_status(f1, FileStatus::Completed, None).unwrap();
-        let f2 = db.record_file(sid, &RippedFileInfo {
-            playlist: "00801".to_string(), episodes: Some("[2]".to_string()),
-            output_path: "/tmp/2.mkv".to_string(),
-            file_size: None, duration_ms: None, streams: None, chapters: None,
-        }).unwrap();
-        db.update_file_status(f2, FileStatus::Skipped, None).unwrap();
+        let f1 = db
+            .record_file(
+                sid,
+                &RippedFileInfo {
+                    playlist: "00800".to_string(),
+                    episodes: Some("[1]".to_string()),
+                    output_path: "/tmp/1.mkv".to_string(),
+                    file_size: None,
+                    duration_ms: None,
+                    streams: None,
+                    chapters: None,
+                },
+            )
+            .unwrap();
+        db.update_file_status(f1, FileStatus::Completed, None)
+            .unwrap();
+        let f2 = db
+            .record_file(
+                sid,
+                &RippedFileInfo {
+                    playlist: "00801".to_string(),
+                    episodes: Some("[2]".to_string()),
+                    output_path: "/tmp/2.mkv".to_string(),
+                    file_size: None,
+                    duration_ms: None,
+                    streams: None,
+                    chapters: None,
+                },
+            )
+            .unwrap();
+        db.update_file_status(f2, FileStatus::Skipped, None)
+            .unwrap();
         db.finish_session(sid, SessionStatus::Completed).unwrap();
         let sessions = db.list_sessions(&SessionFilter::default()).unwrap();
         assert_eq!(sessions[0].files_completed, 1);

@@ -505,7 +505,10 @@ impl Config {
 
     #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
     pub fn history_enabled(&self) -> bool {
-        self.history.as_ref().and_then(|h| h.enabled).unwrap_or(true)
+        self.history
+            .as_ref()
+            .and_then(|h| h.enabled)
+            .unwrap_or(true)
     }
 
     #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
