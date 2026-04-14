@@ -3,7 +3,8 @@
 #![allow(dead_code)] // Types and methods used in future tasks
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
 use std::path::Path;
 
 const SCHEMA_VERSION: i64 = 1;
@@ -13,7 +14,8 @@ const STALE_SESSION_HOURS: i64 = 4;
 // Enums
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Scanned,
     InProgress,
@@ -45,7 +47,8 @@ impl SessionStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FileStatus {
     InProgress,
     Completed,
@@ -90,7 +93,7 @@ pub struct SessionInfo {
     pub config_snapshot: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DiscPlaylistInfo {
     pub playlist: String,
     pub duration_ms: Option<i64>,
@@ -115,7 +118,7 @@ pub struct RippedFileInfo {
 // Output Types
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionSummary {
     pub id: i64,
     pub title: String,
@@ -140,7 +143,7 @@ impl SessionSummary {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct RippedFileDetail {
     pub id: i64,
     pub playlist: String,
@@ -154,7 +157,7 @@ pub struct RippedFileDetail {
     pub verified: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionDetail {
     pub summary: SessionSummary,
     pub device: Option<String>,
@@ -522,6 +525,463 @@ impl HistoryDb {
             .context("Failed to query last special by label")?;
 
         Ok(result)
+    }
+
+    // ========================================================================
+    // Duplicate Detection
+    // ========================================================================
+
+    pub fn find_session_by_label(&self, label: &str) -> Result<Vec<SessionSummary>> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT
+                s.id, s.title, s.volume_label, s.season, s.disc_number,
+                s.started_at, s.status, s.batch_id,
+                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as files_completed,
+                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status IN ('completed', 'failed')), 0) as files_total,
+                COALESCE((SELECT SUM(rf.file_size) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as total_size
+            FROM sessions s
+            WHERE s.volume_label = ?1
+            ORDER BY s.started_at DESC"#,
+        )
+        .context("Failed to prepare find_session_by_label statement")?;
+
+        let sessions = stmt
+            .query_map(params![label], |row| {
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    volume_label: row.get(2)?,
+                    season: row.get(3)?,
+                    disc_number: row.get(4)?,
+                    started_at: row.get(5)?,
+                    status: SessionStatus::from_str(&row.get::<_, String>(6)?)
+                        .unwrap_or(SessionStatus::Failed),
+                    batch_id: row.get(7)?,
+                    files_completed: row.get(8)?,
+                    files_total: row.get(9)?,
+                    total_size: row.get(10)?,
+                })
+            })
+            .context("Failed to query sessions by label")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect session results")?;
+
+        Ok(sessions)
+    }
+
+    pub fn find_session_by_tmdb(
+        &self,
+        tmdb_id: i64,
+        tmdb_type: &str,
+        season: Option<i32>,
+    ) -> Result<Vec<SessionSummary>> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT
+                s.id, s.title, s.volume_label, s.season, s.disc_number,
+                s.started_at, s.status, s.batch_id,
+                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as files_completed,
+                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status IN ('completed', 'failed')), 0) as files_total,
+                COALESCE((SELECT SUM(rf.file_size) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as total_size
+            FROM sessions s
+            WHERE s.tmdb_id = ?1 AND s.tmdb_type = ?2 AND (s.season = ?3 OR ?3 IS NULL)
+            ORDER BY s.started_at DESC"#,
+        )
+        .context("Failed to prepare find_session_by_tmdb statement")?;
+
+        let sessions = stmt
+            .query_map(params![tmdb_id, tmdb_type, season], |row| {
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    volume_label: row.get(2)?,
+                    season: row.get(3)?,
+                    disc_number: row.get(4)?,
+                    started_at: row.get(5)?,
+                    status: SessionStatus::from_str(&row.get::<_, String>(6)?)
+                        .unwrap_or(SessionStatus::Failed),
+                    batch_id: row.get(7)?,
+                    files_completed: row.get(8)?,
+                    files_total: row.get(9)?,
+                    total_size: row.get(10)?,
+                })
+            })
+            .context("Failed to query sessions by tmdb")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect session results")?;
+
+        Ok(sessions)
+    }
+
+    // ========================================================================
+    // Listing
+    // ========================================================================
+
+    pub fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<SessionSummary>> {
+        let mut where_clauses = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(ref status) = filter.status {
+            where_clauses.push("s.status = ?");
+            params_vec.push(Box::new(status.as_str().to_string()));
+        }
+
+        if let Some(ref title) = filter.title {
+            where_clauses.push("s.title LIKE '%' || ? || '%'");
+            params_vec.push(Box::new(title.clone()));
+        }
+
+        if let Some(ref since) = filter.since {
+            where_clauses.push("s.started_at >= ?");
+            params_vec.push(Box::new(since.clone()));
+        }
+
+        if let Some(season) = filter.season {
+            where_clauses.push("s.season = ?");
+            params_vec.push(Box::new(season));
+        }
+
+        if let Some(ref batch_id) = filter.batch_id {
+            where_clauses.push("s.batch_id = ?");
+            params_vec.push(Box::new(batch_id.clone()));
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let limit = filter.limit.unwrap_or(100);
+        let sql = format!(
+            r#"SELECT
+                s.id, s.title, s.volume_label, s.season, s.disc_number,
+                s.started_at, s.status, s.batch_id,
+                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as files_completed,
+                COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status IN ('completed', 'failed')), 0) as files_total,
+                COALESCE((SELECT SUM(rf.file_size) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as total_size
+            FROM sessions s
+            {}
+            ORDER BY s.started_at DESC
+            LIMIT ?"#,
+            where_sql
+        );
+
+        params_vec.push(Box::new(limit));
+
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .context("Failed to prepare list_sessions statement")?;
+
+        let sessions = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    volume_label: row.get(2)?,
+                    season: row.get(3)?,
+                    disc_number: row.get(4)?,
+                    started_at: row.get(5)?,
+                    status: SessionStatus::from_str(&row.get::<_, String>(6)?)
+                        .unwrap_or(SessionStatus::Failed),
+                    batch_id: row.get(7)?,
+                    files_completed: row.get(8)?,
+                    files_total: row.get(9)?,
+                    total_size: row.get(10)?,
+                })
+            })
+            .context("Failed to query sessions")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect session results")?;
+
+        Ok(sessions)
+    }
+
+    pub fn get_session(&self, id: i64) -> Result<Option<SessionDetail>> {
+        let summary: Option<SessionSummary> = {
+            let mut stmt = self.conn.prepare(
+                r#"SELECT
+                    s.id, s.title, s.volume_label, s.season, s.disc_number,
+                    s.started_at, s.status, s.batch_id,
+                    COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as files_completed,
+                    COALESCE((SELECT COUNT(*) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status IN ('completed', 'failed')), 0) as files_total,
+                    COALESCE((SELECT SUM(rf.file_size) FROM ripped_files rf WHERE rf.session_id = s.id AND rf.status = 'completed'), 0) as total_size
+                FROM sessions s
+                WHERE s.id = ?1"#,
+            )
+            .context("Failed to prepare get_session statement")?;
+
+            stmt.query_row(params![id], |row| {
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    volume_label: row.get(2)?,
+                    season: row.get(3)?,
+                    disc_number: row.get(4)?,
+                    started_at: row.get(5)?,
+                    status: SessionStatus::from_str(&row.get::<_, String>(6)?)
+                        .unwrap_or(SessionStatus::Failed),
+                    batch_id: row.get(7)?,
+                    files_completed: row.get(8)?,
+                    files_total: row.get(9)?,
+                    total_size: row.get(10)?,
+                })
+            })
+            .optional()
+            .context("Failed to query session")?
+        };
+
+        let summary = match summary {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        #[allow(clippy::type_complexity)]
+        let (device, tmdb_id, tmdb_type, finished_at, config_snapshot): (
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = self
+            .conn
+            .query_row(
+                "SELECT device, tmdb_id, tmdb_type, finished_at, config_snapshot FROM sessions WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .context("Failed to query session details")?;
+
+        let mut playlist_stmt = self
+            .conn
+            .prepare(
+                "SELECT playlist, duration_ms, video_streams, audio_streams, subtitle_streams, chapters, is_filtered FROM disc_playlists WHERE session_id = ?1",
+            )
+            .context("Failed to prepare playlist query")?;
+
+        let playlists = playlist_stmt
+            .query_map(params![id], |row| {
+                Ok(DiscPlaylistInfo {
+                    playlist: row.get(0)?,
+                    duration_ms: row.get(1)?,
+                    video_streams: row.get(2)?,
+                    audio_streams: row.get(3)?,
+                    subtitle_streams: row.get(4)?,
+                    chapters: row.get(5)?,
+                    is_filtered: row.get(6)?,
+                })
+            })
+            .context("Failed to query playlists")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect playlists")?;
+
+        let mut file_stmt = self
+            .conn
+            .prepare(
+                "SELECT id, playlist, episodes, output_path, file_size, duration_ms, chapters, status, error, verified FROM ripped_files WHERE session_id = ?1",
+            )
+            .context("Failed to prepare file query")?;
+
+        let files = file_stmt
+            .query_map(params![id], |row| {
+                Ok(RippedFileDetail {
+                    id: row.get(0)?,
+                    playlist: row.get(1)?,
+                    episodes: row.get(2)?,
+                    output_path: row.get(3)?,
+                    file_size: row.get(4)?,
+                    duration_ms: row.get(5)?,
+                    chapters: row.get(6)?,
+                    status: FileStatus::from_str(&row.get::<_, String>(7)?)
+                        .unwrap_or(FileStatus::Failed),
+                    error: row.get(8)?,
+                    verified: row.get(9)?,
+                })
+            })
+            .context("Failed to query files")?
+            .collect::<Result<Vec<_>, _>>()
+            .context("Failed to collect files")?;
+
+        Ok(Some(SessionDetail {
+            summary,
+            device,
+            tmdb_id,
+            tmdb_type,
+            finished_at,
+            config_snapshot,
+            playlists,
+            files,
+        }))
+    }
+
+    pub fn stats(&self) -> Result<HistoryStats> {
+        #[allow(clippy::type_complexity)]
+        let (
+            total_sessions,
+            completed_sessions,
+            failed_sessions,
+            scanned_sessions,
+            first_session,
+            last_session,
+        ): (i64, Option<i64>, Option<i64>, Option<i64>, Option<String>, Option<String>) = self
+            .conn
+            .query_row(
+                r#"SELECT
+                    COUNT(*),
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status = 'scanned' THEN 1 ELSE 0 END),
+                    MIN(started_at),
+                    MAX(started_at)
+                FROM sessions"#,
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .context("Failed to query session stats")?;
+
+        let (total_files, failed_files, skipped_files, total_size): (i64, Option<i64>, Option<i64>, i64) = self
+            .conn
+            .query_row(
+                r#"SELECT
+                    COUNT(*),
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END),
+                    COALESCE(SUM(CASE WHEN status = 'completed' THEN file_size ELSE 0 END), 0)
+                FROM ripped_files"#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .context("Failed to query file stats")?;
+
+        let batch_count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(DISTINCT batch_id) FROM sessions WHERE batch_id IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .context("Failed to query batch count")?;
+
+        let partial_sessions: i64 = self
+            .conn
+            .query_row(
+                r#"SELECT COUNT(DISTINCT s.id)
+                FROM sessions s
+                WHERE s.status = 'completed'
+                AND EXISTS (
+                    SELECT 1 FROM ripped_files rf
+                    WHERE rf.session_id = s.id AND rf.status = 'failed'
+                )
+                AND EXISTS (
+                    SELECT 1 FROM ripped_files rf
+                    WHERE rf.session_id = s.id AND rf.status = 'completed'
+                )"#,
+                [],
+                |row| row.get(0),
+            )
+            .context("Failed to query partial sessions")?;
+
+        Ok(HistoryStats {
+            total_sessions,
+            completed_sessions: completed_sessions.unwrap_or(0),
+            partial_sessions,
+            failed_sessions: failed_sessions.unwrap_or(0),
+            scanned_sessions: scanned_sessions.unwrap_or(0),
+            total_files,
+            failed_files: failed_files.unwrap_or(0),
+            skipped_files: skipped_files.unwrap_or(0),
+            total_size,
+            first_session,
+            last_session,
+            batch_count,
+        })
+    }
+
+    // ========================================================================
+    // Management
+    // ========================================================================
+
+    pub fn delete_session(&self, id: i64) -> Result<bool> {
+        let count = self
+            .conn
+            .execute("DELETE FROM sessions WHERE id = ?1", params![id])
+            .context("Failed to delete session")?;
+
+        Ok(count > 0)
+    }
+
+    pub fn clear_all(&self) -> Result<u64> {
+        let count = self
+            .conn
+            .execute("DELETE FROM sessions", [])
+            .context("Failed to clear all sessions")?;
+
+        Ok(count as u64)
+    }
+
+    pub fn prune(&self, cutoff: &str, statuses: Option<&[SessionStatus]>) -> Result<u64> {
+        let count = if let Some(statuses) = statuses {
+            let placeholders = statuses.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "DELETE FROM sessions WHERE started_at < ?1 AND status IN ({})",
+                placeholders
+            );
+
+            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(cutoff.to_string())];
+            for status in statuses {
+                params_vec.push(Box::new(status.as_str().to_string()));
+            }
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params_vec.iter().map(|p| p.as_ref()).collect();
+
+            self.conn
+                .execute(&sql, params_refs.as_slice())
+                .context("Failed to prune sessions")?
+        } else {
+            self.conn
+                .execute(
+                    "DELETE FROM sessions WHERE started_at < ?1",
+                    params![cutoff],
+                )
+                .context("Failed to prune sessions")?
+        };
+
+        Ok(count as u64)
+    }
+
+    // ========================================================================
+    // Export
+    // ========================================================================
+
+    pub fn export_json(&self, writer: &mut dyn std::io::Write) -> Result<()> {
+        let sessions = self.list_sessions(&SessionFilter {
+            limit: None,
+            ..Default::default()
+        })?;
+
+        let mut details = Vec::new();
+        for summary in sessions {
+            if let Some(detail) = self.get_session(summary.id)? {
+                details.push(detail);
+            }
+        }
+
+        serde_json::to_writer_pretty(writer, &details)
+            .context("Failed to serialize sessions to JSON")?;
+
+        Ok(())
     }
 }
 
@@ -970,5 +1430,183 @@ mod tests {
 
         let last = db.last_episode_by_label("BB%", 2).unwrap();
         assert_eq!(last, None);
+    }
+
+    #[test]
+    fn test_find_session_by_label() {
+        let db = HistoryDb::open_memory().unwrap();
+        let sid = db.start_session(&make_session_info("MY_DISC", "Test")).unwrap();
+        db.finish_session(sid, SessionStatus::Completed).unwrap();
+        let results = db.find_session_by_label("MY_DISC").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].volume_label, "MY_DISC");
+    }
+
+    #[test]
+    fn test_find_session_by_label_multiple_matches() {
+        let db = HistoryDb::open_memory().unwrap();
+        let sid1 = db.start_session(&make_session_info("DISC1", "Test")).unwrap();
+        db.finish_session(sid1, SessionStatus::Failed).unwrap();
+        let sid2 = db.start_session(&make_session_info("DISC1", "Test")).unwrap();
+        db.finish_session(sid2, SessionStatus::Completed).unwrap();
+        let results = db.find_session_by_label("DISC1").unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_find_session_by_tmdb() {
+        let db = HistoryDb::open_memory().unwrap();
+        let mut info = make_session_info("DISC", "Breaking Bad");
+        info.tmdb_id = Some(1396);
+        info.tmdb_type = Some("tv".to_string());
+        info.season = Some(1);
+        let sid = db.start_session(&info).unwrap();
+        db.finish_session(sid, SessionStatus::Completed).unwrap();
+        let results = db.find_session_by_tmdb(1396, "tv", Some(1)).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_list_sessions_with_filter() {
+        let db = HistoryDb::open_memory().unwrap();
+        let s1 = db.start_session(&make_session_info("D1", "Show A")).unwrap();
+        db.finish_session(s1, SessionStatus::Completed).unwrap();
+        let s2 = db.start_session(&make_session_info("D2", "Show B")).unwrap();
+        db.finish_session(s2, SessionStatus::Failed).unwrap();
+        let filter = SessionFilter { status: Some(SessionStatus::Completed), ..Default::default() };
+        let results = db.list_sessions(&filter).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Show A");
+    }
+
+    #[test]
+    fn test_list_sessions_title_search() {
+        let db = HistoryDb::open_memory().unwrap();
+        db.start_session(&make_session_info("D1", "Breaking Bad")).unwrap();
+        db.start_session(&make_session_info("D2", "Better Call Saul")).unwrap();
+        let filter = SessionFilter { title: Some("breaking".to_string()), ..Default::default() };
+        let results = db.list_sessions(&filter).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_get_session_detail() {
+        let db = HistoryDb::open_memory().unwrap();
+        let sid = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        db.record_disc_playlists(sid, &[DiscPlaylistInfo {
+            playlist: "00800".to_string(), duration_ms: Some(2700000),
+            video_streams: Some(1), audio_streams: Some(2), subtitle_streams: Some(1),
+            chapters: Some(12), is_filtered: false,
+        }]).unwrap();
+        let fid = db.record_file(sid, &RippedFileInfo {
+            playlist: "00800".to_string(), episodes: Some("[1]".to_string()),
+            output_path: "/tmp/test.mkv".to_string(), file_size: Some(5_000_000_000),
+            duration_ms: Some(2700000), streams: None, chapters: Some(12),
+        }).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        db.finish_session(sid, SessionStatus::Completed).unwrap();
+        let detail = db.get_session(sid).unwrap().unwrap();
+        assert_eq!(detail.summary.title, "Test");
+        assert_eq!(detail.playlists.len(), 1);
+        assert_eq!(detail.files.len(), 1);
+        assert_eq!(detail.files[0].status, FileStatus::Completed);
+    }
+
+    #[test]
+    fn test_stats() {
+        let db = HistoryDb::open_memory().unwrap();
+        let s1 = db.start_session(&make_session_info("D1", "Show")).unwrap();
+        let fid = db.record_file(s1, &RippedFileInfo {
+            playlist: "00800".to_string(), episodes: None,
+            output_path: "/tmp/t.mkv".to_string(), file_size: Some(1_000_000),
+            duration_ms: None, streams: None, chapters: None,
+        }).unwrap();
+        db.update_file_status(fid, FileStatus::Completed, None).unwrap();
+        db.finish_session(s1, SessionStatus::Completed).unwrap();
+        let stats = db.stats().unwrap();
+        assert_eq!(stats.total_sessions, 1);
+        assert_eq!(stats.completed_sessions, 1);
+        assert_eq!(stats.total_files, 1);
+        assert_eq!(stats.total_size, 1_000_000);
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let db = HistoryDb::open_memory().unwrap();
+        let sid = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        assert!(db.delete_session(sid).unwrap());
+        assert!(db.get_session(sid).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_clear_all() {
+        let db = HistoryDb::open_memory().unwrap();
+        db.start_session(&make_session_info("D1", "A")).unwrap();
+        db.start_session(&make_session_info("D2", "B")).unwrap();
+        let deleted = db.clear_all().unwrap();
+        assert_eq!(deleted, 2);
+        let stats = db.stats().unwrap();
+        assert_eq!(stats.total_sessions, 0);
+    }
+
+    #[test]
+    fn test_prune_by_age() {
+        let db = HistoryDb::open_memory().unwrap();
+        db.conn.execute(
+            "INSERT INTO sessions (volume_label, title, started_at, status) VALUES ('OLD', 'Old Show', '2025-01-01T00:00:00', 'completed')",
+            [],
+        ).unwrap();
+        db.start_session(&make_session_info("NEW", "New Show")).unwrap();
+        let pruned = db.prune("2026-01-01T00:00:00", None).unwrap();
+        assert_eq!(pruned, 1);
+        let remaining = db.list_sessions(&SessionFilter::default()).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].title, "New Show");
+    }
+
+    #[test]
+    fn test_display_status_partial() {
+        let db = HistoryDb::open_memory().unwrap();
+        let sid = db.start_session(&make_session_info("D", "T")).unwrap();
+        let f1 = db.record_file(sid, &RippedFileInfo {
+            playlist: "00800".to_string(), episodes: Some("[1]".to_string()),
+            output_path: "/tmp/1.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        }).unwrap();
+        db.update_file_status(f1, FileStatus::Completed, None).unwrap();
+        let f2 = db.record_file(sid, &RippedFileInfo {
+            playlist: "00801".to_string(), episodes: Some("[2]".to_string()),
+            output_path: "/tmp/2.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        }).unwrap();
+        db.update_file_status(f2, FileStatus::Failed, Some("error")).unwrap();
+        db.finish_session(sid, SessionStatus::Completed).unwrap();
+        let sessions = db.list_sessions(&SessionFilter::default()).unwrap();
+        assert_eq!(sessions[0].display_status(), "partial");
+        assert_eq!(sessions[0].files_completed, 1);
+        assert_eq!(sessions[0].files_total, 2);
+    }
+
+    #[test]
+    fn test_display_status_excludes_skipped() {
+        let db = HistoryDb::open_memory().unwrap();
+        let sid = db.start_session(&make_session_info("D", "T")).unwrap();
+        let f1 = db.record_file(sid, &RippedFileInfo {
+            playlist: "00800".to_string(), episodes: Some("[1]".to_string()),
+            output_path: "/tmp/1.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        }).unwrap();
+        db.update_file_status(f1, FileStatus::Completed, None).unwrap();
+        let f2 = db.record_file(sid, &RippedFileInfo {
+            playlist: "00801".to_string(), episodes: Some("[2]".to_string()),
+            output_path: "/tmp/2.mkv".to_string(),
+            file_size: None, duration_ms: None, streams: None, chapters: None,
+        }).unwrap();
+        db.update_file_status(f2, FileStatus::Skipped, None).unwrap();
+        db.finish_session(sid, SessionStatus::Completed).unwrap();
+        let sessions = db.list_sessions(&SessionFilter::default()).unwrap();
+        assert_eq!(sessions[0].files_completed, 1);
+        assert_eq!(sessions[0].files_total, 1); // skipped excluded
+        assert_eq!(sessions[0].display_status(), "completed");
     }
 }
