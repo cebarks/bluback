@@ -413,6 +413,7 @@ pub struct RenderSnapshot {
 pub struct ScanningView {
     pub label: String,
     pub scan_log: Vec<String>,
+    pub history_duplicate_hint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -430,6 +431,7 @@ pub struct TmdbView {
     pub show_name: String,
     pub label: String,
     pub episodes_pl_count: usize,
+    pub history_duplicate_hint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -441,6 +443,7 @@ pub struct SeasonView {
     pub episodes: Vec<Episode>,
     pub list_cursor: usize,
     pub label: String,
+    pub history_episode_hint: Option<(u32, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -466,6 +469,7 @@ pub struct PlaylistView {
     pub track_selections: HashMap<String, Vec<usize>>,
     pub expanded_playlist: Option<usize>,
     pub detection_results: Vec<crate::detection::DetectionResult>,
+    pub history_ripped_playlists: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -505,6 +509,7 @@ pub struct DoneView {
     pub status_message: String,
     pub filenames: Vec<String>,
     pub batch_disc_count: u32,
+    pub history_session_saved: bool,
 }
 
 pub enum Overlay {

@@ -445,6 +445,13 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
         }
     }
 
+    if view.history_session_saved {
+        lines.push(Line::from(""));
+        lines.push(
+            Line::from("  Session saved to history.").style(Style::default().fg(Color::DarkGray)),
+        );
+    }
+
     let body = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title("Results"))
         .wrap(Wrap { trim: false });
@@ -655,6 +662,8 @@ fn check_all_done_session(
             };
             if let Err(e) = db.finish_session(sid, status) {
                 log::warn!("history: failed to finish session: {}", e);
+            } else {
+                session.history_session_saved = true;
             }
             // Clear session ID so rescan starts a fresh session
             session.history_session_id = None;
@@ -1278,6 +1287,7 @@ mod tests {
             status_message: String::new(),
             filenames: vec![],
             batch_disc_count: 0,
+            history_session_saved: false,
         }
     }
 
@@ -1678,6 +1688,7 @@ mod tests {
             status_message: "AACS: decryption failed for this disc".into(),
             filenames: vec![],
             batch_disc_count: 0,
+            history_session_saved: false,
         };
         let text = render_done(&view);
         assert!(text.contains("AACS"), "should show error in body: {}", text);
@@ -1698,6 +1709,7 @@ mod tests {
             status_message: String::new(),
             filenames: vec!["S01E01_Pilot.mkv".into(), "S01E02_Second.mkv".into()],
             batch_disc_count: 0,
+            history_session_saved: false,
         };
         let text = render_done(&view);
         assert!(
