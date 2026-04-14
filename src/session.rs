@@ -39,7 +39,7 @@ pub struct DriveSession {
     pub movie_mode_arg: bool,
     pub season_arg: Option<u32>,
     pub start_episode_arg: Option<u32>,
-    pub min_duration_arg: Option<u32>,
+    pub min_probe_duration_arg: Option<u32>,
     pub no_max_speed: bool,
     pub output_dir: PathBuf,
     pub cli_eject: Option<bool>,
@@ -112,7 +112,7 @@ impl DriveSession {
             movie_mode_arg: false,
             season_arg: None,
             start_episode_arg: None,
-            min_duration_arg: None,
+            min_probe_duration_arg: None,
             no_max_speed: false,
             output_dir: PathBuf::from("."),
             cli_eject: None,
@@ -309,6 +309,42 @@ impl DriveSession {
         self.history_session_saved = false;
     }
 
+    /// Spawn a background thread to probe a single unprobed playlist on demand.
+    /// No-op if the playlist is already probed or if a probe is already in flight.
+    pub fn start_on_demand_probe(&mut self, playlist_num: &str) {
+        if self.wizard.stream_infos.contains_key(playlist_num) || self.probe_rx.is_some() {
+            return;
+        }
+        let device = self.device.to_string_lossy().to_string();
+        let num = playlist_num.to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name(format!("probe-{}", num))
+            .spawn(
+                move || match crate::media::probe::probe_playlist(&device, &num) {
+                    Ok((media, streams)) => {
+                        let mut results = std::collections::HashMap::new();
+                        results.insert(num, (media, streams));
+                        let _ = tx.send(BackgroundResult::BulkProbe(results));
+                    }
+                    Err(e) => {
+                        log::warn!("On-demand probe failed for {}: {}", num, e);
+                    }
+                },
+            )
+            .expect("failed to spawn probe thread");
+        self.probe_rx = Some(rx);
+    }
+
+    /// Returns playlists that have been fully probed (have stream info).
+    pub fn probed_playlists(&self) -> Vec<&Playlist> {
+        self.disc
+            .playlists
+            .iter()
+            .filter(|pl| self.wizard.stream_infos.contains_key(&pl.num))
+            .collect()
+    }
+
     /// Returns the next unassigned episode number (max assigned + 1, or 1 if none).
     pub fn next_unassigned_episode(&self) -> u32 {
         let max = self
@@ -349,7 +385,7 @@ impl DriveSession {
             list_cursor: self.wizard.list_cursor,
             show_name: self.tmdb.show_name.clone(),
             label: self.disc.label.clone(),
-            episodes_pl_count: self.disc.episodes_pl.len(),
+            probed_count: self.probed_playlists().len(),
             history_duplicate_hint: self.history_duplicate_hint.clone(),
         })
     }
@@ -379,7 +415,7 @@ impl DriveSession {
             show_name: self.tmdb.show_name.clone(),
             season_num: self.wizard.season_num,
             playlists: self.disc.playlists.clone(),
-            episodes_pl: self.disc.episodes_pl.clone(),
+            show_specials: self.wizard.show_specials,
             playlist_selected: self.wizard.playlist_selected.clone(),
             episode_assignments: self.wizard.episode_assignments.clone(),
             specials: self.wizard.specials.clone(),
@@ -396,6 +432,8 @@ impl DriveSession {
             expanded_playlist: self.wizard.expanded_playlist,
             detection_results: self.wizard.detection_results.clone(),
             history_ripped_playlists: self.history_ripped_playlists.clone(),
+            start_episode_popup: self.wizard.start_episode_popup,
+            min_probe_duration: self.config.min_probe_duration(self.min_probe_duration_arg),
         })
     }
 
@@ -618,44 +656,12 @@ impl DriveSession {
         }
     }
 
-    /// Spawn a background thread to probe stream info for playlists not already cached.
-    /// This handles short/filtered playlists that weren't probed during the scan.
-    fn start_unfiltered_probe(&mut self, probe_cache: &ProbeCache) {
-        let device = self.device.to_string_lossy().to_string();
-        let uncached_nums: Vec<String> = self
-            .disc
-            .playlists
-            .iter()
-            .filter(|pl| !probe_cache.contains_key(&pl.num))
-            .map(|pl| pl.num.clone())
-            .collect();
-        if uncached_nums.is_empty() {
-            return;
-        }
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
-            .name(format!("probe-{}", self.device.display()))
-            .spawn(move || {
-                let mut results = std::collections::HashMap::new();
-                for num in &uncached_nums {
-                    if let Ok((media, streams)) = crate::media::probe::probe_playlist(&device, num)
-                    {
-                        results.insert(num.clone(), (media, streams));
-                    }
-                }
-                let _ = tx.send(BackgroundResult::BulkProbe(results));
-            })
-            .expect("failed to spawn probe thread");
-
-        self.probe_rx = Some(rx);
-    }
-
     /// Spawn a background thread to scan this session's device for a disc.
     pub fn start_disc_scan(&mut self) {
         let device = self.device.clone();
         let max_speed = self.config.should_max_speed(self.no_max_speed);
-        let min_duration = self.config.min_duration(self.min_duration_arg);
+        let min_probe_duration = self.config.min_probe_duration(self.min_probe_duration_arg);
+        let auto_detect = self.auto_detect;
         let (tx, rx) = std::sync::mpsc::channel();
 
         std::thread::Builder::new()
@@ -683,22 +689,24 @@ impl DriveSession {
                 let tx_progress = tx.clone();
                 let tx_probe = tx.clone();
                 let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>, ProbeCache)> {
-                    let (playlists, probe_cache) = crate::media::scan_playlists_with_progress(
-                        &dev_str,
-                        min_duration,
-                        Some(&move |elapsed, timeout| {
-                            let _ =
-                                tx_progress.send(BackgroundResult::ScanProgress(elapsed, timeout));
-                        }),
-                        Some(&move |current, total, num| {
-                            let _ = tx_probe.send(BackgroundResult::ProbeProgress(
-                                current,
-                                total,
-                                num.to_string(),
-                            ));
-                        }),
-                    )
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let (playlists, probe_cache, _skip_set) =
+                        crate::media::scan_playlists_with_progress(
+                            &dev_str,
+                            min_probe_duration,
+                            auto_detect,
+                            Some(&move |elapsed, timeout| {
+                                let _ = tx_progress
+                                    .send(BackgroundResult::ScanProgress(elapsed, timeout));
+                            }),
+                            Some(&move |current, total, num| {
+                                let _ = tx_probe.send(BackgroundResult::ProbeProgress(
+                                    current,
+                                    total,
+                                    num.to_string(),
+                                ));
+                            }),
+                        )
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
                     Ok((dev_str, label, playlists, probe_cache))
                 })();
                 let _ = tx.send(BackgroundResult::DiscScan(result));
@@ -808,33 +816,7 @@ impl DriveSession {
                 self.device = PathBuf::from(device);
                 self.disc.label_info = crate::disc::parse_volume_label(&label);
                 self.disc.label = label;
-                let min_dur = self.config.min_duration(self.min_duration_arg);
-                self.disc.episodes_pl = crate::disc::filter_episodes(&playlists, min_dur)
-                    .into_iter()
-                    .cloned()
-                    .collect();
                 self.disc.playlists = playlists;
-
-                self.tmdb.movie_mode = self.movie_mode_arg
-                    || (self.disc.episodes_pl.len() == 1 && self.season_arg.is_none());
-
-                if let Some(ref info) = self.disc.label_info {
-                    self.tmdb.search_query = info.show.clone();
-                    if !self.tmdb.movie_mode {
-                        self.wizard.season_num = Some(info.season);
-                    }
-                }
-                if let Some(s) = self.season_arg {
-                    self.wizard.season_num = Some(s);
-                }
-                self.wizard.start_episode = self.start_episode_arg;
-                self.wizard.show_filtered = self.config.show_filtered();
-                self.wizard.playlist_selected = self
-                    .disc
-                    .playlists
-                    .iter()
-                    .map(|pl| self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num))
-                    .collect();
 
                 // Extract chapter counts and title order from mounted disc
                 let device_str = self.device.to_string_lossy().to_string();
@@ -871,14 +853,80 @@ impl DriveSession {
 
                 // Reorder playlists by title index (or MPLS number fallback)
                 crate::index::reorder_playlists(&mut self.disc.playlists, title_order.as_deref());
-                crate::index::reorder_playlists(&mut self.disc.episodes_pl, title_order.as_deref());
 
-                // Re-derive playlist_selected after reorder
+                // Populate wizard caches from the scan's probe results (must happen
+                // before detection, movie_mode, and playlist_selected logic)
+                for (num, (media, streams)) in &probe_cache {
+                    self.wizard.media_infos.insert(num.clone(), media.clone());
+                    self.wizard
+                        .stream_infos
+                        .insert(num.clone(), streams.clone());
+                }
+
+                // Run detection on probed playlists only (before movie_mode and
+                // playlist_selected so they can use detection results)
+                if self.auto_detect {
+                    let probed: Vec<crate::types::Playlist> =
+                        self.probed_playlists().into_iter().cloned().collect();
+                    self.wizard.detection_results = crate::detection::run_detection_with_chapters(
+                        &probed,
+                        None, // no TMDb episodes yet at scan time
+                        None, // no TMDb specials yet
+                        &self.disc.chapter_counts,
+                    );
+                }
+
+                // Movie mode detection — detection-aware
+                let auto_detect_on = self.auto_detect;
+                let episode_count = if auto_detect_on {
+                    self.wizard
+                        .detection_results
+                        .iter()
+                        .filter(|d| {
+                            matches!(
+                                d.suggested_type,
+                                crate::detection::SuggestedType::Episode
+                                    | crate::detection::SuggestedType::MultiEpisode
+                            )
+                        })
+                        .count()
+                } else {
+                    self.probed_playlists().len()
+                };
+                self.tmdb.movie_mode =
+                    self.movie_mode_arg || (episode_count == 1 && self.season_arg.is_none());
+
+                if let Some(ref info) = self.disc.label_info {
+                    self.tmdb.search_query = info.show.clone();
+                    if !self.tmdb.movie_mode {
+                        self.wizard.season_num = Some(info.season);
+                    }
+                }
+                if let Some(s) = self.season_arg {
+                    self.wizard.season_num = Some(s);
+                }
+                self.wizard.start_episode = self.start_episode_arg;
+                self.wizard.show_filtered = self.config.show_filtered();
+
+                // Detection-aware playlist_selected initialization
                 self.wizard.playlist_selected = self
                     .disc
                     .playlists
                     .iter()
-                    .map(|pl| self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num))
+                    .map(|pl| {
+                        if auto_detect_on {
+                            self.wizard.detection_results.iter().any(|d| {
+                                d.playlist_num == pl.num
+                                    && matches!(
+                                        d.suggested_type,
+                                        crate::detection::SuggestedType::Episode
+                                            | crate::detection::SuggestedType::MultiEpisode
+                                    )
+                            })
+                        } else {
+                            self.wizard.stream_infos.contains_key(&pl.num)
+                        }
+                    })
                     .collect();
 
                 // Count first disc in batch mode
@@ -888,20 +936,14 @@ impl DriveSession {
 
                 self.status_message.clear();
 
-                if self.disc.episodes_pl.is_empty() {
-                    self.status_message = "No episode-length playlists found.".into();
+                if self.probed_playlists().is_empty() {
+                    let min_dur = self.config.min_probe_duration(self.min_probe_duration_arg);
+                    self.status_message = format!(
+                        "No playlists found above probe threshold ({}s). Try lowering --min-probe-duration.",
+                        min_dur
+                    );
                     self.screen = Screen::Done;
                 } else {
-                    // Populate wizard caches from the scan's probe results
-                    for (num, (media, streams)) in &probe_cache {
-                        self.wizard.media_infos.insert(num.clone(), media.clone());
-                        self.wizard
-                            .stream_infos
-                            .insert(num.clone(), streams.clone());
-                    }
-                    // Probe any playlists not already in the cache (filtered/short ones)
-                    self.start_unfiltered_probe(&probe_cache);
-
                     self.screen = Screen::TmdbSearch;
                     self.wizard.input_focus = InputFocus::TextInput;
                     self.wizard.input_buffer = if self.tmdb_api_key.is_none() {
@@ -1088,10 +1130,17 @@ impl DriveSession {
         self.wizard.season_num = Some(context.season_num);
         self.wizard.start_episode = Some(context.next_episode);
         if !self.tmdb.movie_mode {
-            // Assign episodes before detection so playlists have initial assignments.
+            // Assign episodes using non-special probed playlists before detection
+            // so playlists have initial assignments.
             // run_detection_if_enabled may mark specials and call reassign_regular_episodes.
+            let probed_non_special: Vec<Playlist> = self
+                .probed_playlists()
+                .into_iter()
+                .filter(|pl| !self.wizard.specials.contains(&pl.num))
+                .cloned()
+                .collect();
             self.wizard.episode_assignments = crate::util::assign_episodes(
-                &self.disc.episodes_pl,
+                &probed_non_special,
                 &self.tmdb.episodes,
                 context.next_episode,
             );
@@ -1238,7 +1287,7 @@ impl DriveSession {
                 self.history_session_id = Some(id);
 
                 // Record disc playlists
-                let min_dur = self.config.min_duration(self.min_duration_arg);
+                let min_probe_dur = self.config.min_probe_duration(self.min_probe_duration_arg);
                 let playlist_infos: Vec<crate::history::DiscPlaylistInfo> = self
                     .disc
                     .playlists
@@ -1250,7 +1299,7 @@ impl DriveSession {
                         audio_streams: Some(pl.audio_streams as i32),
                         subtitle_streams: Some(pl.subtitle_streams as i32),
                         chapters: self.disc.chapter_counts.get(&pl.num).map(|&c| c as i32),
-                        is_filtered: pl.seconds < min_dur,
+                        is_filtered: pl.seconds < min_probe_dur,
                     })
                     .collect();
                 if let Err(e) = db.record_disc_playlists(id, &playlist_infos) {
@@ -1345,21 +1394,24 @@ impl DriveSession {
         )
     }
 
-    /// Get visible playlists (respecting show_filtered setting).
-    /// Detected playlists with medium+ confidence non-Episode results are always shown.
+    /// Get visible playlists (respecting show_filtered and show_specials settings).
     pub fn visible_playlists(&self) -> Vec<(usize, &Playlist)> {
+        let min_probe_dur = self.config.min_probe_duration(self.min_probe_duration_arg);
         self.disc
             .playlists
             .iter()
             .enumerate()
             .filter(|(_, pl)| {
-                self.wizard.show_filtered
-                    || self.disc.episodes_pl.iter().any(|ep| ep.num == pl.num)
+                let above_threshold = pl.seconds >= min_probe_dur;
+                let is_special = self.wizard.specials.contains(&pl.num)
                     || self.wizard.detection_results.iter().any(|d| {
                         d.playlist_num == pl.num
-                            && d.suggested_type != crate::detection::SuggestedType::Episode
-                            && d.confidence >= crate::detection::Confidence::Medium
-                    })
+                            && d.suggested_type == crate::detection::SuggestedType::Special
+                            && d.confidence >= crate::detection::Confidence::High
+                    });
+                let visible_by_threshold = above_threshold || self.wizard.show_filtered;
+                let visible_by_special = !is_special || self.wizard.show_specials;
+                visible_by_threshold && visible_by_special
             })
             .collect()
     }

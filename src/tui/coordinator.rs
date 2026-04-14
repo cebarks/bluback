@@ -94,7 +94,7 @@ impl Coordinator {
         session.movie_mode_arg = self.args.movie;
         session.season_arg = self.args.season;
         session.start_episode_arg = self.args.start_episode;
-        session.min_duration_arg = self.args.min_duration;
+        session.min_probe_duration_arg = self.args.min_probe_duration;
         session.no_max_speed = self.args.no_max_speed;
         session.output_dir = self
             .args

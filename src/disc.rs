@@ -8,7 +8,7 @@ use std::io::{Read as _, Seek, SeekFrom, Write as _};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
-use crate::types::{LabelInfo, Playlist};
+use crate::types::LabelInfo;
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     [
@@ -318,13 +318,6 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
     None
 }
 
-pub fn filter_episodes(playlists: &[Playlist], min_duration: u32) -> Vec<&Playlist> {
-    playlists
-        .iter()
-        .filter(|pl| pl.seconds >= min_duration)
-        .collect()
-}
-
 #[cfg(target_os = "linux")]
 pub fn set_max_speed(device: &str) {
     let _ = Command::new("eject").args(["-x", "0", device]).status();
@@ -475,47 +468,5 @@ mod tests {
         assert_eq!(info.show, "THE WIRE");
         assert_eq!(info.season, 3);
         assert_eq!(info.disc, 1);
-    }
-
-    #[test]
-    fn test_filter_episodes() {
-        let playlists = vec![
-            Playlist {
-                num: "00001".into(),
-                duration: "0:00:30".into(),
-                seconds: 30,
-                video_streams: 0,
-                audio_streams: 0,
-                subtitle_streams: 0,
-            },
-            Playlist {
-                num: "00002".into(),
-                duration: "0:43:00".into(),
-                seconds: 2580,
-                video_streams: 0,
-                audio_streams: 0,
-                subtitle_streams: 0,
-            },
-            Playlist {
-                num: "00003".into(),
-                duration: "0:44:00".into(),
-                seconds: 2640,
-                video_streams: 0,
-                audio_streams: 0,
-                subtitle_streams: 0,
-            },
-            Playlist {
-                num: "00004".into(),
-                duration: "0:02:00".into(),
-                seconds: 120,
-                video_streams: 0,
-                audio_streams: 0,
-                subtitle_streams: 0,
-            },
-        ];
-        let result = filter_episodes(&playlists, 900);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].num, "00002");
-        assert_eq!(result[1].num, "00003");
     }
 }

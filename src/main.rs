@@ -54,9 +54,9 @@ pub struct Args {
     #[arg(short = 'e', long)]
     start_episode: Option<u32>,
 
-    /// Min seconds for episode detection [default: 900]
+    /// Min seconds to probe playlist (filters menu clips) [default: 30]
     #[arg(long)]
-    min_duration: Option<u32>,
+    min_probe_duration: Option<u32>,
 
     /// Movie mode (skip episode assignment)
     #[arg(long)]
@@ -117,6 +117,10 @@ pub struct Args {
     /// Mark playlists as specials (S{season}SP{episode}), e.g. "4,5" or "4-5"
     #[arg(long, conflicts_with = "movie")]
     specials: Option<String>,
+
+    /// Hide detected specials from ripping (skips all specials)
+    #[arg(long, conflicts_with_all = ["specials", "movie"])]
+    hide_specials: bool,
 
     /// Overwrite existing output files instead of skipping
     #[arg(long)]
