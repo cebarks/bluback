@@ -341,11 +341,129 @@ impl HistoryDb {
 
         Ok(())
     }
+
+    // ========================================================================
+    // Recording Methods
+    // ========================================================================
+
+    pub fn start_session(&self, info: &SessionInfo) -> Result<i64> {
+        self.conn
+            .execute(
+                r#"INSERT INTO sessions (volume_label, device, tmdb_id, tmdb_type, title, season, disc_number, started_at, status, batch_id, config_snapshot)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
+                params![
+                    info.volume_label,
+                    info.device,
+                    info.tmdb_id,
+                    info.tmdb_type,
+                    info.title,
+                    info.season,
+                    info.disc_number,
+                    now_iso8601(),
+                    SessionStatus::Scanned.as_str(),
+                    info.batch_id,
+                    info.config_snapshot,
+                ],
+            )
+            .context("Failed to insert session")?;
+
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn finish_session(&self, id: i64, status: SessionStatus) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE sessions SET status = ?1, finished_at = ?2 WHERE id = ?3",
+                params![status.as_str(), now_iso8601(), id],
+            )
+            .context("Failed to update session status")?;
+
+        Ok(())
+    }
+
+    pub fn record_disc_playlists(&self, session_id: i64, playlists: &[DiscPlaylistInfo]) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()
+            .context("Failed to begin transaction")?;
+
+        for playlist in playlists {
+            tx.execute(
+                r#"INSERT INTO disc_playlists (session_id, playlist, duration_ms, video_streams, audio_streams, subtitle_streams, chapters, is_filtered)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+                params![
+                    session_id,
+                    playlist.playlist,
+                    playlist.duration_ms,
+                    playlist.video_streams,
+                    playlist.audio_streams,
+                    playlist.subtitle_streams,
+                    playlist.chapters,
+                    playlist.is_filtered,
+                ],
+            )
+            .context("Failed to insert playlist")?;
+        }
+
+        tx.commit().context("Failed to commit playlist transaction")?;
+        Ok(())
+    }
+
+    pub fn record_file(&self, session_id: i64, file: &RippedFileInfo) -> Result<i64> {
+        self.conn
+            .execute(
+                r#"INSERT INTO ripped_files (session_id, playlist, episodes, output_path, file_size, duration_ms, streams, chapters, started_at)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                   ON CONFLICT(session_id, playlist) DO UPDATE SET
+                       episodes = excluded.episodes,
+                       output_path = excluded.output_path,
+                       file_size = excluded.file_size,
+                       duration_ms = excluded.duration_ms,
+                       streams = excluded.streams,
+                       chapters = excluded.chapters,
+                       started_at = excluded.started_at"#,
+                params![
+                    session_id,
+                    file.playlist,
+                    file.episodes,
+                    file.output_path,
+                    file.file_size,
+                    file.duration_ms,
+                    file.streams,
+                    file.chapters,
+                    now_iso8601(),
+                ],
+            )
+            .context("Failed to upsert ripped file")?;
+
+        // Query the stable ID after upsert
+        let id: i64 = self.conn.query_row(
+            "SELECT id FROM ripped_files WHERE session_id = ?1 AND playlist = ?2",
+            params![session_id, file.playlist],
+            |row| row.get(0),
+        )
+        .context("Failed to retrieve file ID after upsert")?;
+
+        Ok(id)
+    }
+
+    pub fn update_file_status(&self, file_id: i64, status: FileStatus, error: Option<&str>) -> Result<()> {
+        self.conn
+            .execute(
+                "UPDATE ripped_files SET status = ?1, finished_at = ?2, error = ?3 WHERE id = ?4",
+                params![status.as_str(), now_iso8601(), error, file_id],
+            )
+            .context("Failed to update file status")?;
+
+        Ok(())
+    }
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+fn now_iso8601() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string()
+}
 
 fn now_iso8601_minus_hours(hours: i64) -> String {
     let now = chrono::Utc::now();
@@ -478,5 +596,162 @@ mod tests {
             .unwrap();
         assert_eq!(pl_count, 0);
         assert_eq!(rf_count, 0);
+    }
+
+    // Helper to reduce boilerplate in tests
+    fn make_session_info(label: &str, title: &str) -> SessionInfo {
+        SessionInfo {
+            volume_label: label.to_string(),
+            device: None,
+            tmdb_id: None,
+            tmdb_type: None,
+            title: title.to_string(),
+            season: None,
+            disc_number: None,
+            batch_id: None,
+            config_snapshot: None,
+        }
+    }
+
+    #[test]
+    fn test_start_session() {
+        let db = HistoryDb::open_memory().unwrap();
+        let info = SessionInfo {
+            volume_label: "BREAKING_BAD_S1_D1".to_string(),
+            device: Some("/dev/sr0".to_string()),
+            tmdb_id: Some(1396),
+            tmdb_type: Some("tv".to_string()),
+            title: "Breaking Bad".to_string(),
+            season: Some(1),
+            disc_number: Some(1),
+            batch_id: None,
+            config_snapshot: None,
+        };
+        let id = db.start_session(&info).unwrap();
+        assert_eq!(id, 1);
+
+        let status: String = db
+            .conn
+            .query_row("SELECT status FROM sessions WHERE id = 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "scanned");
+    }
+
+    #[test]
+    fn test_finish_session() {
+        let db = HistoryDb::open_memory().unwrap();
+        let id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        db.finish_session(id, SessionStatus::Completed).unwrap();
+
+        let status: String = db
+            .conn
+            .query_row("SELECT status FROM sessions WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "completed");
+
+        let finished: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT finished_at FROM sessions WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(finished.is_some());
+    }
+
+    #[test]
+    fn test_record_disc_playlists() {
+        let db = HistoryDb::open_memory().unwrap();
+        let id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let playlists = vec![
+            DiscPlaylistInfo {
+                playlist: "00800".to_string(),
+                duration_ms: Some(2700000),
+                video_streams: Some(1),
+                audio_streams: Some(2),
+                subtitle_streams: Some(3),
+                chapters: Some(12),
+                is_filtered: false,
+            },
+            DiscPlaylistInfo {
+                playlist: "00801".to_string(),
+                duration_ms: Some(30000),
+                video_streams: Some(1),
+                audio_streams: Some(1),
+                subtitle_streams: Some(0),
+                chapters: Some(1),
+                is_filtered: true,
+            },
+        ];
+        db.record_disc_playlists(id, &playlists).unwrap();
+
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM disc_playlists WHERE session_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_record_file_and_update_status() {
+        let db = HistoryDb::open_memory().unwrap();
+        let session_id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let file_info = RippedFileInfo {
+            playlist: "00800".to_string(),
+            episodes: Some("[1,2]".to_string()),
+            output_path: "/tmp/S01E01.mkv".to_string(),
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: Some(12),
+        };
+        let file_id = db.record_file(session_id, &file_info).unwrap();
+        assert_eq!(file_id, 1);
+
+        db.update_file_status(file_id, FileStatus::Completed, None)
+            .unwrap();
+        let status: String = db
+            .conn
+            .query_row(
+                "SELECT status FROM ripped_files WHERE id = ?1",
+                [file_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "completed");
+    }
+
+    #[test]
+    fn test_upsert_preserves_file_id() {
+        let db = HistoryDb::open_memory().unwrap();
+        let session_id = db.start_session(&make_session_info("DISC", "Test")).unwrap();
+        let file_info = RippedFileInfo {
+            playlist: "00800".to_string(),
+            episodes: Some("[1]".to_string()),
+            output_path: "/tmp/S01E01.mkv".to_string(),
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
+        };
+        let file_id_1 = db.record_file(session_id, &file_info).unwrap();
+
+        // Same playlist, same session — UPSERT should preserve row ID
+        let file_info_retry = RippedFileInfo {
+            playlist: "00800".to_string(),
+            episodes: Some("[1]".to_string()),
+            output_path: "/tmp/S01E01_retry.mkv".to_string(),
+            file_size: None,
+            duration_ms: None,
+            streams: None,
+            chapters: None,
+        };
+        let file_id_2 = db.record_file(session_id, &file_info_retry).unwrap();
+        assert_eq!(file_id_1, file_id_2);
     }
 }
