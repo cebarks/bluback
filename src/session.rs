@@ -75,6 +75,8 @@ pub struct DriveSession {
     pub history_ripped_playlists: std::collections::HashSet<String>,
     /// Whether the current session was successfully saved to history on completion.
     pub history_session_saved: bool,
+    /// Playlist numbers that were pre-classified (skipped during probe).
+    pub skip_set: std::collections::HashSet<String>,
 }
 
 impl DriveSession {
@@ -137,6 +139,7 @@ impl DriveSession {
             history_episode_hint: None,
             history_ripped_playlists: std::collections::HashSet::new(),
             history_session_saved: false,
+            skip_set: std::collections::HashSet::new(),
         }
     }
 
@@ -307,6 +310,7 @@ impl DriveSession {
         self.history_episode_hint = None;
         self.history_ripped_playlists.clear();
         self.history_session_saved = false;
+        self.skip_set.clear();
     }
 
     /// Spawn a background thread to probe a single unprobed playlist on demand.
@@ -336,12 +340,14 @@ impl DriveSession {
         self.probe_rx = Some(rx);
     }
 
-    /// Returns playlists that have been fully probed (have stream info).
+    /// Returns playlists above the probe duration threshold that aren't pre-classified.
+    /// These are the "episode-length" playlists used for detection and episode assignment.
     pub fn probed_playlists(&self) -> Vec<&Playlist> {
+        let min_dur = self.config.min_probe_duration(self.min_probe_duration_arg);
         self.disc
             .playlists
             .iter()
-            .filter(|pl| self.wizard.stream_infos.contains_key(&pl.num))
+            .filter(|pl| pl.seconds >= min_dur && !self.skip_set.contains(&pl.num))
             .collect()
     }
 
@@ -688,8 +694,8 @@ impl DriveSession {
                 }
                 let tx_progress = tx.clone();
                 let tx_probe = tx.clone();
-                let result = (|| -> anyhow::Result<(String, String, Vec<Playlist>, ProbeCache)> {
-                    let (playlists, probe_cache, _skip_set) =
+                let result = (|| -> anyhow::Result<DiscScanResult> {
+                    let (playlists, probe_cache, skip_set) =
                         crate::media::scan_playlists_with_progress(
                             &dev_str,
                             min_probe_duration,
@@ -707,7 +713,7 @@ impl DriveSession {
                             }),
                         )
                         .map_err(|e| anyhow::anyhow!("{}", e))?;
-                    Ok((dev_str, label, playlists, probe_cache))
+                    Ok((dev_str, label, playlists, probe_cache, skip_set))
                 })();
                 let _ = tx.send(BackgroundResult::DiscScan(result));
             })
@@ -812,11 +818,12 @@ impl DriveSession {
             {
                 // Ignore full scan results on Done screen
             }
-            BackgroundResult::DiscScan(Ok((device, label, playlists, probe_cache))) => {
+            BackgroundResult::DiscScan(Ok((device, label, playlists, probe_cache, skip_set))) => {
                 self.device = PathBuf::from(device);
                 self.disc.label_info = crate::disc::parse_volume_label(&label);
                 self.disc.label = label;
                 self.disc.playlists = playlists;
+                self.skip_set = skip_set;
 
                 // Extract chapter counts and title order from mounted disc
                 let device_str = self.device.to_string_lossy().to_string();
@@ -882,7 +889,7 @@ impl DriveSession {
                     let min_dur = self.config.min_probe_duration(self.min_probe_duration_arg);
                     for pl in &self.disc.playlists {
                         if pl.seconds >= min_dur
-                            && !self.wizard.stream_infos.contains_key(&pl.num)
+                            && self.skip_set.contains(&pl.num)
                             && !self
                                 .wizard
                                 .detection_results
