@@ -399,12 +399,16 @@ pub fn run(
         .collect();
 
     // Duplicate detection: check if this disc was previously ripped
+    // Only skip if fully completed (all files succeeded). Partial sessions
+    // (some files failed/skipped) should not block re-ripping.
     if let (Some(db), false) = (history, ignore_history) {
         if let Ok(matches) = db.find_session_by_label(&label) {
-            let completed = matches
-                .iter()
-                .find(|s| s.status == crate::history::SessionStatus::Completed);
-            if let Some(prev) = completed {
+            let fully_completed = matches.iter().find(|s| {
+                s.status == crate::history::SessionStatus::Completed
+                    && s.files_completed >= s.files_total
+                    && s.files_total > 0
+            });
+            if let Some(prev) = fully_completed {
                 let date = prev.started_at.get(..10).unwrap_or(&prev.started_at);
                 if headless {
                     eprintln!(

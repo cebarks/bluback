@@ -1230,9 +1230,15 @@ impl DriveSession {
                 .iter()
                 .find(|s| s.status == crate::history::SessionStatus::Completed)
             {
+                let partial = prev.files_completed < prev.files_total;
                 self.history_duplicate_hint = Some(format!(
-                    "{} ripped on {} ({}/{} playlists)",
+                    "{} {} on {} ({}/{} playlists)",
                     prev.title,
+                    if partial {
+                        "partially ripped"
+                    } else {
+                        "ripped"
+                    },
                     &prev.started_at[..10.min(prev.started_at.len())],
                     prev.files_completed,
                     prev.files_total
