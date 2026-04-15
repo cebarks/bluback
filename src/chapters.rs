@@ -97,6 +97,34 @@ pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<Ch
     parse_mpls_info(mount_point, playlist_num).map(|info| info.chapters)
 }
 
+/// Get stream counts from an MPLS playlist file without opening the device.
+///
+/// Reads the `StreamNumberTable` from the first PlayItem to get video, audio,
+/// and subtitle (PGS) stream counts. Returns `None` if the MPLS file can't be
+/// read or parsed, or if the playlist has no PlayItems.
+///
+/// This avoids opening `bluray:{device}` (which triggers AACS authentication)
+/// just to count streams. Blu-ray playlists have consistent stream tables across
+/// PlayItems since they are segments of the same content.
+pub fn mpls_stream_counts(mount_point: &Path, playlist_num: &str) -> Option<(u32, u32, u32)> {
+    let mpls_path = mount_point
+        .join("BDMV")
+        .join("PLAYLIST")
+        .join(format!("{}.mpls", playlist_num));
+
+    let file = std::fs::File::open(&mpls_path).ok()?;
+    let mpls_data = mpls::Mpls::from(file).ok()?;
+
+    let first_item = mpls_data.play_list.play_items.first()?;
+    let stn = &first_item.stream_number_table;
+
+    Some((
+        stn.primary_video_streams.len() as u32,
+        stn.primary_audio_streams.len() as u32,
+        stn.primary_pgs_streams.len() as u32,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +157,22 @@ mod tests {
         let playlist_dir = dir.join("BDMV").join("PLAYLIST");
         std::fs::create_dir_all(&playlist_dir).unwrap();
         let result = extract_chapters(&dir, "99999");
+        assert!(result.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_mpls_stream_counts_missing_path() {
+        let result = mpls_stream_counts(std::path::Path::new("/nonexistent/path"), "00001");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_mpls_stream_counts_missing_playlist() {
+        let dir = std::env::temp_dir().join("bluback_test_stream_counts");
+        let playlist_dir = dir.join("BDMV").join("PLAYLIST");
+        std::fs::create_dir_all(&playlist_dir).unwrap();
+        let result = mpls_stream_counts(&dir, "99999");
         assert!(result.is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

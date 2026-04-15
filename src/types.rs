@@ -239,6 +239,15 @@ pub struct TmdbLookupResult {
     pub first_air_date: Option<String>,
 }
 
+/// Type alias for the disc scan result tuple
+pub type DiscScanResult = (
+    String,
+    String,
+    Vec<Playlist>,
+    ProbeCache,
+    std::collections::HashSet<String>,
+);
+
 /// Result types for background operations in TUI mode
 pub enum BackgroundResult {
     /// No disc detected on this device
@@ -249,8 +258,8 @@ pub enum BackgroundResult {
     ScanProgress(u64, u64),
     /// Probe progress: (current_index, total_count, playlist_num)
     ProbeProgress(usize, usize, String),
-    /// Disc scan completed: (device, label, playlists, probe_cache)
-    DiscScan(anyhow::Result<(String, String, Vec<Playlist>, ProbeCache)>),
+    /// Disc scan completed: (device, label, playlists, probe_cache, skip_set)
+    DiscScan(anyhow::Result<DiscScanResult>),
     /// TMDb show search completed
     ShowSearch(anyhow::Result<Vec<TmdbShow>>),
     /// TMDb movie search completed

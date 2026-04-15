@@ -165,7 +165,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     let mut detection_results = if auto_detect {
         let probed_playlists: Vec<Playlist> = playlists
             .iter()
-            .filter(|pl| probe_cache.contains_key(&pl.num))
+            .filter(|pl| pl.seconds >= min_probe_duration && !skip_set.contains(&pl.num))
             .cloned()
             .collect();
         let mut results = crate::detection::run_detection_with_chapters(
@@ -388,13 +388,20 @@ pub fn run(
 ) -> anyhow::Result<(u32, u32)> {
     let device = args.device().to_string_lossy();
 
-    let (label, label_info, mut all_playlists, mut movie_mode, probe_cache) =
-        scan_disc(args, config)?;
+    let (
+        label,
+        label_info,
+        mut all_playlists,
+        mut movie_mode,
+        probe_cache,
+        min_probe_duration,
+        skip_set,
+    ) = scan_disc(args, config)?;
 
-    // Build episodes_pl from probe_cache membership (probed playlists in disc order)
+    // Build episodes_pl from duration threshold (episode-length playlists in disc order)
     let mut episodes_pl: Vec<Playlist> = all_playlists
         .iter()
-        .filter(|pl| probe_cache.contains_key(&pl.num))
+        .filter(|pl| pl.seconds >= min_probe_duration && !skip_set.contains(&pl.num))
         .cloned()
         .collect();
 
@@ -478,7 +485,7 @@ pub fn run(
         if auto_detect {
             let probed_playlists: Vec<&Playlist> = all_playlists
                 .iter()
-                .filter(|pl| probe_cache.contains_key(&pl.num))
+                .filter(|pl| pl.seconds >= min_probe_duration && !skip_set.contains(&pl.num))
                 .collect();
             let early_detection = crate::detection::run_detection_with_chapters(
                 &probed_playlists
@@ -577,7 +584,7 @@ pub fn run(
 
             let probed_playlists: Vec<Playlist> = all_playlists
                 .iter()
-                .filter(|pl| probe_cache.contains_key(&pl.num))
+                .filter(|pl| pl.seconds >= min_probe_duration && !skip_set.contains(&pl.num))
                 .cloned()
                 .collect();
             let detection_results = crate::detection::run_detection_with_chapters(
@@ -869,7 +876,7 @@ pub fn run(
     Ok((success_count, regular_episodes))
 }
 
-#[allow(clippy::type_complexity)] // 5-tuple is clear in context; a struct for one call site is over-engineering
+#[allow(clippy::type_complexity)] // tuple is clear in context; a struct for one call site is over-engineering
 fn scan_disc(
     args: &Args,
     config: &crate::config::Config,
@@ -879,6 +886,8 @@ fn scan_disc(
     Vec<Playlist>,
     bool,
     crate::types::ProbeCache,
+    u32,
+    std::collections::HashSet<String>,
 )> {
     let device = args.device().to_string_lossy();
 
@@ -908,7 +917,7 @@ fn scan_disc(
     });
 
     eprint!("Scanning disc at {}...", device);
-    let (playlists, probe_cache, _skip_set) = crate::media::scan_playlists_with_progress(
+    let (playlists, probe_cache, skip_set) = crate::media::scan_playlists_with_progress(
         &device,
         min_probe_duration,
         auto_detect,
@@ -928,7 +937,10 @@ fn scan_disc(
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
 
-    let probed_count = probe_cache.len();
+    let probed_count = playlists
+        .iter()
+        .filter(|pl| pl.seconds >= min_probe_duration)
+        .count();
     let short_count = playlists.len() - probed_count;
     println!(
         "Found {} playlists ({} episode-length, {} short/extras).\n",
@@ -937,7 +949,7 @@ fn scan_disc(
         short_count
     );
 
-    if probe_cache.is_empty() {
+    if probed_count == 0 {
         anyhow::bail!("No episode-length playlists found. Try lowering --min-probe-duration.");
     }
 
@@ -946,7 +958,15 @@ fn scan_disc(
         println!("  (Single playlist detected — using movie mode. Use --season to force TV mode.)");
     }
 
-    Ok((label, label_info, playlists, movie_mode, probe_cache))
+    Ok((
+        label,
+        label_info,
+        playlists,
+        movie_mode,
+        probe_cache,
+        min_probe_duration,
+        skip_set,
+    ))
 }
 
 fn lookup_tmdb(
@@ -1602,10 +1622,17 @@ fn rip_selected(
             pl.num, pl.duration, filename
         );
 
+        // Probe on demand if not cached — this opens the device once per playlist,
+        // naturally spaced by minutes of remux time.
+        let on_demand = probe_cache
+            .get(&pl.num)
+            .cloned()
+            .or_else(|| crate::media::probe::probe_playlist(device, &pl.num).ok());
+
         // Resolve stream selection per-playlist
         let stream_selection = if let Some(tracks) = tracks_spec {
-            let stream_info = probe_cache
-                .get(&pl.num)
+            let stream_info = on_demand
+                .as_ref()
                 .map(|(_, si)| si.clone())
                 .unwrap_or_default();
             match crate::streams::parse_track_spec(tracks, &stream_info) {
@@ -1621,8 +1648,8 @@ fn rip_selected(
                 }
             }
         } else if !stream_filter.is_empty() {
-            let stream_info = probe_cache
-                .get(&pl.num)
+            let stream_info = on_demand
+                .as_ref()
                 .map(|(_, si)| si.clone())
                 .unwrap_or_default();
             let indices = stream_filter.apply(&stream_info);
@@ -1639,10 +1666,9 @@ fn rip_selected(
         // When manual selection is active, the output will have fewer streams than the source.
         let (expected_video, expected_audio, expected_subtitle) = match &stream_selection {
             crate::media::StreamSelection::Manual(indices) => {
-                let stream_info = probe_cache
-                    .get(&pl.num)
-                    .map(|(_, si)| si)
-                    .cloned()
+                let stream_info = on_demand
+                    .as_ref()
+                    .map(|(_, si)| si.clone())
                     .unwrap_or_default();
                 crate::streams::count_selected_streams(indices, &stream_info)
             }

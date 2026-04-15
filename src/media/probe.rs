@@ -104,36 +104,44 @@ pub fn scan_playlists_with_progress(
         std::collections::HashSet::new()
     };
 
-    // Probe full stream info for episode-length playlists (above min_probe_duration).
-    // This replaces the old count_streams loop — a single probe_playlist call
-    // gets both stream counts and full MediaInfo/StreamInfo, avoiding redundant
-    // device opens downstream.
-    let probe_indices: Vec<usize> = playlists
-        .iter()
-        .enumerate()
-        .filter(|(_, pl)| pl.seconds >= min_probe_duration && !skip_set.contains(&pl.num))
-        .map(|(i, _)| i)
-        .collect();
-    let probe_total = probe_indices.len();
-    let mut probe_cache = HashMap::new();
-    for (step, pi) in probe_indices.into_iter().enumerate() {
-        if let Some(cb) = &on_probe_progress {
-            cb(step + 1, probe_total, &playlists[pi].num);
+    // Read stream counts from MPLS files instead of opening the device per-playlist.
+    // This avoids rapid-fire AACS authentication cycles that can crash USB bridges
+    // (especially ASMedia USB-SATA bridges with libmmbd backend).
+    let mpls_counts: HashMap<String, (u32, u32, u32)> = match crate::disc::ensure_mounted(device) {
+        Ok((mount, did_mount)) => {
+            let mount_path = std::path::Path::new(&mount);
+            let total = playlists.len();
+            let counts: HashMap<String, (u32, u32, u32)> = playlists
+                .iter()
+                .enumerate()
+                .filter_map(|(i, pl)| {
+                    if let Some(cb) = &on_probe_progress {
+                        cb(i + 1, total, &pl.num);
+                    }
+                    crate::chapters::mpls_stream_counts(mount_path, &pl.num)
+                        .map(|c| (pl.num.clone(), c))
+                })
+                .collect();
+            if did_mount {
+                let _ = crate::disc::unmount_disc(device);
+            }
+            counts
         }
-        let num = playlists[pi].num.clone();
-        match probe_playlist(device, &num) {
-            Ok((media, streams)) => {
-                let pl = &mut playlists[pi];
-                pl.video_streams = streams.video_streams.len() as u32;
-                pl.audio_streams = streams.audio_streams.len() as u32;
-                pl.subtitle_streams = streams.subtitle_streams.len() as u32;
-                probe_cache.insert(num, (media, streams));
-            }
-            Err(e) => {
-                log::warn!("Failed to probe playlist {}: {}", num, e);
-            }
+        Err(e) => {
+            log::warn!("Could not mount disc for MPLS stream counts: {}", e);
+            HashMap::new()
+        }
+    };
+
+    for pl in &mut playlists {
+        if let Some(&(v, a, s)) = mpls_counts.get(&pl.num) {
+            pl.video_streams = v;
+            pl.audio_streams = a;
+            pl.subtitle_streams = s;
         }
     }
+
+    let probe_cache = HashMap::new();
 
     log::info!("Scan complete: found {} playlists", playlists.len());
     Ok((playlists, probe_cache, skip_set))

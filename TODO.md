@@ -65,6 +65,8 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 - [ ] Shell injection via hook template expansion (`hooks.rs`) — `expand_template` inserts raw values into `sh -c` commands; switch to env vars or shell-escape
 ### Moderate
 - libmmbd can timeout if drive is already in use
+    - AACS initialization is blamed even when libmmbd times out
+- 
 
 ### Low
 - [ ] Settings `scroll_offset` never persisted (`tui/settings.rs`) — view always jams cursor to bottom
