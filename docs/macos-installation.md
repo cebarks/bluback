@@ -88,14 +88,20 @@ bluback --aacs-backend libmmbd
 
 ### From GitHub Releases
 
-Download the latest macOS binary from the [releases page](https://github.com/cebarks/bluback/releases):
+Download the latest macOS binary from the [releases page](https://github.com/cebarks/bluback/releases) and extract it:
 
 ```bash
-# Download (replace VERSION with actual version)
-curl -LO https://github.com/cebarks/bluback/releases/download/vVERSION/bluback-aarch64-apple-darwin.tar.gz
 tar xzf bluback-aarch64-apple-darwin.tar.gz
 sudo mv bluback /usr/local/bin/
 ```
+
+### From crates.io
+
+```bash
+cargo install bluback
+```
+
+Requires FFmpeg development libraries and clang (see [From Source](#from-source) below for dependencies).
 
 ### From Source
 
