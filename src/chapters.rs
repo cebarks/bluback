@@ -106,7 +106,6 @@ pub fn extract_chapters(mount_point: &Path, playlist_num: &str) -> Option<Vec<Ch
 /// This avoids opening `bluray:{device}` (which triggers AACS authentication)
 /// just to count streams. Blu-ray playlists have consistent stream tables across
 /// PlayItems since they are segments of the same content.
-#[allow(dead_code)] // Used in later tasks
 pub fn mpls_stream_counts(mount_point: &Path, playlist_num: &str) -> Option<(u32, u32, u32)> {
     let mpls_path = mount_point
         .join("BDMV")
