@@ -13,10 +13,11 @@ use crate::types::{MediaInfo, Playlist, ProbeCache, StreamInfo};
 use crate::util::duration_to_seconds;
 
 /// Timeout for AACS/libbluray operations (seconds).
-/// libmmbd + makemkvcon typically completes in 20-35 seconds.
-/// If AACS hasn't completed by 60s, it's likely a SCSI hang (USB bridge issue).
+/// libmmbd + makemkvcon typically completes in 20-35 seconds, but USB bridges
+/// (especially ASMedia) can be slow and unreliable — the AACS handshake may
+/// need multiple SCSI retries. 120s accommodates these slow paths.
 #[cfg(target_os = "linux")]
-const SCAN_TIMEOUT_SECS: u64 = 60;
+const SCAN_TIMEOUT_SECS: u64 = 120;
 
 /// Open a bluray device with an optional playlist selection via `input_with_dictionary`.
 /// Returns the format context for the opened device+playlist.
@@ -263,12 +264,29 @@ fn scan_with_log_capture(
         std::thread::sleep(poll_interval);
         let elapsed = start.elapsed().as_secs();
         if elapsed >= SCAN_TIMEOUT_SECS {
-            // Kill entire process group (child + makemkvcon)
+            // Terminate entire process group (child + makemkvcon).
+            // SIGTERM lets makemkvcon clean up its SCSI/AACS session;
+            // SIGKILL leaves the drive dirty, hanging subsequent scans.
+            unsafe {
+                libc::kill(-child_pid, libc::SIGTERM);
+            }
+            // Brief grace period for SCSI cleanup, then force-kill if still alive
+            std::thread::sleep(Duration::from_millis(500));
             unsafe {
                 libc::kill(-child_pid, libc::SIGKILL);
             }
             unsafe { libc::close(pipe_read) };
-            return Err(MediaError::AacsTimeout);
+            let backend = std::env::var("LIBAACS_PATH")
+                .map(|v| {
+                    if v.contains("mmbd") {
+                        "libmmbd"
+                    } else {
+                        "libaacs"
+                    }
+                })
+                .unwrap_or_else(|_| "libaacs")
+                .to_string();
+            return Err(MediaError::AacsTimeout(backend));
         }
         if let Some(cb) = on_progress {
             cb(elapsed, SCAN_TIMEOUT_SECS);
@@ -276,10 +294,10 @@ fn scan_with_log_capture(
     };
     unsafe { libc::close(pipe_read) };
 
-    // Kill any remaining processes in the child's process group (e.g., makemkvcon).
-    // Must be SIGKILL — makemkvcon may ignore SIGTERM, and since the child has
-    // exited these orphaned processes can't be found by kill_makemkvcon_children().
-    unsafe { libc::kill(-child_pid, libc::SIGKILL) };
+    // Don't kill makemkvcon after a successful scan — let it exit naturally
+    // when its IPC channel closes. Killing it (even with SIGTERM) can leave the
+    // drive's SCSI/AACS state dirty, causing subsequent scans to hang on USB bridges.
+    // The atexit handler will clean up any stragglers on process exit.
 
     let (lines_str, status, error_msg) = parse_child_output(&child_result);
 

@@ -8,8 +8,9 @@ pub enum MediaError {
     AacsRevoked,
     /// AACS authentication failed (general — USB bridge issues, missing keys, etc.)
     AacsAuthFailed(String),
-    /// libbluray/libaacs hung during AACS init (60s timeout exceeded)
-    AacsTimeout,
+    /// libbluray/libaacs hung during AACS init (timeout exceeded).
+    /// Contains the detected backend name for diagnostic messages.
+    AacsTimeout(String),
     /// Device path doesn't exist or isn't an optical drive
     DeviceNotFound(String),
     /// Drive present but no disc inserted
@@ -39,15 +40,37 @@ impl fmt::Display for MediaError {
                  If you have MakeMKV with LibreDrive, set aacs_backend = \"libmmbd\"."
             ),
             Self::AacsAuthFailed(msg) => write!(f, "AACS authentication failed: {}", msg),
-            Self::AacsTimeout => write!(
-                f,
-                "AACS initialization timed out.\n\
-                 This can happen with USB Blu-ray drives (ASMedia bridge SCSI passthrough issue)\n\
-                 or when the AACS host certificate is revoked (MKBv72+ discs).\n\
-                 Try:\n  \
-                   - aacs_backend = \"libmmbd\" (requires makemkvcon + registered MakeMKV)\n  \
-                   - Add a per-disc VUK to KEYDB.cfg"
-            ),
+            Self::AacsTimeout(ref backend) => {
+                writeln!(f, "AACS initialization timed out (backend: {}).", backend)?;
+                match backend.as_str() {
+                    "libmmbd" => write!(
+                        f,
+                        "libmmbd + makemkvcon IPC hung during AACS negotiation.\n\
+                         This can happen with USB Blu-ray drives (ASMedia bridge SCSI passthrough issue).\n\
+                         Try:\n  \
+                           - Power cycle the drive (unplug USB, wait 5s, replug)\n  \
+                           - Ensure makemkvcon is registered (beta key or purchased)\n  \
+                           - Try aacs_backend = \"libaacs\" if a per-disc VUK is in KEYDB.cfg"
+                    ),
+                    "libaacs" => write!(
+                        f,
+                        "libaacs hung during AACS key exchange.\n\
+                         This can happen when the host certificate is revoked (MKBv72+ discs)\n\
+                         or with USB drives that have SCSI passthrough issues.\n\
+                         Try:\n  \
+                           - aacs_backend = \"libmmbd\" (requires makemkvcon + registered MakeMKV)\n  \
+                           - Add a per-disc VUK to KEYDB.cfg"
+                    ),
+                    _ => write!(
+                        f,
+                        "This can happen with USB Blu-ray drives (ASMedia bridge SCSI passthrough issue)\n\
+                         or when the AACS host certificate is revoked (MKBv72+ discs).\n\
+                         Try:\n  \
+                           - aacs_backend = \"libmmbd\" (requires makemkvcon + registered MakeMKV)\n  \
+                           - Add a per-disc VUK to KEYDB.cfg"
+                    ),
+                }
+            }
             Self::DeviceNotFound(dev) => write!(f, "Device not found: {}", dev),
             Self::NoDisc => write!(f, "No disc in drive"),
             Self::PlaylistNotFound(num) => write!(f, "Playlist {} not found on disc", num),

@@ -239,11 +239,14 @@ pub fn list_makemkvcon_children_set() -> HashSet<i32> {
     HashSet::new()
 }
 
-/// Kill specific makemkvcon processes by PID.
+/// Gracefully terminate makemkvcon processes by PID.
+/// Uses SIGTERM to let makemkvcon clean up its SCSI/AACS session state.
+/// SIGKILL leaves the drive's SCSI state dirty, causing subsequent AACS
+/// negotiations to hang on USB bridges (especially ASMedia).
 pub fn kill_makemkvcon_pids(pids: &[i32]) {
     for &pid in pids {
         unsafe {
-            libc::kill(pid, libc::SIGKILL);
+            libc::kill(pid, libc::SIGTERM);
             libc::waitpid(pid, std::ptr::null_mut(), libc::WNOHANG);
         }
     }
@@ -312,9 +315,13 @@ impl Drop for MakemkvconGuard {
 ///
 /// Two cleanup strategies:
 /// 1. Direct children: scan /proc for makemkvcon with PPid == our PID
-/// 2. Scan fork orphans: SIGKILL process groups from forked scan children
+/// 2. Scan fork orphans: SIGTERM process groups from forked scan children
 ///    (makemkvcon is orphaned to init when the scan child exits, but remains
 ///    in the child's process group)
+///
+/// Uses SIGTERM instead of SIGKILL to let makemkvcon clean up its SCSI/AACS
+/// session state. SIGKILL leaves the drive dirty, causing subsequent AACS
+/// negotiations to hang on USB bridges.
 #[cfg(target_os = "linux")]
 pub fn kill_makemkvcon_children() {
     let our_pid = std::process::id();
@@ -349,22 +356,22 @@ pub fn kill_makemkvcon_children() {
         };
 
         if comm.trim() == "makemkvcon" {
-            log::debug!("Killing orphaned makemkvcon child (pid {})", pid);
+            log::debug!("Terminating orphaned makemkvcon child (pid {})", pid);
             unsafe {
-                libc::kill(pid, libc::SIGKILL);
+                libc::kill(pid, libc::SIGTERM);
                 libc::waitpid(pid, std::ptr::null_mut(), 0);
             }
         }
     }
 
-    // Kill any makemkvcon that survived in scan-forked process groups.
+    // Terminate any makemkvcon that survived in scan-forked process groups.
     // These are orphaned (PPid == 1) and invisible to the PPid check above.
     // Uses try_lock to avoid deadlocking when called from atexit handlers
     // or concurrent signal contexts.
     if let Ok(mut pgids) = SCAN_PGIDS.try_lock() {
         for pgid in pgids.drain(..) {
             unsafe {
-                libc::kill(-pgid, libc::SIGKILL);
+                libc::kill(-pgid, libc::SIGTERM);
             }
         }
     }
