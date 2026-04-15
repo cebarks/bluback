@@ -137,6 +137,8 @@ Settings can also be set via environment variables. When the settings panel open
 | `BLUBACK_HISTORY_RETENTION` | `history.retention` |
 | `TMDB_API_KEY` | `tmdb_api_key` |
 
+Additionally, `BLUBACK_HISTORY_PATH` can be set to override the history database location (used directly, not through the settings panel).
+
 When saving from the settings panel, a warning notes which env vars will override the saved config.
 
 ## TMDb API Key

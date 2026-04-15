@@ -14,6 +14,9 @@
 | `Ctrl+H` | Open history overlay |
 | `Ctrl+R` | Rescan disc and restart wizard (confirms during ripping) |
 | `Ctrl+E` | Eject disc |
+| `Ctrl+Left/Right` | Switch active drive tab (multi-drive) |
+| `Ctrl+L` | Link TMDb context from another session (multi-drive) |
+| `Ctrl+N` | Start new session on available drive (multi-drive) |
 | `Ctrl+C` | Quit immediately |
 | `q` | Quit (except during text input or ripping) |
 

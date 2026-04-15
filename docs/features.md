@@ -208,7 +208,8 @@ bluback supports parallel ripping from multiple Blu-ray drives simultaneously.
 
 A background drive monitor polls for optical drives every 2 seconds. Each detected drive gets its own independent session with a dedicated tab in the TUI.
 
-- **Tab switching:** `Tab` / `Shift+Tab` to switch between drive sessions
+- **Tab switching:** `Ctrl+Left` / `Ctrl+Right` to switch between drive sessions
+- **New session:** `Ctrl+N` to start a session on an available drive
 - **Inter-session linking:** `Ctrl+L` copies TMDb context (show name, season, next episode) from one session to another — avoids redundant TMDb lookups across discs of the same show
 - **Episode overlap detection:** warns if two sessions assign the same episode for the same show/season
 

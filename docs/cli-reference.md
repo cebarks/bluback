@@ -65,6 +65,7 @@ By default, bluback auto-detects your Blu-ray drive and launches a TUI wizard.
 - `--auto-detect` conflicts with `--movie`.
 - `--no-history` and `--ignore-history` are mutually exclusive.
 - `--batch` conflicts with `--dry-run`, `--list-playlists`, `--check`, `--settings`, `--no-eject`.
+- `--hide-specials` conflicts with `--specials` and `--movie`.
 
 ### Headless / Scripted Usage
 
