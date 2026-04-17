@@ -355,6 +355,17 @@ impl Coordinator {
             return;
         }
 
+        // Ctrl+E: eject disc from active session's drive
+        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if let Some(session) = self.active_session() {
+                let device = session.device.to_string_lossy().to_string();
+                if let Err(e) = crate::disc::eject_disc(&device) {
+                    log::warn!("Failed to eject disc: {}", e);
+                }
+            }
+            return;
+        }
+
         // Ctrl+N: new manual session (if no --device, spawn on first available drive
         // without an existing session)
         if key.code == KeyCode::Char('n') && key.modifiers.contains(KeyModifiers::CONTROL) {
