@@ -16,9 +16,19 @@ pub enum OverwriteAction {
     Skip(u64),
     /// File exists and overwrite is enabled — file deleted (carries pre-deletion size)
     DeleteAndProceed(u64),
+    /// File exists but is a partial rip (<90% of estimated size) — deleted and will re-rip
+    PartialReplace(u64),
 }
 
-pub fn check_overwrite(output: &Path, overwrite: bool) -> std::io::Result<OverwriteAction> {
+/// Threshold below which an existing file is considered a partial/incomplete rip.
+/// Files smaller than 90% of the estimated size are treated as partial.
+const PARTIAL_THRESHOLD: f64 = 0.90;
+
+pub fn check_overwrite(
+    output: &Path,
+    overwrite: bool,
+    estimated_size: Option<u64>,
+) -> std::io::Result<OverwriteAction> {
     log::debug!("Overwrite check: {}", output.display());
     if !output.exists() {
         return Ok(OverwriteAction::Proceed);
@@ -26,9 +36,33 @@ pub fn check_overwrite(output: &Path, overwrite: bool) -> std::io::Result<Overwr
     let size = std::fs::metadata(output)?.len();
     if overwrite {
         std::fs::remove_file(output)?;
-        Ok(OverwriteAction::DeleteAndProceed(size))
+        return Ok(OverwriteAction::DeleteAndProceed(size));
+    }
+    // Detect partial rips: if we have an estimate and the file is significantly
+    // smaller, treat it as incomplete rather than skipping
+    if let Some(est) = estimated_size {
+        if est > 0 && (size as f64) < (est as f64 * PARTIAL_THRESHOLD) {
+            log::info!(
+                "Partial rip detected: {} is {} but expected ~{} ({}%)",
+                output.display(),
+                format_size_inline(size),
+                format_size_inline(est),
+                (size as f64 / est as f64 * 100.0) as u32,
+            );
+            std::fs::remove_file(output)?;
+            return Ok(OverwriteAction::PartialReplace(size));
+        }
+    }
+    Ok(OverwriteAction::Skip(size))
+}
+
+fn format_size_inline(bytes: u64) -> String {
+    const GB: u64 = 1_073_741_824;
+    const MB: u64 = 1_048_576;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
     } else {
-        Ok(OverwriteAction::Skip(size))
+        format!("{:.0} MB", bytes as f64 / MB as f64)
     }
 }
 
@@ -242,7 +276,7 @@ mod tests {
     fn test_check_overwrite_file_not_exists() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nonexistent.mkv");
-        let result = check_overwrite(&path, false).unwrap();
+        let result = check_overwrite(&path, false, None).unwrap();
         assert_eq!(result, OverwriteAction::Proceed);
     }
 
@@ -252,7 +286,7 @@ mod tests {
         let path = dir.path().join("existing.mkv");
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(&[0u8; 1024]).unwrap();
-        let result = check_overwrite(&path, false).unwrap();
+        let result = check_overwrite(&path, false, None).unwrap();
         assert!(matches!(result, OverwriteAction::Skip(1024)));
         assert!(path.exists());
     }
@@ -263,9 +297,57 @@ mod tests {
         let path = dir.path().join("existing.mkv");
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(&[0u8; 2048]).unwrap();
-        let result = check_overwrite(&path, true).unwrap();
+        let result = check_overwrite(&path, true, None).unwrap();
         assert!(matches!(result, OverwriteAction::DeleteAndProceed(2048)));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_check_overwrite_partial_file_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.mkv");
+        let mut f = std::fs::File::create(&path).unwrap();
+        // 4700 bytes existing, estimated 8500 — ~55%, well below 90% threshold
+        f.write_all(&vec![0u8; 4700]).unwrap();
+        let result = check_overwrite(&path, false, Some(8500)).unwrap();
+        assert!(matches!(result, OverwriteAction::PartialReplace(4700)));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_check_overwrite_complete_file_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("complete.mkv");
+        let mut f = std::fs::File::create(&path).unwrap();
+        // 9200 bytes existing, estimated 10000 — 92%, above 90% threshold
+        f.write_all(&vec![0u8; 9200]).unwrap();
+        let result = check_overwrite(&path, false, Some(10000)).unwrap();
+        assert!(matches!(result, OverwriteAction::Skip(9200)));
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn test_check_overwrite_partial_with_overwrite_flag_prefers_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.mkv");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&vec![0u8; 4700]).unwrap();
+        // overwrite=true takes precedence — returns DeleteAndProceed, not PartialReplace
+        let result = check_overwrite(&path, true, Some(8500)).unwrap();
+        assert!(matches!(result, OverwriteAction::DeleteAndProceed(4700)));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_check_overwrite_partial_zero_estimate_skips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("existing.mkv");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(&[0u8; 1024]).unwrap();
+        // Zero estimate should not trigger partial detection
+        let result = check_overwrite(&path, false, Some(0)).unwrap();
+        assert!(matches!(result, OverwriteAction::Skip(1024)));
+        assert!(path.exists());
     }
 
     #[test]

@@ -440,7 +440,7 @@ pub fn run(
     }
 
     // Mount disc for chapter counts, clip sizes, and title order
-    let (chapter_counts, _clip_sizes, title_order) = {
+    let (chapter_counts, clip_sizes, title_order) = {
         let device_str = device.to_string();
         match disc::ensure_mounted(&device_str) {
             Ok((mount, did_mount)) => {
@@ -844,6 +844,7 @@ pub fn run(
         tracks_spec,
         skip_eject,
         &probe_cache,
+        &clip_sizes,
         movie_mode,
         history,
         session_id,
@@ -1507,6 +1508,7 @@ fn rip_selected(
     tracks_spec: Option<&str>,
     skip_eject: bool,
     probe_cache: &crate::types::ProbeCache,
+    clip_sizes: &std::collections::HashMap<String, u64>,
     movie_mode: bool,
     history: Option<&crate::history::HistoryDb>,
     session_id: Option<i64>,
@@ -1578,7 +1580,27 @@ fn rip_selected(
             .expect("output path has filename")
             .to_string_lossy();
 
-        match crate::workflow::check_overwrite(outfile, args.overwrite || config.overwrite())? {
+        const TS_TO_MKV_FACTOR: f64 = 0.97;
+        let estimated_size = clip_sizes
+            .get(&pl.num)
+            .copied()
+            .filter(|&sz| sz > 0)
+            .map(|sz| (sz as f64 * TS_TO_MKV_FACTOR) as u64)
+            .or_else(|| {
+                probe_cache.get(&pl.num).and_then(|(mi, _)| {
+                    if mi.bitrate_bps > 0 {
+                        Some(pl.seconds as u64 * (mi.bitrate_bps / 8))
+                    } else {
+                        None
+                    }
+                })
+            });
+
+        match crate::workflow::check_overwrite(
+            outfile,
+            args.overwrite || config.overwrite(),
+            estimated_size,
+        )? {
             crate::workflow::OverwriteAction::Proceed => {}
             crate::workflow::OverwriteAction::Skip(size) => {
                 println!(
@@ -1611,6 +1633,17 @@ fn rip_selected(
                 }
                 skip_count += 1;
                 continue;
+            }
+            crate::workflow::OverwriteAction::PartialReplace(size) => {
+                println!(
+                    "\nRe-ripping partial file {} -> {} (was {}, expected ~{})",
+                    pl.num,
+                    filename,
+                    format_size(size),
+                    estimated_size
+                        .map(format_size)
+                        .unwrap_or_else(|| "unknown".to_string()),
+                );
             }
             crate::workflow::OverwriteAction::DeleteAndProceed(size) => {
                 println!("\nOverwriting {} ({})", filename, format_size(size));

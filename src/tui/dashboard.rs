@@ -778,9 +778,11 @@ fn start_next_job_session(
         }
     }
 
+    let estimated_size = session.rip.jobs[idx].estimated_size;
     match crate::workflow::check_overwrite(
         &outfile,
         session.config.overwrite() || session.overwrite,
+        Some(estimated_size).filter(|&s| s > 0),
     ) {
         Ok(crate::workflow::OverwriteAction::Proceed) => {}
         Ok(crate::workflow::OverwriteAction::Skip(size)) => {
@@ -794,6 +796,13 @@ fn start_next_job_session(
                 None,
             );
             return true;
+        }
+        Ok(crate::workflow::OverwriteAction::PartialReplace(size)) => {
+            session.status_message = format!(
+                "Re-ripping partial file {} (was {})",
+                session.rip.jobs[idx].filename,
+                format_size(size),
+            );
         }
         Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
         Err(e) => {
