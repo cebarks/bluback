@@ -84,11 +84,19 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
+      - name: Generate completions and man page
+        run: |
+          mkdir -p completions man
+          target/release/bluback generate completions bash > completions/bluback.bash
+          target/release/bluback generate completions zsh > completions/bluback.zsh
+          target/release/bluback generate completions fish > completions/bluback.fish
+          target/release/bluback generate man > man/bluback.1
+
       - name: Package
         run: |
           tar czf bluback-${{ matrix.target }}.tar.gz \
             -C target/release bluback \
-            -C "$GITHUB_WORKSPACE" LICENSE README.md
+            -C "$GITHUB_WORKSPACE" LICENSE README.md completions man
 
       - uses: actions/upload-artifact@v4
         with:
@@ -117,11 +125,19 @@ jobs:
       - name: Build
         run: cargo build --release --locked
 
+      - name: Generate completions and man page
+        run: |
+          mkdir -p completions man
+          target/release/bluback generate completions bash > completions/bluback.bash
+          target/release/bluback generate completions zsh > completions/bluback.zsh
+          target/release/bluback generate completions fish > completions/bluback.fish
+          target/release/bluback generate man > man/bluback.1
+
       - name: Package
         run: |
           tar czf bluback-${{ matrix.target }}.tar.gz \
             -C target/release bluback \
-            -C "$GITHUB_WORKSPACE" LICENSE README.md
+            -C "$GITHUB_WORKSPACE" LICENSE README.md completions man
 
       - uses: actions/upload-artifact@v4
         with:
