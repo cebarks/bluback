@@ -7,6 +7,7 @@ mod detection;
 mod disc;
 mod drive_monitor;
 mod duration;
+mod generate;
 mod history;
 mod history_cli;
 mod hooks;
@@ -259,6 +260,17 @@ fn main() {
         use clap::Parser;
         let history_args = history_cli::HistoryArgs::parse_from(&raw_args[1..]);
         if let Err(e) = history_cli::run_history(history_args) {
+            eprintln!("error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Early intercept for generate subcommand
+    if raw_args.get(1).map(|s| s.as_str()) == Some("generate") {
+        use clap::Parser;
+        let gen_args = generate::GenerateArgs::parse_from(&raw_args[1..]);
+        if let Err(e) = generate::run_generate(gen_args) {
             eprintln!("error: {}", e);
             std::process::exit(1);
         }
