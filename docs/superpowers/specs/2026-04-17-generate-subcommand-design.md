@@ -44,44 +44,25 @@ New module containing:
 
 ### Augmented Command
 
-Because `history` and `generate` are dispatched before clap parsing, they don't appear in `Args::command()`. The `full_command()` function adds them:
+Because `history` and `generate` are dispatched before clap parsing, they don't appear in `Args::command()`. The `full_command()` function composes the existing derive-generated `Command` objects to avoid duplication:
 
 ```rust
 fn full_command() -> clap::Command {
+    use clap::CommandFactory;
     Args::command()
-        .subcommand(
-            clap::Command::new("history")
-                .about("Manage rip history")
-                .subcommand(clap::Command::new("list").about("List past sessions"))
-                .subcommand(clap::Command::new("show").about("Show session details"))
-                .subcommand(clap::Command::new("stats").about("Show aggregate statistics"))
-                .subcommand(clap::Command::new("delete").about("Delete specific sessions"))
-                .subcommand(clap::Command::new("clear").about("Clear history"))
-                .subcommand(clap::Command::new("export").about("Export history as JSON")),
-        )
-        .subcommand(
-            clap::Command::new("generate")
-                .about("Generate shell completions and man pages")
-                .subcommand(
-                    clap::Command::new("completions")
-                        .about("Generate shell completions")
-                        .arg(clap::Arg::new("shell").required(true).value_parser(["bash", "zsh", "fish"])),
-                )
-                .subcommand(
-                    clap::Command::new("man").about("Generate man page"),
-                ),
-        )
+        .subcommand(history_cli::HistoryArgs::command().name("history"))
+        .subcommand(GenerateArgs::command().name("generate"))
 }
 ```
 
-This is a lightweight duplication of the subcommand structure — not the full argument definitions. Acceptable because these subcommands have simple argument sets and change infrequently.
+This reuses the derive-generated argument definitions from `HistoryArgs` and `GenerateArgs`, so completions automatically include all flags and subcommands (e.g., `history list --limit`, `history clear --older-than`). Changes to those structs propagate without touching `full_command()`.
 
 ## Dependencies
 
 Added to `[dependencies]` (not build-deps, since generation happens at runtime):
 
 - `clap_complete = "4"` — shell completion script generation
-- `clap_mangen = "0.2"` — man page generation
+- `clap_mangen = "0.3"` — man page generation (0.3.x targets clap 4.x)
 
 ## Release Artifacts
 
