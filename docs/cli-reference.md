@@ -110,6 +110,34 @@ bluback history [COMMAND]
 | `--status <STATUS>` | Prune by status |
 | `-y, --yes` | Skip confirmation (must be explicit — does NOT auto-enable on non-TTY) |
 
+## Generate Subcommand
+
+```
+bluback generate <COMMAND>
+```
+
+| Command | Description |
+|---------|-------------|
+| `completions <SHELL>` | Generate shell completion script (`bash`, `zsh`, or `fish`) |
+| `man` | Generate man page |
+
+Output goes to stdout. Pipe to the appropriate location for your shell:
+
+```bash
+# Bash
+bluback generate completions bash > ~/.local/share/bash-completion/completions/bluback
+
+# Zsh
+bluback generate completions zsh > ~/.local/share/zsh/site-functions/_bluback
+
+# Fish
+bluback generate completions fish > ~/.config/fish/completions/bluback.fish
+
+# Man page
+bluback generate man | sudo tee /usr/local/share/man/man1/bluback.1 > /dev/null
+sudo mandb
+```
+
 ## Exit Codes
 
 | Code | Meaning |
