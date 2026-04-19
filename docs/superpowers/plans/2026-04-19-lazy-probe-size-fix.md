@@ -325,7 +325,7 @@ Copy lines 169-428 of the current `remux()` as the body. Replace `options.output
 
 - [ ] **Step 4: Replace old `remux()` with convenience wrapper**
 
-Replace the existing `remux()` function with a thin wrapper that calls both phases. This preserves backward compatibility until callers are migrated:
+Replace the existing `remux()` function with a thin wrapper that calls both phases. Note: this changes the signature — callers will break until updated in Tasks 5-6. This is a WIP commit.
 
 ```rust
 /// Convenience wrapper: opens input + writes output in one call.
@@ -379,11 +379,9 @@ WIP — callers updated in subsequent commits."
 Remove `device` and `output` parameters. Keep `playlist` for chapter extraction only:
 
 ```rust
-#[allow(clippy::too_many_arguments)]
 pub fn prepare_remux_options(
     playlist: &Playlist,
     mount_point: Option<&str>,
-    stream_selection: StreamSelection,
     cancel: Arc<AtomicBool>,
     reserve_index_space_kb: u32,
     metadata: Option<crate::types::MkvMetadata>,
@@ -396,13 +394,15 @@ pub fn prepare_remux_options(
 
     RemuxOptions {
         chapters,
-        stream_selection,
+        stream_selection: StreamSelection::All,
         cancel,
         reserve_index_space_kb,
         metadata,
     }
 }
 ```
+
+Stream selection defaults to `All` and is overridden by callers (TUI thread or CLI) after resolving from `StreamInfo`.
 
 - [ ] **Step 2: Add `estimate_size()` helper**
 
@@ -575,21 +575,24 @@ Communication with the main thread uses a new `RipMessage` enum instead of the c
 Add at the top of `src/tui/dashboard.rs`:
 
 ```rust
-enum RipMessage {
+pub(crate) enum RipMessage {
     Progress(crate::types::RipProgress),
     MediaReady {
         media_info: crate::types::MediaInfo,
         stream_info: crate::types::StreamInfo,
         final_filename: String,
     },
+    Skipped(u64),
+    StatusUpdate(String),
     ChaptersAdded(usize),
+    Cancelled,
     Error(crate::media::MediaError),
 }
 ```
 
 - [ ] **Step 2: Define `RipThreadContext` struct**
 
-Add in `src/tui/dashboard.rs`. This captures everything the rip thread needs to resolve filenames and stream selection:
+Add in `src/workflow.rs` (not `dashboard.rs` — avoids circular dependency with `session.rs`). This captures everything the rip thread needs to resolve filenames and stream selection:
 
 ```rust
 struct RipThreadContext {
@@ -623,7 +626,7 @@ struct RipThreadContext {
 In `src/session.rs`, add a method that builds the context struct from session state:
 
 ```rust
-    pub fn rip_thread_context(&self, job_idx: usize) -> crate::tui::dashboard::RipThreadContext {
+    pub fn rip_thread_context(&self, job_idx: usize) -> crate::workflow::RipThreadContext {
         let pl = &self.rip.jobs[job_idx].playlist;
         let selected_count = self.rip.jobs.len();
 
@@ -657,7 +660,7 @@ In `src/session.rs`, add a method that builds the context struct from session st
                 .unwrap_or_else(|| "Unknown".to_string())
         };
 
-        crate::tui::dashboard::RipThreadContext {
+        crate::workflow::RipThreadContext {
             device: self.device.to_string_lossy().to_string(),
             playlist: pl.clone(),
             output_dir: self.output_dir.clone(),
@@ -808,14 +811,18 @@ fn start_next_job_session(
             Some(rip_ctx.estimated_size).filter(|&s| s > 0),
         ) {
             Ok(crate::workflow::OverwriteAction::Proceed) => {}
-            Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
-            Ok(crate::workflow::OverwriteAction::PartialReplace(_)) => {}
-            Ok(crate::workflow::OverwriteAction::Skip(_)) => {
-                // Can't easily skip from inside the thread — send error
-                // The main thread will handle this via the error message
-                let _ = tx.send(RipMessage::Error(
-                    crate::media::MediaError::OutputExists(outfile),
+            Ok(crate::workflow::OverwriteAction::DeleteAndProceed(size)) => {
+                let _ = tx.send(RipMessage::StatusUpdate(
+                    format!("Overwriting {} ({})", final_filename, crate::util::format_size(size)),
                 ));
+            }
+            Ok(crate::workflow::OverwriteAction::PartialReplace(size)) => {
+                let _ = tx.send(RipMessage::StatusUpdate(
+                    format!("Re-ripping partial file {} (was {})", final_filename, crate::util::format_size(size)),
+                ));
+            }
+            Ok(crate::workflow::OverwriteAction::Skip(size)) => {
+                let _ = tx.send(RipMessage::Skipped(size));
                 return;
             }
             Err(e) => {
@@ -896,35 +903,124 @@ fn poll_active_job_session(
                 let pl_num = session.rip.jobs[idx].playlist.num.clone();
                 session.wizard.media_infos.insert(pl_num.clone(), media_info);
                 session.wizard.stream_infos.insert(pl_num, stream_info);
-                // Update job filename if it changed
+                // Update job filename and history if it changed
                 if session.rip.jobs[idx].filename != final_filename {
-                    session.rip.jobs[idx].filename = final_filename;
-                    // TODO: update history record if filename changed
+                    let old_filename = session.rip.jobs[idx].filename.clone();
+                    session.rip.jobs[idx].filename = final_filename.clone();
+                    log::info!("Filename resolved: {} -> {}", old_filename, final_filename);
+                    // Update history record with new output path
+                    if let (Some(db), Some(sid)) = (history_db, session.history_session_id) {
+                        let outfile = session.output_dir.join(&final_filename);
+                        let _ = db.update_file_path(sid, &session.rip.jobs[idx].playlist.num, &outfile.display().to_string());
+                    }
                 }
                 changed = true;
             }
-            Ok(RipMessage::ChaptersAdded(_added)) => {
-                // chapters_added_arc already updated via AtomicUsize
-                // Mark job complete
+            Ok(RipMessage::Skipped(size)) => {
                 let idx = session.rip.current_rip;
-                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
-                let final_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
-                session.rip.jobs[idx].status = PlaylistStatus::Done(final_size);
+                session.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
                 session.rip.progress_rx = None;
-                // ... existing completion logic (history, hooks, verify) ...
+                record_file_event(
+                    session, history_db, idx,
+                    crate::history::FileStatus::Skipped, None,
+                );
                 changed = true;
             }
-            Ok(RipMessage::Error(e)) => {
+            Ok(RipMessage::StatusUpdate(msg)) => {
+                session.status_message = msg;
+                changed = true;
+            }
+            Ok(RipMessage::ChaptersAdded(_added)) => {
+                // Move the FULL completion logic from the current Disconnected arm here.
+                // This includes: verification, PlaylistStatus::Done/Verified/VerifyFailed,
+                // history recording (record_file_event with Completed), and post-rip hooks.
+                // Copy lines 998-1089 of the current dashboard.rs Disconnected handler,
+                // replacing the outer `if matches!(...)` guard (no longer needed since
+                // ChaptersAdded is only sent on success).
                 let idx = session.rip.current_rip;
-                session.rip.jobs[idx].status = PlaylistStatus::Failed(e.to_string());
-                // Clean up partial file
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
+
+                if session.verify {
+                    // Full verification logic: build VerifyExpected, call verify_output,
+                    // set Verified/VerifyFailed status. Copy from current lines 1004-1072.
+                    // Stream counts now available from session.wizard.stream_infos
+                    // (populated by MediaReady message).
+                    let playlist = &session.rip.jobs[idx].playlist;
+                    let chapters = session.rip.chapters_added
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let (exp_video, exp_audio, exp_subtitle) =
+                        if let Some(indices) = session.wizard.track_selections.get(&playlist.num) {
+                            if let Some(info) = session.wizard.stream_infos.get(&playlist.num) {
+                                crate::streams::count_selected_streams(indices, info)
+                            } else {
+                                (playlist.video_streams, playlist.audio_streams, playlist.subtitle_streams)
+                            }
+                        } else if !session.stream_filter.is_empty() {
+                            if let Some(info) = session.wizard.stream_infos.get(&playlist.num) {
+                                let indices = session.stream_filter.apply(info);
+                                crate::streams::count_selected_streams(&indices, info)
+                            } else {
+                                (playlist.video_streams, playlist.audio_streams, playlist.subtitle_streams)
+                            }
+                        } else {
+                            (playlist.video_streams, playlist.audio_streams, playlist.subtitle_streams)
+                        };
+                    let expected = crate::verify::VerifyExpected {
+                        duration_secs: playlist.seconds,
+                        video_streams: exp_video,
+                        audio_streams: exp_audio,
+                        subtitle_streams: exp_subtitle,
+                        chapters,
+                    };
+                    let result = crate::verify::verify_output(&outfile, &expected, session.verify_level);
+                    if result.passed {
+                        session.rip.jobs[idx].status = PlaylistStatus::Verified(file_size, result);
+                    } else {
+                        let detail: String = result.checks.iter()
+                            .filter(|c| !c.passed)
+                            .map(|c| c.detail.clone())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        log::warn!("Verification failed for {}: {}", session.rip.jobs[idx].filename, detail);
+                        session.rip.jobs[idx].status = PlaylistStatus::VerifyFailed(file_size, result);
+                        session.rip.verify_failed_idx = Some(idx);
+                    }
+                } else {
+                    session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+                }
+                record_file_event(session, history_db, idx, crate::history::FileStatus::Completed, None);
+                let vars = build_post_rip_vars(session, idx, "success", "");
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
+                session.rip.progress_rx = None;
+                changed = true;
+            }
+            Ok(RipMessage::Cancelled) => {
+                let idx = session.rip.current_rip;
                 let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
                 if outfile.exists() {
                     let _ = std::fs::remove_file(&outfile);
                 }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
                 session.rip.progress_rx = None;
-                // ... existing error handling ...
-                changed = true;
+                record_file_event(session, history_db, idx, crate::history::FileStatus::Failed, Some("Cancelled"));
+                let vars = build_post_rip_vars(session, idx, "failed", "Cancelled");
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
+                return true;
+            }
+            Ok(RipMessage::Error(e)) => {
+                let idx = session.rip.current_rip;
+                let err_msg = e.to_string();
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed(err_msg.clone());
+                session.rip.progress_rx = None;
+                record_file_event(session, history_db, idx, crate::history::FileStatus::Failed, Some(&err_msg));
+                let vars = build_post_rip_vars(session, idx, "failed", &err_msg);
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
+                return true;
             }
             Err(mpsc::TryRecvError::Empty) => break,
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -1192,7 +1288,9 @@ fn test_estimate_size_clip_size_priority() {
         num: "00001".into(),
         duration: "1:00:00".into(),
         seconds: 3600,
-        ..Default::default()
+        video_streams: 0,
+        audio_streams: 0,
+        subtitle_streams: 0,
     };
     // Clip size takes priority
     let result = estimate_size(&pl, Some(10_000_000_000), None);
@@ -1205,11 +1303,15 @@ fn test_estimate_size_bitrate_fallback() {
         num: "00001".into(),
         duration: "1:00:00".into(),
         seconds: 3600,
-        ..Default::default()
+        video_streams: 0,
+        audio_streams: 0,
+        subtitle_streams: 0,
     };
     let mi = MediaInfo {
         bitrate_bps: 40_000_000, // 40 Mbps
-        ..Default::default()
+        video_streams: 0,
+        audio_streams: 0,
+        subtitle_streams: 0,
     };
     // No clip size → falls back to bitrate
     let result = estimate_size(&pl, None, Some(&mi));
@@ -1222,7 +1324,9 @@ fn test_estimate_size_default_fallback() {
         num: "00001".into(),
         duration: "1:00:00".into(),
         seconds: 3600,
-        ..Default::default()
+        video_streams: 0,
+        audio_streams: 0,
+        subtitle_streams: 0,
     };
     // No clip size, no bitrate → fallback
     let result = estimate_size(&pl, None, None);
@@ -1235,11 +1339,15 @@ fn test_estimate_size_zero_clip_size_skipped() {
         num: "00001".into(),
         duration: "1:00:00".into(),
         seconds: 3600,
-        ..Default::default()
+        video_streams: 0,
+        audio_streams: 0,
+        subtitle_streams: 0,
     };
     let mi = MediaInfo {
         bitrate_bps: 40_000_000,
-        ..Default::default()
+        video_streams: 0,
+        audio_streams: 0,
+        subtitle_streams: 0,
     };
     // clip_size = 0 is treated as unavailable
     let result = estimate_size(&pl, Some(0), Some(&mi));
