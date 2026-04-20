@@ -440,33 +440,6 @@ where
     Ok(chapters_added)
 }
 
-/// Lossless remux of a Blu-ray playlist to MKV via FFmpeg library API.
-///
-/// Convenience wrapper that opens the input, performs the remux, and returns
-/// the chapter count along with media/stream information.
-///
-/// Callers that need stream info before remux (for filtering) should use
-/// `open_remux_input()` + `write_remux()` directly instead.
-///
-/// Progress is reported via the `on_progress` callback approximately every 100ms.
-/// The `cancel` flag in `options` is checked each packet iteration; if set, the
-/// function writes a trailer for a clean close and returns `Err(MediaError::Cancelled)`.
-#[allow(dead_code)] // Public API kept for potential external/future use
-pub fn remux<F>(
-    device: &str,
-    playlist: &str,
-    output: &std::path::Path,
-    options: RemuxOptions,
-    on_progress: F,
-) -> Result<(usize, crate::types::MediaInfo, crate::types::StreamInfo), MediaError>
-where
-    F: Fn(&RipProgress),
-{
-    let (ictx, guard, media_info, stream_info) = open_remux_input(device, playlist)?;
-    let chapters_added = write_remux(ictx, guard, output, options, on_progress)?;
-    Ok((chapters_added, media_info, stream_info))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
