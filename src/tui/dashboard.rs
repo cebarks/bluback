@@ -1034,7 +1034,7 @@ fn poll_active_job_session(
                 session.status_message = msg;
                 changed = true;
             }
-            Ok(RipMessage::ChaptersAdded(_chapters)) => {
+            Ok(RipMessage::ChaptersAdded(chapters_added)) => {
                 // Remux completed successfully — run verification and finalize
                 let idx = session.rip.current_rip;
                 let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
@@ -1042,10 +1042,7 @@ fn poll_active_job_session(
 
                 if session.verify {
                     let playlist = &session.rip.jobs[idx].playlist;
-                    let chapters = session
-                        .rip
-                        .chapters_added
-                        .load(std::sync::atomic::Ordering::Relaxed);
+                    let chapters = chapters_added;
 
                     // Compute expected stream counts accounting for manual
                     // stream selection (output may have fewer streams than source)

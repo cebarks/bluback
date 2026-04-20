@@ -1584,21 +1584,11 @@ fn rip_selected(
             .expect("output path has filename")
             .to_string_lossy();
 
-        const TS_TO_MKV_FACTOR: f64 = 0.97;
-        let estimated_size = clip_sizes
-            .get(&pl.num)
-            .copied()
-            .filter(|&sz| sz > 0)
-            .map(|sz| (sz as f64 * TS_TO_MKV_FACTOR) as u64)
-            .or_else(|| {
-                probe_cache.get(&pl.num).and_then(|(mi, _)| {
-                    if mi.bitrate_bps > 0 {
-                        Some(pl.seconds as u64 * (mi.bitrate_bps / 8))
-                    } else {
-                        None
-                    }
-                })
-            });
+        let estimated_size = Some(crate::workflow::estimate_size(
+            pl,
+            clip_sizes.get(&pl.num).copied(),
+            probe_cache.get(&pl.num).map(|(mi, _)| mi),
+        ));
 
         match crate::workflow::check_overwrite(
             outfile,
