@@ -862,9 +862,6 @@ pub fn render_confirm_view(f: &mut Frame, view: &ConfirmView, _status: &str, are
     let header = Row::new(vec!["Playlist", "Duration", "~Size", "Output File"])
         .style(Style::default().fg(Color::Yellow));
 
-    // Fallback: ~20 Mbps (2.5 MB/s) if no probed bitrate available
-    const FALLBACK_BYTERATE: u64 = 2_500_000;
-
     let mut total_seconds: u32 = 0;
     let mut total_est_bytes: u64 = 0;
 
@@ -874,13 +871,11 @@ pub fn render_confirm_view(f: &mut Frame, view: &ConfirmView, _status: &str, are
         .zip(view.filenames.iter())
         .map(|(pl, name)| {
             total_seconds += pl.seconds;
-            let byterate = view
-                .media_infos
-                .get(&pl.num)
-                .map(|info| info.bitrate_bps / 8)
-                .filter(|&br| br > 0)
-                .unwrap_or(FALLBACK_BYTERATE);
-            let est_bytes = pl.seconds as u64 * byterate;
+            let est_bytes = crate::workflow::estimate_size(
+                pl,
+                view.clip_sizes.get(&pl.num).copied(),
+                view.media_infos.get(&pl.num),
+            );
             total_est_bytes += est_bytes;
             Row::new(vec![
                 pl.num.clone(),
@@ -1654,25 +1649,6 @@ pub fn handle_playlist_manager_input_session(
                 .map(|(i, _)| i)
                 .collect();
 
-            // Probe any unprobed selected playlists synchronously before proceeding
-            let unprobed_selected: Vec<String> = selected_indices
-                .iter()
-                .map(|&i| &session.disc.playlists[i])
-                .filter(|pl| !session.wizard.stream_infos.contains_key(&pl.num))
-                .map(|pl| pl.num.clone())
-                .collect();
-
-            if !unprobed_selected.is_empty() {
-                let device = session.device.to_string_lossy().to_string();
-                for num in &unprobed_selected {
-                    if let Ok((media, streams)) = crate::media::probe::probe_playlist(&device, num)
-                    {
-                        session.wizard.stream_infos.insert(num.clone(), streams);
-                        session.wizard.media_infos.insert(num.clone(), media);
-                    }
-                }
-            }
-
             let filenames: Vec<String> = selected_indices
                 .iter()
                 .map(|&idx| {
@@ -1762,27 +1738,11 @@ pub fn handle_confirm_input_session(session: &mut crate::session::DriveSession, 
                     .get(&pl.num)
                     .cloned()
                     .unwrap_or_default();
-                // Prefer real on-disc clip size with TS→MKV overhead correction;
-                // fall back to bitrate estimate
-                const TS_TO_MKV_FACTOR: f64 = 0.97;
-                let estimated_size = session
-                    .disc
-                    .clip_sizes
-                    .get(&pl.num)
-                    .copied()
-                    .filter(|&sz| sz > 0)
-                    .map(|sz| (sz as f64 * TS_TO_MKV_FACTOR) as u64)
-                    .unwrap_or_else(|| {
-                        const FALLBACK_BYTERATE: u64 = 2_500_000;
-                        let byterate = session
-                            .wizard
-                            .media_infos
-                            .get(&pl.num)
-                            .map(|info| info.bitrate_bps / 8)
-                            .filter(|&br| br > 0)
-                            .unwrap_or(FALLBACK_BYTERATE);
-                        pl.seconds as u64 * byterate
-                    });
+                let estimated_size = crate::workflow::estimate_size(
+                    &pl,
+                    session.disc.clip_sizes.get(&pl.num).copied(),
+                    session.wizard.media_infos.get(&pl.num),
+                );
                 session.rip.jobs.push(crate::types::RipJob {
                     playlist: pl,
                     episode,

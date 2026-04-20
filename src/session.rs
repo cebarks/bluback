@@ -473,6 +473,7 @@ impl DriveSession {
             output_dir: self.output_dir.display().to_string(),
             dry_run: false, // DriveSession doesn't support dry_run yet
             media_infos: self.wizard.media_infos.clone(),
+            clip_sizes: self.disc.clip_sizes.clone(),
         })
     }
 
