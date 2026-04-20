@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -21,9 +20,6 @@ pub enum StreamSelection {
 
 /// All parameters needed to perform a single remux operation.
 pub struct RemuxOptions {
-    pub device: String,
-    pub playlist: String,
-    pub output: PathBuf,
     pub chapters: Vec<ChapterMark>,
     pub stream_selection: StreamSelection,
     pub cancel: Arc<AtomicBool>,
@@ -125,39 +121,30 @@ fn inject_chapters(
     Ok(added)
 }
 
-/// Lossless remux of a Blu-ray playlist to MKV via FFmpeg library API.
+/// Open a Blu-ray playlist input context and extract media/stream information.
 ///
-/// This replaces the old approach of spawning an `ffmpeg` CLI process.
-/// All streams are copied (`-c copy` equivalent) -- no re-encoding.
-///
-/// Progress is reported via the `on_progress` callback approximately every 100ms.
-/// The `cancel` flag in `options` is checked each packet iteration; if set, the
-/// function writes a trailer for a clean close and returns `Err(MediaError::Cancelled)`.
-pub fn remux<F>(options: RemuxOptions, on_progress: F) -> Result<usize, MediaError>
-where
-    F: Fn(&RipProgress),
-{
+/// Returns the opened FFmpeg input context, the MakemkvconGuard (must be kept alive
+/// for the duration of the remux), and the extracted media and stream info.
+pub fn open_remux_input(
+    device: &str,
+    playlist: &str,
+) -> Result<
+    (
+        format::context::Input,
+        crate::aacs::MakemkvconGuard,
+        crate::types::MediaInfo,
+        crate::types::StreamInfo,
+    ),
+    MediaError,
+> {
     super::ensure_init();
 
-    log::info!(
-        "Remux started: playlist={}, output={}",
-        options.playlist,
-        options.output.display()
-    );
-
-    if options.output.exists() {
-        return Err(MediaError::OutputExists(options.output.clone()));
-    }
-
-    // Open input: bluray:{device} with playlist option.
-    // The guard tracks makemkvcon spawned during the open and kills it on drop,
-    // scoped to this remux only (no cross-session interference in multi-drive mode).
-    let mut _mkv_guard = crate::aacs::MakemkvconGuard::new();
-    let input_url = format!("bluray:{}", options.device);
+    let mut guard = crate::aacs::MakemkvconGuard::new();
+    let input_url = format!("bluray:{}", device);
     let mut opts = Dictionary::new();
-    opts.set("playlist", &options.playlist);
+    opts.set("playlist", playlist);
 
-    let mut ictx = _mkv_guard.track_open(|| {
+    let ictx = guard.track_open(|| {
         format::input_with_dictionary(&input_url, opts).map_err(|e| {
             if let Some(aacs_err) = classify_aacs_error(&e) {
                 return aacs_err;
@@ -166,10 +153,38 @@ where
         })
     })?;
 
-    let nb_input_streams = ictx.nb_streams() as usize;
-    if nb_input_streams == 0 {
+    let nb_streams = ictx.nb_streams() as usize;
+    if nb_streams == 0 {
         return Err(MediaError::NoStreams);
     }
+
+    let (media_info, stream_info) =
+        crate::media::probe::extract_media_and_stream_info(&ictx);
+
+    Ok((ictx, guard, media_info, stream_info))
+}
+
+/// Write a remux operation from an opened input context to an MKV file.
+///
+/// Takes ownership of the input context and guard. Progress is reported via
+/// the `on_progress` callback approximately every 100ms.
+pub fn write_remux<F>(
+    mut ictx: format::context::Input,
+    _guard: crate::aacs::MakemkvconGuard,
+    output: &std::path::Path,
+    options: RemuxOptions,
+    on_progress: F,
+) -> Result<usize, MediaError>
+where
+    F: Fn(&RipProgress),
+{
+    log::info!("Remux started: output={}", output.display());
+
+    if output.exists() {
+        return Err(MediaError::OutputExists(output.to_path_buf()));
+    }
+
+    let nb_input_streams = ictx.nb_streams() as usize;
 
     let selected = select_streams(&options.stream_selection, nb_input_streams);
 
@@ -178,8 +193,7 @@ where
     }
 
     // Create output context for MKV
-    let output_path = options
-        .output
+    let output_path = output
         .to_str()
         .ok_or_else(|| MediaError::RemuxFailed("Output path contains invalid UTF-8".into()))?;
     let mut octx = format::output(output_path)?;
@@ -280,7 +294,7 @@ where
     loop {
         if options.cancel.load(Ordering::Relaxed) {
             let _ = octx.write_trailer();
-            log::warn!("Remux cancelled: {}", options.output.display());
+            log::warn!("Remux cancelled: {}", output.display());
             return Err(MediaError::Cancelled);
         }
 
@@ -288,7 +302,7 @@ where
             Ok(()) => {}
             Err(ffmpeg::Error::Eof) => break,
             Err(e) => {
-                log::warn!("Remux failed: {}: {}", options.output.display(), e);
+                log::warn!("Remux failed: {}: {}", output.display(), e);
                 return Err(MediaError::RemuxFailed(format!(
                     "Error reading packet: {}",
                     e
@@ -349,7 +363,7 @@ where
 
         // Write packet (interleaved for proper ordering)
         packet.write_interleaved(&mut octx).map_err(|e| {
-            log::warn!("Remux failed: {}: {}", options.output.display(), e);
+            log::warn!("Remux failed: {}: {}", output.display(), e);
             MediaError::RemuxFailed(format!("Error writing packet: {}", e))
         })?;
 
@@ -423,8 +437,31 @@ where
         speed,
     });
 
-    log::info!("Remux completed: {}", options.output.display());
+    log::info!("Remux completed: {}", output.display());
     Ok(chapters_added)
+}
+
+/// Lossless remux of a Blu-ray playlist to MKV via FFmpeg library API.
+///
+/// Convenience wrapper that opens the input, performs the remux, and returns
+/// the chapter count along with media/stream information.
+///
+/// Progress is reported via the `on_progress` callback approximately every 100ms.
+/// The `cancel` flag in `options` is checked each packet iteration; if set, the
+/// function writes a trailer for a clean close and returns `Err(MediaError::Cancelled)`.
+pub fn remux<F>(
+    device: &str,
+    playlist: &str,
+    output: &std::path::Path,
+    options: RemuxOptions,
+    on_progress: F,
+) -> Result<(usize, crate::types::MediaInfo, crate::types::StreamInfo), MediaError>
+where
+    F: Fn(&RipProgress),
+{
+    let (ictx, guard, media_info, stream_info) = open_remux_input(device, playlist)?;
+    let chapters_added = write_remux(ictx, guard, output, options, on_progress)?;
+    Ok((chapters_added, media_info, stream_info))
 }
 
 #[cfg(test)]
