@@ -118,8 +118,7 @@ pub struct RipState {
     pub jobs: Vec<RipJob>,
     pub current_rip: usize,
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    pub progress_rx:
-        Option<mpsc::Receiver<Result<crate::types::RipProgress, crate::media::MediaError>>>,
+    pub progress_rx: Option<mpsc::Receiver<crate::tui::dashboard::RipMessage>>,
     pub confirm_abort: bool,
     pub confirm_rescan: bool,
     pub chapters_added: std::sync::Arc<std::sync::atomic::AtomicUsize>,

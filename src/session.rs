@@ -1435,6 +1435,84 @@ impl DriveSession {
         )
     }
 
+    /// Build a `RipThreadContext` for the job at `job_idx`, capturing all
+    /// session state needed by the rip thread.
+    pub fn rip_thread_context(&self, job_idx: usize) -> crate::workflow::RipThreadContext {
+        let job = &self.rip.jobs[job_idx];
+        let pl = &job.playlist;
+        let is_special = self.wizard.specials.contains(&pl.num);
+
+        let show_name = if !self.tmdb.show_name.is_empty() {
+            self.tmdb.show_name.clone()
+        } else {
+            self.disc
+                .label_info
+                .as_ref()
+                .map(|l| l.show.clone())
+                .unwrap_or_else(|| "Unknown".to_string())
+        };
+
+        let movie_title = if self.tmdb.movie_mode {
+            let movie = self
+                .tmdb
+                .selected_movie
+                .and_then(|i| self.tmdb.movie_results.get(i));
+            let title = movie.map(|m| m.title.as_str()).unwrap_or("movie");
+            let year = movie
+                .and_then(|m| m.release_date.as_deref())
+                .and_then(|d| d.get(..4))
+                .unwrap_or("");
+            Some((title.to_string(), year.to_string()))
+        } else {
+            None
+        };
+
+        let part = if self.tmdb.movie_mode {
+            let selected_count = self.wizard.playlist_selected.iter().filter(|&&s| s).count();
+            if selected_count > 1 {
+                // Find which selected-playlist position this job corresponds to.
+                // Jobs are built from selected playlists in order, so job_idx
+                // maps directly to the Nth selected playlist.
+                Some(job_idx as u32 + 1)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let episodes = self
+            .wizard
+            .episode_assignments
+            .get(&pl.num)
+            .cloned()
+            .unwrap_or_default();
+
+        let cached_track_selection = self.wizard.track_selections.get(&pl.num).cloned();
+
+        crate::workflow::RipThreadContext {
+            device: self.device.to_string_lossy().to_string(),
+            playlist: pl.clone(),
+            output_dir: self.output_dir.clone(),
+            episodes,
+            season: self.wizard.season_num.unwrap_or(0),
+            movie_mode: self.tmdb.movie_mode,
+            is_special,
+            movie_title,
+            show_name,
+            label: self.disc.label.clone(),
+            label_info: self.disc.label_info.clone(),
+            config: self.config.clone(),
+            format_override: self.format.clone(),
+            format_preset_override: self.format_preset.clone(),
+            part,
+            cached_track_selection,
+            stream_filter: self.stream_filter.clone(),
+            overwrite: self.config.overwrite() || self.overwrite,
+            estimated_size: job.estimated_size,
+        }
+    }
+
     /// Get visible playlists (respecting show_filtered and show_specials settings).
     pub fn visible_playlists(&self) -> Vec<(usize, &Playlist)> {
         let min_probe_dur = self.config.min_probe_duration(self.min_probe_duration_arg);

@@ -1,12 +1,80 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use crate::config::Config;
 use crate::media::{RemuxOptions, StreamSelection};
+use crate::streams::StreamFilter;
 use crate::types::{Episode, LabelInfo, MediaInfo, Playlist};
 use crate::util;
+
+/// All context needed to run a remux job in a background thread.
+///
+/// Collected on the main thread from session state, then moved into the
+/// rip thread where it drives open_remux_input, filename resolution,
+/// overwrite checks, stream selection, and write_remux.
+pub struct RipThreadContext {
+    pub device: String,
+    pub playlist: Playlist,
+    pub output_dir: PathBuf,
+    pub episodes: Vec<Episode>,
+    pub season: u32,
+    pub movie_mode: bool,
+    pub is_special: bool,
+    pub movie_title: Option<(String, String)>,
+    pub show_name: String,
+    pub label: String,
+    pub label_info: Option<LabelInfo>,
+    pub config: Config,
+    pub format_override: Option<String>,
+    pub format_preset_override: Option<String>,
+    pub part: Option<u32>,
+    pub cached_track_selection: Option<Vec<usize>>,
+    pub stream_filter: StreamFilter,
+    pub overwrite: bool,
+    pub estimated_size: u64,
+}
+
+impl RipThreadContext {
+    /// Compute the output filename, optionally using probed MediaInfo for
+    /// resolution/codec placeholders in custom format templates.
+    pub fn resolve_filename(&self, media_info: Option<&MediaInfo>) -> String {
+        build_output_filename(
+            &self.playlist,
+            &self.episodes,
+            self.season,
+            self.movie_mode,
+            self.is_special,
+            self.movie_title
+                .as_ref()
+                .map(|(t, y)| (t.as_str(), y.as_str())),
+            &self.show_name,
+            &self.label,
+            self.label_info.as_ref(),
+            &self.config,
+            self.format_override.as_deref(),
+            self.format_preset_override.as_deref(),
+            media_info,
+            self.part,
+        )
+    }
+
+    /// Resolve stream selection from cached manual track picks, stream filter,
+    /// or fall back to All.
+    pub fn resolve_stream_selection(
+        &self,
+        stream_info: &crate::types::StreamInfo,
+    ) -> StreamSelection {
+        if let Some(ref indices) = self.cached_track_selection {
+            StreamSelection::Manual(indices.clone())
+        } else if !self.stream_filter.is_empty() {
+            StreamSelection::Manual(self.stream_filter.apply(stream_info))
+        } else {
+            StreamSelection::All
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum OverwriteAction {
@@ -377,13 +445,7 @@ mod tests {
             subtitle_streams: 0,
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        let opts = prepare_remux_options(
-            &playlist,
-            None,
-            cancel,
-            500,
-            None,
-        );
+        let opts = prepare_remux_options(&playlist, None, cancel, 500, None);
         assert!(opts.chapters.is_empty());
         assert_eq!(opts.reserve_index_space_kb, 500);
         assert!(matches!(opts.stream_selection, StreamSelection::All));
@@ -400,13 +462,7 @@ mod tests {
             subtitle_streams: 0,
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        let opts = prepare_remux_options(
-            &playlist,
-            Some("/nonexistent/mount"),
-            cancel,
-            500,
-            None,
-        );
+        let opts = prepare_remux_options(&playlist, Some("/nonexistent/mount"), cancel, 500, None);
         assert!(opts.chapters.is_empty());
     }
 

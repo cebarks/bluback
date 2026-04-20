@@ -158,8 +158,7 @@ pub fn open_remux_input(
         return Err(MediaError::NoStreams);
     }
 
-    let (media_info, stream_info) =
-        crate::media::probe::extract_media_and_stream_info(&ictx);
+    let (media_info, stream_info) = crate::media::probe::extract_media_and_stream_info(&ictx);
 
     Ok((ictx, guard, media_info, stream_info))
 }
