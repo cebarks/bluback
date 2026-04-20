@@ -66,13 +66,9 @@ fn format_size_inline(bytes: u64) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn prepare_remux_options(
-    device: &str,
     playlist: &Playlist,
-    output: &Path,
     mount_point: Option<&str>,
-    stream_selection: StreamSelection,
     cancel: Arc<AtomicBool>,
     reserve_index_space_kb: u32,
     metadata: Option<crate::types::MkvMetadata>,
@@ -84,15 +80,35 @@ pub fn prepare_remux_options(
         .unwrap_or_default();
 
     RemuxOptions {
-        device: device.to_string(),
-        playlist: playlist.num.clone(),
-        output: output.to_path_buf(),
         chapters,
-        stream_selection,
+        stream_selection: StreamSelection::All,
         cancel,
         reserve_index_space_kb,
         metadata,
     }
+}
+
+const TS_TO_MKV_FACTOR: f64 = 0.97;
+const FALLBACK_BYTERATE: u64 = 2_500_000;
+
+/// Estimate output MKV size for a playlist.
+///
+/// Priority: on-disc clip size (with TS→MKV correction) > probed bitrate > fallback (~20 Mbps).
+pub fn estimate_size(
+    playlist: &Playlist,
+    clip_size: Option<u64>,
+    media_info: Option<&MediaInfo>,
+) -> u64 {
+    clip_size
+        .filter(|&sz| sz > 0)
+        .map(|sz| (sz as f64 * TS_TO_MKV_FACTOR) as u64)
+        .or_else(|| {
+            media_info
+                .map(|info| info.bitrate_bps / 8)
+                .filter(|&br| br > 0)
+                .map(|br| playlist.seconds as u64 * br)
+        })
+        .unwrap_or_else(|| playlist.seconds as u64 * FALLBACK_BYTERATE)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -362,20 +378,15 @@ mod tests {
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let opts = prepare_remux_options(
-            "/dev/sr0",
             &playlist,
-            Path::new("/tmp/out.mkv"),
             None,
-            StreamSelection::All,
             cancel,
             500,
             None,
         );
-        assert_eq!(opts.device, "/dev/sr0");
-        assert_eq!(opts.playlist, "00001");
-        assert_eq!(opts.output, std::path::PathBuf::from("/tmp/out.mkv"));
         assert!(opts.chapters.is_empty());
         assert_eq!(opts.reserve_index_space_kb, 500);
+        assert!(matches!(opts.stream_selection, StreamSelection::All));
     }
 
     #[test]
@@ -390,11 +401,8 @@ mod tests {
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let opts = prepare_remux_options(
-            "/dev/sr0",
             &playlist,
-            Path::new("/tmp/out.mkv"),
             Some("/nonexistent/mount"),
-            StreamSelection::All,
             cancel,
             500,
             None,
