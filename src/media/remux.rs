@@ -445,9 +445,13 @@ where
 /// Convenience wrapper that opens the input, performs the remux, and returns
 /// the chapter count along with media/stream information.
 ///
+/// Callers that need stream info before remux (for filtering) should use
+/// `open_remux_input()` + `write_remux()` directly instead.
+///
 /// Progress is reported via the `on_progress` callback approximately every 100ms.
 /// The `cancel` flag in `options` is checked each packet iteration; if set, the
 /// function writes a trailer for a clean close and returns `Err(MediaError::Cancelled)`.
+#[allow(dead_code)] // Public API kept for potential external/future use
 pub fn remux<F>(
     device: &str,
     playlist: &str,

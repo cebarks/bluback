@@ -17,7 +17,7 @@ pub(crate) enum RipMessage {
     /// (which may differ from the provisional one if MediaInfo changed resolution
     /// placeholders in the format template).
     MediaReady {
-        media_info: crate::types::MediaInfo,
+        media_info: Box<crate::types::MediaInfo>,
         stream_info: crate::types::StreamInfo,
         final_filename: String,
     },
@@ -897,7 +897,7 @@ fn start_next_job_session(
 
         // Send MediaReady so main thread can update caches and job filename
         let _ = tx.send(RipMessage::MediaReady {
-            media_info: media_info.clone(),
+            media_info: Box::new(media_info.clone()),
             stream_info: stream_info.clone(),
             final_filename: final_filename.clone(),
         });
@@ -1000,7 +1000,7 @@ fn poll_active_job_session(
                 session
                     .wizard
                     .media_infos
-                    .insert(playlist_num.clone(), media_info);
+                    .insert(playlist_num.clone(), *media_info);
                 session
                     .wizard
                     .stream_infos

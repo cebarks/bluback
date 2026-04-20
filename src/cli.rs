@@ -1655,19 +1655,20 @@ fn rip_selected(
             pl.num, pl.duration, filename
         );
 
-        // Probe on demand if not cached — this opens the device once per playlist,
-        // naturally spaced by minutes of remux time.
-        let on_demand = probe_cache
-            .get(&pl.num)
-            .cloned()
-            .or_else(|| crate::media::probe::probe_playlist(device, &pl.num).ok());
+        // Open input context (also extracts media/stream info, eliminating a
+        // separate probe_playlist call that would re-open the device).
+        let (ictx, guard, _media_info, stream_info) =
+            match crate::media::remux::open_remux_input(device, &pl.num) {
+                Ok(result) => result,
+                Err(e) => {
+                    println!("Error opening playlist {}: {}", pl.num, e);
+                    fail_count += 1;
+                    continue;
+                }
+            };
 
         // Resolve stream selection per-playlist
         let stream_selection = if let Some(tracks) = tracks_spec {
-            let stream_info = on_demand
-                .as_ref()
-                .map(|(_, si)| si.clone())
-                .unwrap_or_default();
             match crate::streams::parse_track_spec(tracks, &stream_info) {
                 Ok(indices) => {
                     let errors = crate::streams::validate_track_selection(&indices, &stream_info);
@@ -1681,10 +1682,6 @@ fn rip_selected(
                 }
             }
         } else if !stream_filter.is_empty() {
-            let stream_info = on_demand
-                .as_ref()
-                .map(|(_, si)| si.clone())
-                .unwrap_or_default();
             let indices = stream_filter.apply(&stream_info);
             let errors = crate::streams::validate_track_selection(&indices, &stream_info);
             if !errors.is_empty() {
@@ -1699,10 +1696,6 @@ fn rip_selected(
         // When manual selection is active, the output will have fewer streams than the source.
         let (expected_video, expected_audio, expected_subtitle) = match &stream_selection {
             crate::media::StreamSelection::Manual(indices) => {
-                let stream_info = on_demand
-                    .as_ref()
-                    .map(|(_, si)| si.clone())
-                    .unwrap_or_default();
                 crate::streams::count_selected_streams(indices, &stream_info)
             }
             crate::media::StreamSelection::All => {
@@ -1711,16 +1704,14 @@ fn rip_selected(
         };
 
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let options = crate::workflow::prepare_remux_options(
-            device,
+        let mut options = crate::workflow::prepare_remux_options(
             pl,
-            outfile,
             mount_point.as_deref(),
-            stream_selection,
             cancel,
             config.reserve_index_space(),
             metadata_per_playlist[i].clone(),
         );
+        options.stream_selection = stream_selection;
 
         // Record file start in history
         let episodes_json = tmdb_ctx.episode_assignments.get(&pl.num).map(|eps| {
@@ -1754,7 +1745,7 @@ fn rip_selected(
         let started = std::cell::Cell::new(false);
         let pl_num = pl.num.clone();
 
-        let result = crate::media::remux::remux(options, |progress| {
+        let result = crate::media::remux::write_remux(ictx, guard, outfile, options, |progress| {
             // Use actual stream duration from FFmpeg when available,
             // falling back to libbluray's parsed playlist duration
             let duration = if progress.duration_secs > 0 {
