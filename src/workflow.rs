@@ -798,4 +798,68 @@ mod tests {
             assert!(!v.is_empty(), "Tag {} has empty value", k);
         }
     }
+
+    #[test]
+    fn test_estimate_size_clip_size_priority() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let result = estimate_size(&pl, Some(10_000_000_000), None);
+        assert_eq!(result, (10_000_000_000_f64 * 0.97) as u64);
+    }
+
+    #[test]
+    fn test_estimate_size_bitrate_fallback() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let mi = MediaInfo {
+            bitrate_bps: 40_000_000,
+            ..Default::default()
+        };
+        let result = estimate_size(&pl, None, Some(&mi));
+        assert_eq!(result, 3600 * (40_000_000 / 8));
+    }
+
+    #[test]
+    fn test_estimate_size_default_fallback() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let result = estimate_size(&pl, None, None);
+        assert_eq!(result, 3600 * 2_500_000);
+    }
+
+    #[test]
+    fn test_estimate_size_zero_clip_size_skipped() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let mi = MediaInfo {
+            bitrate_bps: 40_000_000,
+            ..Default::default()
+        };
+        let result = estimate_size(&pl, Some(0), Some(&mi));
+        assert_eq!(result, 3600 * (40_000_000 / 8));
+    }
 }
