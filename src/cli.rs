@@ -846,6 +846,8 @@ pub fn run(
         &probe_cache,
         &clip_sizes,
         movie_mode,
+        label_info.as_ref(),
+        &specials_set,
         history,
         session_id,
         label_info.as_ref().map(|l| l.disc),
@@ -1510,6 +1512,8 @@ fn rip_selected(
     probe_cache: &crate::types::ProbeCache,
     clip_sizes: &std::collections::HashMap<String, u64>,
     movie_mode: bool,
+    label_info: Option<&LabelInfo>,
+    specials: &std::collections::HashSet<String>,
     history: Option<&crate::history::HistoryDb>,
     session_id: Option<i64>,
     disc_number: Option<u32>,
@@ -1657,7 +1661,7 @@ fn rip_selected(
 
         // Open input context (also extracts media/stream info, eliminating a
         // separate probe_playlist call that would re-open the device).
-        let (ictx, guard, _media_info, stream_info) =
+        let (ictx, guard, media_info, stream_info) =
             match crate::media::remux::open_remux_input(device, &pl.num) {
                 Ok(result) => result,
                 Err(e) => {
@@ -1666,6 +1670,105 @@ fn rip_selected(
                     continue;
                 }
             };
+
+        // Re-resolve filename with full media info from the open context.
+        // The pre-computed outfile may have unresolved template vars like {resolution}.
+        let is_special = specials.contains(&pl.num);
+        let show_name_str = if movie_mode {
+            tmdb_ctx
+                .movie_title
+                .as_ref()
+                .map(|(t, _)| t.clone())
+                .unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            tmdb_ctx.show_name.clone().unwrap_or_else(|| {
+                label_info
+                    .map(|l| l.show.clone())
+                    .unwrap_or_else(|| "Unknown".to_string())
+            })
+        };
+        let episodes = tmdb_ctx
+            .episode_assignments
+            .get(&pl.num)
+            .cloned()
+            .unwrap_or_default();
+        let part = if tmdb_ctx.movie_title.is_some() && selected.len() > 1 {
+            selected
+                .iter()
+                .position(|&s| s == idx)
+                .map(|p| p as u32 + 1)
+        } else {
+            None
+        };
+        let resolved_name = workflow::build_output_filename(
+            pl,
+            &episodes,
+            tmdb_ctx.season_num.unwrap_or(0),
+            movie_mode,
+            is_special,
+            tmdb_ctx
+                .movie_title
+                .as_ref()
+                .map(|(t, y)| (t.as_str(), y.as_str())),
+            &show_name_str,
+            label,
+            label_info,
+            config,
+            args.format.as_deref(),
+            args.format_preset.as_deref(),
+            Some(&media_info),
+            part,
+        );
+        let outfile = if resolved_name != filename {
+            eprintln!("  Filename resolved: {} -> {}", filename, resolved_name);
+            &output_dir.join(&resolved_name)
+        } else {
+            outfile
+        };
+        let filename = outfile
+            .file_name()
+            .expect("output path has filename")
+            .to_string_lossy();
+
+        // Re-check overwrite with final filename if it changed
+        if resolved_name
+            != *outfiles[i]
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        {
+            match crate::workflow::check_overwrite(
+                outfile,
+                args.overwrite || config.overwrite(),
+                estimated_size,
+            )? {
+                crate::workflow::OverwriteAction::Proceed => {}
+                crate::workflow::OverwriteAction::Skip(size) => {
+                    println!(
+                        "\nSkipping playlist {} -> {} (already exists, {})",
+                        pl.num,
+                        filename,
+                        format_size(size)
+                    );
+                    skip_count += 1;
+                    continue;
+                }
+                crate::workflow::OverwriteAction::PartialReplace(size) => {
+                    println!(
+                        "\nRe-ripping partial file {} -> {} (was {}, expected ~{})",
+                        pl.num,
+                        filename,
+                        format_size(size),
+                        estimated_size
+                            .map(format_size)
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    );
+                }
+                crate::workflow::OverwriteAction::DeleteAndProceed(size) => {
+                    println!("\nOverwriting {} ({})", filename, format_size(size));
+                }
+            }
+        }
 
         // Resolve stream selection per-playlist
         let stream_selection = if let Some(tracks) = tracks_spec {
