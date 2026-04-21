@@ -55,7 +55,16 @@ impl Coordinator {
         stream_filter: crate::streams::StreamFilter,
     ) -> Self {
         let (drive_tx, drive_rx) = mpsc::channel();
-        DriveMonitor::spawn(Duration::from_secs(2), drive_tx);
+
+        // Only spawn DriveMonitor for disc input (not folder input)
+        let is_folder = args
+            .device
+            .as_ref()
+            .map(|d| d.is_dir())
+            .unwrap_or(false);
+        if !is_folder {
+            DriveMonitor::spawn(Duration::from_secs(2), drive_tx);
+        }
 
         Self {
             sessions: Vec::new(),
@@ -358,6 +367,9 @@ impl Coordinator {
         // Ctrl+E: eject disc from active session's drive
         if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if let Some(session) = self.active_session() {
+                if session.device.is_dir() {
+                    return; // No disc to eject for folder input
+                }
                 let device = session.device.to_string_lossy().to_string();
                 if let Err(e) = crate::disc::eject_disc(&device) {
                     log::warn!("Failed to eject disc: {}", e);
@@ -369,6 +381,10 @@ impl Coordinator {
         // Ctrl+N: new manual session (if no --device, spawn on first available drive
         // without an existing session)
         if key.code == KeyCode::Char('n') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            let is_folder = self.args.device.as_ref().map(|d| d.is_dir()).unwrap_or(false);
+            if is_folder {
+                return;
+            }
             // Find drives that don't have active sessions
             let active_devices: Vec<PathBuf> = self
                 .sessions
