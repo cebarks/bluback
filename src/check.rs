@@ -94,7 +94,11 @@ fn check_command(
     }
 }
 
-pub fn run_check(config: &crate::config::Config, config_path: &std::path::Path) -> i32 {
+pub fn run_check(
+    config: &crate::config::Config,
+    config_path: &std::path::Path,
+    is_folder_input: bool,
+) -> i32 {
     let mut results = Vec::new();
     let mut any_required_failed = false;
 
@@ -124,49 +128,58 @@ pub fn run_check(config: &crate::config::Config, config_path: &std::path::Path) 
         &mut any_required_failed,
     );
 
-    // Check 3: libaacs (required)
-    check_library(
-        &mut results,
-        "libaacs",
-        crate::aacs::LIBAACS_PATHS,
-        true,
-        &mut any_required_failed,
-    );
-
-    // Check 4: KEYDB.cfg (required)
-    let keydb = crate::aacs::dirs_keydb_path();
-    if keydb.exists() {
+    // Check 3-6: AACS checks (skip for folder input)
+    if is_folder_input {
         results.push(CheckResult {
-            label: "KEYDB.cfg".into(),
+            label: "Input mode".into(),
             status: CheckStatus::Pass,
-            detail: keydb.display().to_string(),
+            detail: "BDMV folder (AACS checks skipped)".into(),
         });
     } else {
-        results.push(CheckResult {
-            label: "KEYDB.cfg".into(),
-            status: CheckStatus::Fail,
-            detail: format!("not found at {}", keydb.display()),
-        });
-        any_required_failed = true;
+        // Check 3: libaacs (required)
+        check_library(
+            &mut results,
+            "libaacs",
+            crate::aacs::LIBAACS_PATHS,
+            true,
+            &mut any_required_failed,
+        );
+
+        // Check 4: KEYDB.cfg (required)
+        let keydb = crate::aacs::dirs_keydb_path();
+        if keydb.exists() {
+            results.push(CheckResult {
+                label: "KEYDB.cfg".into(),
+                status: CheckStatus::Pass,
+                detail: keydb.display().to_string(),
+            });
+        } else {
+            results.push(CheckResult {
+                label: "KEYDB.cfg".into(),
+                status: CheckStatus::Fail,
+                detail: format!("not found at {}", keydb.display()),
+            });
+            any_required_failed = true;
+        }
+
+        // Check 5: libmmbd (optional)
+        check_library(
+            &mut results,
+            "libmmbd",
+            crate::aacs::LIBMMBD_PATHS,
+            false,
+            &mut any_required_failed,
+        );
+
+        // Check 6: makemkvcon (optional)
+        check_command(
+            &mut results,
+            "makemkvcon",
+            false,
+            "needed for aacs_backend=libmmbd",
+            &mut any_required_failed,
+        );
     }
-
-    // Check 5: libmmbd (optional)
-    check_library(
-        &mut results,
-        "libmmbd",
-        crate::aacs::LIBMMBD_PATHS,
-        false,
-        &mut any_required_failed,
-    );
-
-    // Check 6: makemkvcon (optional)
-    check_command(
-        &mut results,
-        "makemkvcon",
-        false,
-        "needed for aacs_backend=libmmbd",
-        &mut any_required_failed,
-    );
 
     // Check 7: Mount utility (required, platform-specific)
     #[cfg(target_os = "linux")]

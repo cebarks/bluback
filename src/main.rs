@@ -418,10 +418,6 @@ fn run_inner() -> anyhow::Result<i32> {
         log::info!("Log file: {}", path.display());
     }
 
-    if args.check {
-        return Ok(check::run_check(&config, &config_path));
-    }
-
     // Resolve history DB path (TUI opens per-thread connections; CLI opens eagerly below)
     let history_db_path = if args.no_history || !config.history_enabled() {
         None
@@ -513,6 +509,11 @@ fn run_inner() -> anyhow::Result<i32> {
     } else {
         false
     };
+
+    // --check mode: validate environment and exit
+    if args.check {
+        return Ok(check::run_check(&config, &config_path, is_folder_input));
+    }
 
     // AACS preflight: skip for folder input (already decrypted)
     if !is_folder_input {
