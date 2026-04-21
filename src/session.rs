@@ -858,6 +858,15 @@ impl DriveSession {
                             .map(|(k, v)| (k, v.clip_size))
                             .collect();
                         let order = crate::index::parse_title_order(mount_path);
+
+                        // Upgrade display label from bdmt_*.xml if available
+                        // label_info stays from original lsblk label (bdmt format won't match regex)
+                        if !self.device.is_dir() {
+                            if let Some(bdmt_title) = crate::disc::parse_bdmt_title(mount_path) {
+                                self.disc.label = bdmt_title;
+                            }
+                        }
+
                         if did_mount {
                             let _ = crate::disc::unmount_disc(&device_str);
                         }

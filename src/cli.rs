@@ -986,6 +986,20 @@ fn scan_disc(
         anyhow::bail!("No episode-length playlists found. Try lowering --min-probe-duration.");
     }
 
+    // Upgrade display label from bdmt_*.xml if available (richer than lsblk label)
+    // label_info stays derived from the original lsblk label (bdmt format won't match regex)
+    let label = if !is_folder {
+        match disc::ensure_mounted(&device) {
+            Ok((mount, _did_mount)) => {
+                let upgraded = disc::parse_bdmt_title(std::path::Path::new(&mount));
+                upgraded.unwrap_or(label)
+            }
+            Err(_) => label,
+        }
+    } else {
+        label
+    };
+
     let movie_mode = args.movie || (probed_count == 1 && args.season.is_none());
     if movie_mode && !args.movie {
         println!("  (Single playlist detected — using movie mode. Use --season to force TV mode.)");
