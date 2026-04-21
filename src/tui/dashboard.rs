@@ -9,6 +9,30 @@ use crate::rip;
 use crate::types::{DashboardView, DoneView, PlaylistStatus};
 use crate::util::format_size;
 
+/// Messages sent from the rip thread back to the main TUI thread.
+pub(crate) enum RipMessage {
+    /// Periodic progress update from the remux loop.
+    Progress(crate::types::RipProgress),
+    /// Input opened successfully — carries probed info and the final filename
+    /// (which may differ from the provisional one if MediaInfo changed resolution
+    /// placeholders in the format template).
+    MediaReady {
+        media_info: Box<crate::types::MediaInfo>,
+        stream_info: crate::types::StreamInfo,
+        final_filename: String,
+    },
+    /// File already exists and was skipped (carries existing file size).
+    Skipped(u64),
+    /// Informational status update (e.g. "Re-ripping partial file...").
+    StatusUpdate(String),
+    /// Remux completed successfully, chapters were injected.
+    ChaptersAdded(usize),
+    /// Remux was cancelled via the cancel flag.
+    Cancelled,
+    /// Remux failed with an error.
+    Error(crate::media::MediaError),
+}
+
 fn build_post_rip_vars(
     session: &crate::session::DriveSession,
     job_idx: usize,
@@ -764,70 +788,11 @@ fn start_next_job_session(
     };
 
     session.rip.current_rip = idx;
-    let job_playlist = session.rip.jobs[idx].playlist.clone();
-    let device = session.device.to_string_lossy().to_string();
-    let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
-    if let Some(parent) = outfile.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            session.rip.jobs[idx].status = PlaylistStatus::Failed(format!(
-                "Failed to create output directory {}: {}",
-                parent.display(),
-                e
-            ));
-            return true;
-        }
-    }
 
-    let estimated_size = session.rip.jobs[idx].estimated_size;
-    match crate::workflow::check_overwrite(
-        &outfile,
-        session.config.overwrite() || session.overwrite,
-        Some(estimated_size).filter(|&s| s > 0),
-    ) {
-        Ok(crate::workflow::OverwriteAction::Proceed) => {}
-        Ok(crate::workflow::OverwriteAction::Skip(size)) => {
-            session.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
-            // Record skip in history
-            record_file_event(
-                session,
-                history_db,
-                idx,
-                crate::history::FileStatus::Skipped,
-                None,
-            );
-            return true;
-        }
-        Ok(crate::workflow::OverwriteAction::PartialReplace(size)) => {
-            session.status_message = format!(
-                "Re-ripping partial file {} (was {})",
-                session.rip.jobs[idx].filename,
-                format_size(size),
-            );
-        }
-        Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
-        Err(e) => {
-            session.rip.jobs[idx].status =
-                PlaylistStatus::Failed(format!("Overwrite check failed: {}", e));
-            return true;
-        }
-    }
-
-    // Per-playlist stream selection: manual track picks > stream filter > all
-    let stream_selection =
-        if let Some(indices) = session.wizard.track_selections.get(&job_playlist.num) {
-            crate::media::StreamSelection::Manual(indices.clone())
-        } else if !session.stream_filter.is_empty() {
-            if let Some(info) = session.wizard.stream_infos.get(&job_playlist.num) {
-                crate::media::StreamSelection::Manual(session.stream_filter.apply(info))
-            } else {
-                crate::media::StreamSelection::All
-            }
-        } else {
-            crate::media::StreamSelection::All
-        };
     let cancel = session.rip.cancel.clone();
     cancel.store(false, Ordering::Relaxed);
 
+    // Build metadata on the main thread (doesn't need MediaInfo)
     let metadata = {
         let metadata_enabled = session.config.metadata_enabled() && !session.no_metadata;
         let custom_tags = session.config.metadata_tags();
@@ -868,40 +833,41 @@ fn start_next_job_session(
         )
     };
 
+    // Build RemuxOptions (chapters, cancel, metadata) — stream selection starts as All,
+    // will be resolved in the thread after probing
     let options = crate::workflow::prepare_remux_options(
-        &device,
-        &job_playlist,
-        &outfile,
+        &session.rip.jobs[idx].playlist,
         session.disc.mount_point.as_deref(),
-        stream_selection,
         cancel,
         session.config.reserve_index_space(),
         metadata,
     );
 
-    // Mark session as in_progress and record file start in history
+    // Build thread context from session state
+    let ctx = session.rip_thread_context(idx);
+
+    // Record provisional file in history
+    let provisional_outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
     if let (Some(db), Some(sid)) = (history_db, session.history_session_id) {
-        // Mark in_progress on first rip job only
         if idx == 0 {
             if let Err(e) = db.finish_session(sid, crate::history::SessionStatus::InProgress) {
                 log::warn!("history: failed to mark session in_progress: {}", e);
             }
         }
-        // Record file start
         let episodes_json = session
             .wizard
             .episode_assignments
-            .get(&job_playlist.num)
+            .get(&session.rip.jobs[idx].playlist.num)
             .map(|eps| {
                 serde_json::to_string(&eps.iter().map(|e| e.episode_number).collect::<Vec<_>>())
                     .unwrap_or_default()
             });
         let file_info = crate::history::RippedFileInfo {
-            playlist: job_playlist.num.clone(),
+            playlist: session.rip.jobs[idx].playlist.num.clone(),
             episodes: episodes_json,
-            output_path: outfile.display().to_string(),
+            output_path: provisional_outfile.display().to_string(),
             file_size: None,
-            duration_ms: Some((job_playlist.seconds as i64) * 1000),
+            duration_ms: Some((session.rip.jobs[idx].playlist.seconds as i64) * 1000),
             streams: None,
             chapters: None,
         };
@@ -911,22 +877,87 @@ fn start_next_job_session(
         }
     }
 
-    session.rip.chapters_added.store(0, Ordering::Relaxed);
-    let chapters_added_arc = session.rip.chapters_added.clone();
-
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let tx_progress = tx.clone();
-        let result = crate::media::remux::remux(options, |progress| {
-            let _ = tx_progress.send(Ok(progress.clone()));
+        // Step 1: Open input and probe media info
+        let (ictx, guard, media_info, stream_info) =
+            match crate::media::remux::open_remux_input(&ctx.device, &ctx.playlist.num) {
+                Ok(result) => result,
+                Err(e) => {
+                    let _ = tx.send(RipMessage::Error(e));
+                    return;
+                }
+            };
+
+        // Step 2: Resolve final filename from probed MediaInfo
+        let final_filename = ctx.resolve_filename(Some(&media_info));
+
+        // Send MediaReady so main thread can update caches and job filename
+        let _ = tx.send(RipMessage::MediaReady {
+            media_info: Box::new(media_info.clone()),
+            stream_info: stream_info.clone(),
+            final_filename: final_filename.clone(),
         });
 
-        match result {
+        // Step 3: Create output directory
+        let outfile = ctx.output_dir.join(&final_filename);
+        if let Some(parent) = outfile.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                let _ = tx.send(RipMessage::Error(crate::media::MediaError::RemuxFailed(
+                    format!(
+                        "Failed to create output directory {}: {}",
+                        parent.display(),
+                        e
+                    ),
+                )));
+                return;
+            }
+        }
+
+        // Step 4: Check overwrite (final filename may differ from provisional)
+        match crate::workflow::check_overwrite(
+            &outfile,
+            ctx.overwrite,
+            Some(ctx.estimated_size).filter(|&s| s > 0),
+        ) {
+            Ok(crate::workflow::OverwriteAction::Proceed) => {}
+            Ok(crate::workflow::OverwriteAction::Skip(size)) => {
+                let _ = tx.send(RipMessage::Skipped(size));
+                return;
+            }
+            Ok(crate::workflow::OverwriteAction::PartialReplace(size)) => {
+                let _ = tx.send(RipMessage::StatusUpdate(format!(
+                    "Re-ripping partial file {} (was {})",
+                    final_filename,
+                    format_size(size),
+                )));
+            }
+            Ok(crate::workflow::OverwriteAction::DeleteAndProceed(_)) => {}
+            Err(e) => {
+                let _ = tx.send(RipMessage::Error(crate::media::MediaError::RemuxFailed(
+                    format!("Overwrite check failed: {}", e),
+                )));
+                return;
+            }
+        }
+
+        // Step 5: Resolve stream selection from probed StreamInfo
+        let mut options = options;
+        options.stream_selection = ctx.resolve_stream_selection(&stream_info);
+
+        // Step 6: Run the remux
+        let tx_progress = tx.clone();
+        match crate::media::remux::write_remux(ictx, guard, &outfile, options, |progress| {
+            let _ = tx_progress.send(RipMessage::Progress(progress.clone()));
+        }) {
             Ok(added) => {
-                chapters_added_arc.store(added, std::sync::atomic::Ordering::Relaxed);
+                let _ = tx.send(RipMessage::ChaptersAdded(added));
+            }
+            Err(crate::media::MediaError::Cancelled) => {
+                let _ = tx.send(RipMessage::Cancelled);
             }
             Err(e) => {
-                let _ = tx.send(Err(e));
+                let _ = tx.send(RipMessage::Error(e));
             }
         }
     });
@@ -948,71 +979,71 @@ fn poll_active_job_session(
     let mut changed = false;
     loop {
         match rx.try_recv() {
-            Ok(Ok(progress)) => {
+            Ok(RipMessage::Progress(progress)) => {
                 let idx = session.rip.current_rip;
                 session.rip.jobs[idx].status = PlaylistStatus::Ripping(progress);
                 changed = true;
             }
-            Ok(Err(crate::media::MediaError::Cancelled)) => {
+            Ok(RipMessage::MediaReady {
+                media_info,
+                stream_info,
+                final_filename,
+            }) => {
                 let idx = session.rip.current_rip;
-                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
-                if outfile.exists() {
-                    let _ = std::fs::remove_file(&outfile);
+                let playlist_num = session.rip.jobs[idx].playlist.num.clone();
+
+                // Update wizard caches with probed info
+                session
+                    .wizard
+                    .media_infos
+                    .insert(playlist_num.clone(), *media_info);
+                session
+                    .wizard
+                    .stream_infos
+                    .insert(playlist_num, stream_info);
+
+                // Update job filename if it changed from the provisional one
+                if session.rip.jobs[idx].filename != final_filename {
+                    log::info!(
+                        "Filename resolved: {} -> {}",
+                        session.rip.jobs[idx].filename,
+                        final_filename,
+                    );
+                    session.rip.jobs[idx].filename = final_filename;
                 }
-                session.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
+                changed = true;
+            }
+            Ok(RipMessage::Skipped(size)) => {
+                let idx = session.rip.current_rip;
+                session.rip.jobs[idx].status = PlaylistStatus::Skipped(size);
                 session.rip.progress_rx = None;
                 record_file_event(
                     session,
                     history_db,
                     idx,
-                    crate::history::FileStatus::Failed,
-                    Some("Cancelled"),
+                    crate::history::FileStatus::Skipped,
+                    None,
                 );
-                let vars = build_post_rip_vars(session, idx, "failed", "Cancelled");
-                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 return true;
             }
-            Ok(Err(e)) => {
+            Ok(RipMessage::StatusUpdate(msg)) => {
+                session.status_message = msg;
+                changed = true;
+            }
+            Ok(RipMessage::ChaptersAdded(chapters_added)) => {
+                // Remux completed successfully — run verification and finalize
                 let idx = session.rip.current_rip;
-                let err_msg = e.to_string();
                 let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
-                if outfile.exists() {
-                    let _ = std::fs::remove_file(&outfile);
-                }
-                session.rip.jobs[idx].status = PlaylistStatus::Failed(err_msg.clone());
-                session.rip.progress_rx = None;
-                record_file_event(
-                    session,
-                    history_db,
-                    idx,
-                    crate::history::FileStatus::Failed,
-                    Some(&err_msg),
-                );
-                let vars = build_post_rip_vars(session, idx, "failed", &err_msg);
-                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
-                return true;
-            }
-            Err(mpsc::TryRecvError::Empty) => {
-                return changed;
-            }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                let idx = session.rip.current_rip;
-                if matches!(session.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
-                    let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
-                    let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
+                let file_size = std::fs::metadata(&outfile).map(|m| m.len()).unwrap_or(0);
 
-                    if session.verify {
-                        let playlist = &session.rip.jobs[idx].playlist;
-                        let chapters = session
-                            .rip
-                            .chapters_added
-                            .load(std::sync::atomic::Ordering::Relaxed);
+                if session.verify {
+                    let playlist = &session.rip.jobs[idx].playlist;
+                    let chapters = chapters_added;
 
-                        // Compute expected stream counts accounting for manual
-                        // stream selection (output may have fewer streams than source)
-                        let (exp_video, exp_audio, exp_subtitle) = if let Some(indices) =
-                            session.wizard.track_selections.get(&playlist.num)
-                        {
+                    // Compute expected stream counts accounting for manual
+                    // stream selection (output may have fewer streams than source)
+                    let (exp_video, exp_audio, exp_subtitle) =
+                        if let Some(indices) = session.wizard.track_selections.get(&playlist.num) {
                             if let Some(info) = session.wizard.stream_infos.get(&playlist.num) {
                                 crate::streams::count_selected_streams(indices, info)
                             } else {
@@ -1041,47 +1072,115 @@ fn poll_active_job_session(
                             )
                         };
 
-                        let expected = crate::verify::VerifyExpected {
-                            duration_secs: playlist.seconds,
-                            video_streams: exp_video,
-                            audio_streams: exp_audio,
-                            subtitle_streams: exp_subtitle,
-                            chapters,
-                        };
-                        let result =
-                            crate::verify::verify_output(&outfile, &expected, session.verify_level);
-                        if result.passed {
-                            session.rip.jobs[idx].status =
-                                PlaylistStatus::Verified(file_size, result);
-                        } else {
-                            let detail: String = result
-                                .checks
-                                .iter()
-                                .filter(|c| !c.passed)
-                                .map(|c| c.detail.clone())
-                                .collect::<Vec<_>>()
-                                .join("; ");
-                            log::warn!(
-                                "Verification failed for {}: {}",
-                                session.rip.jobs[idx].filename,
-                                detail
-                            );
-                            session.rip.jobs[idx].status =
-                                PlaylistStatus::VerifyFailed(file_size, result);
-                            session.rip.verify_failed_idx = Some(idx);
-                        }
+                    let expected = crate::verify::VerifyExpected {
+                        duration_secs: playlist.seconds,
+                        video_streams: exp_video,
+                        audio_streams: exp_audio,
+                        subtitle_streams: exp_subtitle,
+                        chapters,
+                    };
+                    let result =
+                        crate::verify::verify_output(&outfile, &expected, session.verify_level);
+                    if result.passed {
+                        session.rip.jobs[idx].status = PlaylistStatus::Verified(file_size, result);
                     } else {
-                        session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+                        let detail: String = result
+                            .checks
+                            .iter()
+                            .filter(|c| !c.passed)
+                            .map(|c| c.detail.clone())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        log::warn!(
+                            "Verification failed for {}: {}",
+                            session.rip.jobs[idx].filename,
+                            detail
+                        );
+                        session.rip.jobs[idx].status =
+                            PlaylistStatus::VerifyFailed(file_size, result);
+                        session.rip.verify_failed_idx = Some(idx);
                     }
-                    // Record file completion in history
+                } else {
+                    session.rip.jobs[idx].status = PlaylistStatus::Done(file_size);
+                }
+                // Record file completion in history
+                record_file_event(
+                    session,
+                    history_db,
+                    idx,
+                    crate::history::FileStatus::Completed,
+                    None,
+                );
+                let vars = build_post_rip_vars(session, idx, "success", "");
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
+                session.rip.progress_rx = None;
+                return true;
+            }
+            Ok(RipMessage::Cancelled) => {
+                let idx = session.rip.current_rip;
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed("Cancelled".into());
+                session.rip.progress_rx = None;
+                record_file_event(
+                    session,
+                    history_db,
+                    idx,
+                    crate::history::FileStatus::Failed,
+                    Some("Cancelled"),
+                );
+                let vars = build_post_rip_vars(session, idx, "failed", "Cancelled");
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
+                return true;
+            }
+            Ok(RipMessage::Error(e)) => {
+                let idx = session.rip.current_rip;
+                let err_msg = e.to_string();
+                let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                if outfile.exists() {
+                    let _ = std::fs::remove_file(&outfile);
+                }
+                session.rip.jobs[idx].status = PlaylistStatus::Failed(err_msg.clone());
+                session.rip.progress_rx = None;
+                record_file_event(
+                    session,
+                    history_db,
+                    idx,
+                    crate::history::FileStatus::Failed,
+                    Some(&err_msg),
+                );
+                let vars = build_post_rip_vars(session, idx, "failed", &err_msg);
+                crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
+                return true;
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                return changed;
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                // Thread died without sending a final message — unexpected failure
+                let idx = session.rip.current_rip;
+                if matches!(session.rip.jobs[idx].status, PlaylistStatus::Ripping(_)) {
+                    let outfile = session.output_dir.join(&session.rip.jobs[idx].filename);
+                    if outfile.exists() {
+                        let _ = std::fs::remove_file(&outfile);
+                    }
+                    session.rip.jobs[idx].status =
+                        PlaylistStatus::Failed("Rip thread terminated unexpectedly".into());
                     record_file_event(
                         session,
                         history_db,
                         idx,
-                        crate::history::FileStatus::Completed,
-                        None,
+                        crate::history::FileStatus::Failed,
+                        Some("Thread terminated unexpectedly"),
                     );
-                    let vars = build_post_rip_vars(session, idx, "success", "");
+                    let vars = build_post_rip_vars(
+                        session,
+                        idx,
+                        "failed",
+                        "Thread terminated unexpectedly",
+                    );
                     crate::hooks::run_post_rip(&session.config, &vars, session.no_hooks);
                 }
                 session.rip.progress_rx = None;

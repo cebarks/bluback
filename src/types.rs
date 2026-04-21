@@ -496,6 +496,7 @@ pub struct ConfirmView {
     pub output_dir: String,
     pub dry_run: bool,
     pub media_infos: HashMap<String, MediaInfo>,
+    pub clip_sizes: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone)]

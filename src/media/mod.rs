@@ -5,7 +5,8 @@ pub mod remux;
 pub use error::MediaError;
 #[allow(unused_imports)]
 pub use probe::{probe_media_info, probe_playlist, scan_playlists_with_progress};
-pub use remux::{RemuxOptions, StreamSelection};
+#[allow(unused_imports)]
+pub use remux::{open_remux_input, write_remux, RemuxOptions, StreamSelection};
 
 use std::sync::Once;
 

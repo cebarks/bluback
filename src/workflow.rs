@@ -1,12 +1,80 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use crate::config::Config;
 use crate::media::{RemuxOptions, StreamSelection};
+use crate::streams::StreamFilter;
 use crate::types::{Episode, LabelInfo, MediaInfo, Playlist};
 use crate::util;
+
+/// All context needed to run a remux job in a background thread.
+///
+/// Collected on the main thread from session state, then moved into the
+/// rip thread where it drives open_remux_input, filename resolution,
+/// overwrite checks, stream selection, and write_remux.
+pub struct RipThreadContext {
+    pub device: String,
+    pub playlist: Playlist,
+    pub output_dir: PathBuf,
+    pub episodes: Vec<Episode>,
+    pub season: u32,
+    pub movie_mode: bool,
+    pub is_special: bool,
+    pub movie_title: Option<(String, String)>,
+    pub show_name: String,
+    pub label: String,
+    pub label_info: Option<LabelInfo>,
+    pub config: Config,
+    pub format_override: Option<String>,
+    pub format_preset_override: Option<String>,
+    pub part: Option<u32>,
+    pub cached_track_selection: Option<Vec<usize>>,
+    pub stream_filter: StreamFilter,
+    pub overwrite: bool,
+    pub estimated_size: u64,
+}
+
+impl RipThreadContext {
+    /// Compute the output filename, optionally using probed MediaInfo for
+    /// resolution/codec placeholders in custom format templates.
+    pub fn resolve_filename(&self, media_info: Option<&MediaInfo>) -> String {
+        build_output_filename(
+            &self.playlist,
+            &self.episodes,
+            self.season,
+            self.movie_mode,
+            self.is_special,
+            self.movie_title
+                .as_ref()
+                .map(|(t, y)| (t.as_str(), y.as_str())),
+            &self.show_name,
+            &self.label,
+            self.label_info.as_ref(),
+            &self.config,
+            self.format_override.as_deref(),
+            self.format_preset_override.as_deref(),
+            media_info,
+            self.part,
+        )
+    }
+
+    /// Resolve stream selection from cached manual track picks, stream filter,
+    /// or fall back to All.
+    pub fn resolve_stream_selection(
+        &self,
+        stream_info: &crate::types::StreamInfo,
+    ) -> StreamSelection {
+        if let Some(ref indices) = self.cached_track_selection {
+            StreamSelection::Manual(indices.clone())
+        } else if !self.stream_filter.is_empty() {
+            StreamSelection::Manual(self.stream_filter.apply(stream_info))
+        } else {
+            StreamSelection::All
+        }
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub enum OverwriteAction {
@@ -66,13 +134,9 @@ fn format_size_inline(bytes: u64) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn prepare_remux_options(
-    device: &str,
     playlist: &Playlist,
-    output: &Path,
     mount_point: Option<&str>,
-    stream_selection: StreamSelection,
     cancel: Arc<AtomicBool>,
     reserve_index_space_kb: u32,
     metadata: Option<crate::types::MkvMetadata>,
@@ -84,15 +148,35 @@ pub fn prepare_remux_options(
         .unwrap_or_default();
 
     RemuxOptions {
-        device: device.to_string(),
-        playlist: playlist.num.clone(),
-        output: output.to_path_buf(),
         chapters,
-        stream_selection,
+        stream_selection: StreamSelection::All,
         cancel,
         reserve_index_space_kb,
         metadata,
     }
+}
+
+const TS_TO_MKV_FACTOR: f64 = 0.97;
+const FALLBACK_BYTERATE: u64 = 2_500_000;
+
+/// Estimate output MKV size for a playlist.
+///
+/// Priority: on-disc clip size (with TS→MKV correction) > probed bitrate > fallback (~20 Mbps).
+pub fn estimate_size(
+    playlist: &Playlist,
+    clip_size: Option<u64>,
+    media_info: Option<&MediaInfo>,
+) -> u64 {
+    clip_size
+        .filter(|&sz| sz > 0)
+        .map(|sz| (sz as f64 * TS_TO_MKV_FACTOR) as u64)
+        .or_else(|| {
+            media_info
+                .map(|info| info.bitrate_bps / 8)
+                .filter(|&br| br > 0)
+                .map(|br| playlist.seconds as u64 * br)
+        })
+        .unwrap_or_else(|| playlist.seconds as u64 * FALLBACK_BYTERATE)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -361,21 +445,10 @@ mod tests {
             subtitle_streams: 0,
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        let opts = prepare_remux_options(
-            "/dev/sr0",
-            &playlist,
-            Path::new("/tmp/out.mkv"),
-            None,
-            StreamSelection::All,
-            cancel,
-            500,
-            None,
-        );
-        assert_eq!(opts.device, "/dev/sr0");
-        assert_eq!(opts.playlist, "00001");
-        assert_eq!(opts.output, std::path::PathBuf::from("/tmp/out.mkv"));
+        let opts = prepare_remux_options(&playlist, None, cancel, 500, None);
         assert!(opts.chapters.is_empty());
         assert_eq!(opts.reserve_index_space_kb, 500);
+        assert!(matches!(opts.stream_selection, StreamSelection::All));
     }
 
     #[test]
@@ -389,16 +462,7 @@ mod tests {
             subtitle_streams: 0,
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        let opts = prepare_remux_options(
-            "/dev/sr0",
-            &playlist,
-            Path::new("/tmp/out.mkv"),
-            Some("/nonexistent/mount"),
-            StreamSelection::All,
-            cancel,
-            500,
-            None,
-        );
+        let opts = prepare_remux_options(&playlist, Some("/nonexistent/mount"), cancel, 500, None);
         assert!(opts.chapters.is_empty());
     }
 
@@ -733,5 +797,69 @@ mod tests {
         for (k, v) in &meta.tags {
             assert!(!v.is_empty(), "Tag {} has empty value", k);
         }
+    }
+
+    #[test]
+    fn test_estimate_size_clip_size_priority() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let result = estimate_size(&pl, Some(10_000_000_000), None);
+        assert_eq!(result, (10_000_000_000_f64 * 0.97) as u64);
+    }
+
+    #[test]
+    fn test_estimate_size_bitrate_fallback() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let mi = MediaInfo {
+            bitrate_bps: 40_000_000,
+            ..Default::default()
+        };
+        let result = estimate_size(&pl, None, Some(&mi));
+        assert_eq!(result, 3600 * (40_000_000 / 8));
+    }
+
+    #[test]
+    fn test_estimate_size_default_fallback() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let result = estimate_size(&pl, None, None);
+        assert_eq!(result, 3600 * 2_500_000);
+    }
+
+    #[test]
+    fn test_estimate_size_zero_clip_size_skipped() {
+        let pl = Playlist {
+            num: "00001".into(),
+            duration: "1:00:00".into(),
+            seconds: 3600,
+            video_streams: 0,
+            audio_streams: 0,
+            subtitle_streams: 0,
+        };
+        let mi = MediaInfo {
+            bitrate_bps: 40_000_000,
+            ..Default::default()
+        };
+        let result = estimate_size(&pl, Some(0), Some(&mi));
+        assert_eq!(result, 3600 * (40_000_000 / 8));
     }
 }

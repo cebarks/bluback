@@ -566,14 +566,14 @@ pub fn probe_media_info(device: &str, playlist_num: &str) -> Result<MediaInfo, M
     Ok(info)
 }
 
-/// Probe both media info and detailed stream info from a single context open.
-pub fn probe_playlist(
-    device: &str,
-    playlist_num: &str,
-) -> Result<(MediaInfo, StreamInfo), MediaError> {
-    let mut guard = crate::aacs::MakemkvconGuard::new();
-    let ctx = guard.track_open(|| open_bluray(device, Some(playlist_num)))?;
-
+/// Extract MediaInfo and StreamInfo from an open FFmpeg context.
+///
+/// This is a shared helper used by both `probe_playlist()` and remux operations.
+/// Iterates all streams in the context to populate codec details, stream lists,
+/// and bitrate information.
+pub fn extract_media_and_stream_info(
+    ctx: &ffmpeg_the_third::format::context::Input,
+) -> (MediaInfo, StreamInfo) {
     let mut media_info = MediaInfo::default();
     let mut video_streams = Vec::new();
     let mut audio_streams = Vec::new();
@@ -703,7 +703,18 @@ pub fn probe_playlist(
         subtitle_streams,
     };
 
-    Ok((media_info, stream_info))
+    (media_info, stream_info)
+}
+
+/// Probe both media info and detailed stream info from a single context open.
+pub fn probe_playlist(
+    device: &str,
+    playlist_num: &str,
+) -> Result<(MediaInfo, StreamInfo), MediaError> {
+    let mut guard = crate::aacs::MakemkvconGuard::new();
+    let ctx = guard.track_open(|| open_bluray(device, Some(playlist_num)))?;
+
+    Ok(extract_media_and_stream_info(&ctx))
 }
 
 /// Extract side data type names from a stream via raw FFI.

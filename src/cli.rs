@@ -846,6 +846,8 @@ pub fn run(
         &probe_cache,
         &clip_sizes,
         movie_mode,
+        label_info.as_ref(),
+        &specials_set,
         history,
         session_id,
         label_info.as_ref().map(|l| l.disc),
@@ -1510,6 +1512,8 @@ fn rip_selected(
     probe_cache: &crate::types::ProbeCache,
     clip_sizes: &std::collections::HashMap<String, u64>,
     movie_mode: bool,
+    label_info: Option<&LabelInfo>,
+    specials: &std::collections::HashSet<String>,
     history: Option<&crate::history::HistoryDb>,
     session_id: Option<i64>,
     disc_number: Option<u32>,
@@ -1580,21 +1584,11 @@ fn rip_selected(
             .expect("output path has filename")
             .to_string_lossy();
 
-        const TS_TO_MKV_FACTOR: f64 = 0.97;
-        let estimated_size = clip_sizes
-            .get(&pl.num)
-            .copied()
-            .filter(|&sz| sz > 0)
-            .map(|sz| (sz as f64 * TS_TO_MKV_FACTOR) as u64)
-            .or_else(|| {
-                probe_cache.get(&pl.num).and_then(|(mi, _)| {
-                    if mi.bitrate_bps > 0 {
-                        Some(pl.seconds as u64 * (mi.bitrate_bps / 8))
-                    } else {
-                        None
-                    }
-                })
-            });
+        let estimated_size = Some(crate::workflow::estimate_size(
+            pl,
+            clip_sizes.get(&pl.num).copied(),
+            probe_cache.get(&pl.num).map(|(mi, _)| mi),
+        ));
 
         match crate::workflow::check_overwrite(
             outfile,
@@ -1655,19 +1649,151 @@ fn rip_selected(
             pl.num, pl.duration, filename
         );
 
-        // Probe on demand if not cached — this opens the device once per playlist,
-        // naturally spaced by minutes of remux time.
-        let on_demand = probe_cache
+        // Open input context (also extracts media/stream info, eliminating a
+        // separate probe_playlist call that would re-open the device).
+        let (ictx, guard, media_info, stream_info) =
+            match crate::media::remux::open_remux_input(device, &pl.num) {
+                Ok(result) => result,
+                Err(e) => {
+                    println!("Error opening playlist {}: {}", pl.num, e);
+                    fail_count += 1;
+                    continue;
+                }
+            };
+
+        // Re-resolve filename with full media info from the open context.
+        // The pre-computed outfile may have unresolved template vars like {resolution}.
+        let is_special = specials.contains(&pl.num);
+        let show_name_str = if movie_mode {
+            tmdb_ctx
+                .movie_title
+                .as_ref()
+                .map(|(t, _)| t.clone())
+                .unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            tmdb_ctx.show_name.clone().unwrap_or_else(|| {
+                label_info
+                    .map(|l| l.show.clone())
+                    .unwrap_or_else(|| "Unknown".to_string())
+            })
+        };
+        let episodes = tmdb_ctx
+            .episode_assignments
             .get(&pl.num)
             .cloned()
-            .or_else(|| crate::media::probe::probe_playlist(device, &pl.num).ok());
+            .unwrap_or_default();
+        let part = if tmdb_ctx.movie_title.is_some() && selected.len() > 1 {
+            selected
+                .iter()
+                .position(|&s| s == idx)
+                .map(|p| p as u32 + 1)
+        } else {
+            None
+        };
+        let resolved_name = workflow::build_output_filename(
+            pl,
+            &episodes,
+            tmdb_ctx.season_num.unwrap_or(0),
+            movie_mode,
+            is_special,
+            tmdb_ctx
+                .movie_title
+                .as_ref()
+                .map(|(t, y)| (t.as_str(), y.as_str())),
+            &show_name_str,
+            label,
+            label_info,
+            config,
+            args.format.as_deref(),
+            args.format_preset.as_deref(),
+            Some(&media_info),
+            part,
+        );
+        let original_name = outfiles[i]
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let filename_changed = resolved_name != original_name;
+        let outfile = if filename_changed {
+            eprintln!(
+                "  Filename resolved: {} -> {}",
+                original_name, resolved_name
+            );
+            &output_dir.join(&resolved_name)
+        } else {
+            outfile
+        };
+        let filename = outfile
+            .file_name()
+            .expect("output path has filename")
+            .to_string_lossy();
+
+        // Re-check overwrite with final filename if it changed
+        if filename_changed {
+            // Ensure output directory exists for re-resolved path
+            if let Some(parent) = outfile.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            match crate::workflow::check_overwrite(
+                outfile,
+                args.overwrite || config.overwrite(),
+                estimated_size,
+            )? {
+                crate::workflow::OverwriteAction::Proceed => {}
+                crate::workflow::OverwriteAction::Skip(size) => {
+                    println!(
+                        "\nSkipping playlist {} -> {} (already exists, {})",
+                        pl.num,
+                        filename,
+                        format_size(size)
+                    );
+                    if let (Some(db), Some(sid)) = (history, session_id) {
+                        let episodes_json = tmdb_ctx.episode_assignments.get(&pl.num).map(|eps| {
+                            serde_json::to_string(
+                                &eps.iter().map(|e| e.episode_number).collect::<Vec<_>>(),
+                            )
+                            .unwrap_or_default()
+                        });
+                        let file_info = crate::history::RippedFileInfo {
+                            playlist: pl.num.clone(),
+                            episodes: episodes_json,
+                            output_path: outfile.display().to_string(),
+                            file_size: Some(size as i64),
+                            duration_ms: Some((pl.seconds as i64) * 1000),
+                            streams: None,
+                            chapters: None,
+                        };
+                        if let Ok(fid) = db.record_file(sid, &file_info) {
+                            let _ = db.update_file_status(
+                                fid,
+                                crate::history::FileStatus::Skipped,
+                                None,
+                            );
+                        }
+                    }
+                    skip_count += 1;
+                    continue;
+                }
+                crate::workflow::OverwriteAction::PartialReplace(size) => {
+                    println!(
+                        "\nRe-ripping partial file {} -> {} (was {}, expected ~{})",
+                        pl.num,
+                        filename,
+                        format_size(size),
+                        estimated_size
+                            .map(format_size)
+                            .unwrap_or_else(|| "unknown".to_string()),
+                    );
+                }
+                crate::workflow::OverwriteAction::DeleteAndProceed(size) => {
+                    println!("\nOverwriting {} ({})", filename, format_size(size));
+                }
+            }
+        }
 
         // Resolve stream selection per-playlist
         let stream_selection = if let Some(tracks) = tracks_spec {
-            let stream_info = on_demand
-                .as_ref()
-                .map(|(_, si)| si.clone())
-                .unwrap_or_default();
             match crate::streams::parse_track_spec(tracks, &stream_info) {
                 Ok(indices) => {
                     let errors = crate::streams::validate_track_selection(&indices, &stream_info);
@@ -1681,10 +1807,6 @@ fn rip_selected(
                 }
             }
         } else if !stream_filter.is_empty() {
-            let stream_info = on_demand
-                .as_ref()
-                .map(|(_, si)| si.clone())
-                .unwrap_or_default();
             let indices = stream_filter.apply(&stream_info);
             let errors = crate::streams::validate_track_selection(&indices, &stream_info);
             if !errors.is_empty() {
@@ -1699,10 +1821,6 @@ fn rip_selected(
         // When manual selection is active, the output will have fewer streams than the source.
         let (expected_video, expected_audio, expected_subtitle) = match &stream_selection {
             crate::media::StreamSelection::Manual(indices) => {
-                let stream_info = on_demand
-                    .as_ref()
-                    .map(|(_, si)| si.clone())
-                    .unwrap_or_default();
                 crate::streams::count_selected_streams(indices, &stream_info)
             }
             crate::media::StreamSelection::All => {
@@ -1711,16 +1829,14 @@ fn rip_selected(
         };
 
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let options = crate::workflow::prepare_remux_options(
-            device,
+        let mut options = crate::workflow::prepare_remux_options(
             pl,
-            outfile,
             mount_point.as_deref(),
-            stream_selection,
             cancel,
             config.reserve_index_space(),
             metadata_per_playlist[i].clone(),
         );
+        options.stream_selection = stream_selection;
 
         // Record file start in history
         let episodes_json = tmdb_ctx.episode_assignments.get(&pl.num).map(|eps| {
@@ -1754,7 +1870,7 @@ fn rip_selected(
         let started = std::cell::Cell::new(false);
         let pl_num = pl.num.clone();
 
-        let result = crate::media::remux::remux(options, |progress| {
+        let result = crate::media::remux::write_remux(ictx, guard, outfile, options, |progress| {
             // Use actual stream duration from FFmpeg when available,
             // falling back to libbluray's parsed playlist duration
             let duration = if progress.duration_secs > 0 {
