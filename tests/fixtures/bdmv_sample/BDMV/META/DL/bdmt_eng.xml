@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<disclib xmlns="urn:BDA:bdmv;disclib">
+  <di:discinfo xmlns:di="urn:BDA:bdmv;discinfo">
+    <di:title>
+      <di:name>Test Show Vol.1 Disc1</di:name>
+    </di:title>
+  </di:discinfo>
+</disclib>
