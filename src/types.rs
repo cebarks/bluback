@@ -42,14 +42,14 @@ pub struct LabelInfo {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Foundation type for folder input support — consumed by disc.rs
+#[allow(dead_code)] // Consumed by disc.rs and wired in Task 5 (main.rs)
 pub enum InputSource {
     Disc { device: PathBuf },
     Folder { path: PathBuf },
 }
 
 impl InputSource {
-    #[allow(dead_code)] // Part of InputSource API — consumed by disc.rs
+    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
     pub fn bluray_path(&self) -> &Path {
         match self {
             InputSource::Disc { device } => device,
@@ -57,7 +57,7 @@ impl InputSource {
         }
     }
 
-    #[allow(dead_code)] // Part of InputSource API — consumed by disc.rs
+    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
     pub fn is_folder(&self) -> bool {
         matches!(self, InputSource::Folder { .. })
     }

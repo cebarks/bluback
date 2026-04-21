@@ -8,7 +8,7 @@ use std::io::{Read as _, Seek, SeekFrom, Write as _};
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
 
-use crate::types::LabelInfo;
+use crate::types::{InputSource, LabelInfo};
 
 static LABEL_PATTERNS: LazyLock<[Regex; 2]> = LazyLock::new(|| {
     [
@@ -316,6 +316,31 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
         }
     }
     None
+}
+
+/// Resolve an input path to either a disc device or a folder containing BDMV structure.
+///
+/// For directories: validates that a `BDMV/` subdirectory exists.
+/// For non-directories (e.g., `/dev/sr0`): assumes a block device.
+#[allow(dead_code)] // Wired in Task 5 (main.rs)
+pub fn resolve_input_source(path: &std::path::Path) -> anyhow::Result<InputSource> {
+    if path.is_dir() {
+        if path.join("BDMV").is_dir() {
+            Ok(InputSource::Folder {
+                path: path.to_path_buf(),
+            })
+        } else {
+            bail!(
+                "Directory '{}' does not contain a BDMV structure. \
+                 Expected a 'BDMV/' subdirectory.",
+                path.display()
+            )
+        }
+    } else {
+        Ok(InputSource::Disc {
+            device: path.to_path_buf(),
+        })
+    }
 }
 
 /// Parse disc title from BDMV/META/DL/bdmt_*.xml metadata.
@@ -652,5 +677,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parse_bdmt_title(dir.path()), None);
+    }
+
+    // Task 3: resolve_input_source() tests
+    #[test]
+    fn resolve_input_source_folder_with_bdmv() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("BDMV")).unwrap();
+        let src = resolve_input_source(dir.path()).unwrap();
+        assert!(src.is_folder());
+        assert_eq!(src.bluray_path(), dir.path());
+    }
+
+    #[test]
+    fn resolve_input_source_folder_without_bdmv() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = resolve_input_source(dir.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("BDMV"), "error should mention BDMV: {}", msg);
+    }
+
+    #[test]
+    fn resolve_input_source_block_device_path() {
+        let src = resolve_input_source(std::path::Path::new("/dev/sr0")).unwrap();
+        assert!(!src.is_folder());
+        assert_eq!(src.bluray_path(), std::path::Path::new("/dev/sr0"));
     }
 }
