@@ -500,7 +500,7 @@ impl DriveSession {
             jobs: self.rip.jobs.clone(),
             label: self.disc.label.clone(),
             disc_detected_label: self.disc_detected_label.clone(),
-            eject: self.eject,
+            eject: self.eject && !self.device.is_dir(),
             status_message: self.status_message.clone(),
             filenames: self.wizard.filenames.clone(),
             batch_disc_count: self.batch_disc_count,
@@ -666,6 +666,7 @@ impl DriveSession {
     /// Spawn a background thread to scan this session's device for a disc.
     pub fn start_disc_scan(&mut self) {
         let device = self.device.clone();
+        let is_folder = device.is_dir();
         let max_speed = self.config.should_max_speed(self.no_max_speed);
         let min_probe_duration = self.config.min_probe_duration(self.min_probe_duration_arg);
         let auto_detect = self.auto_detect;
@@ -676,21 +677,31 @@ impl DriveSession {
             .spawn(move || {
                 let dev_str = device.to_string_lossy().to_string();
 
-                // Poll for disc presence every 2 seconds until found
-                let label = loop {
-                    let l = crate::disc::get_volume_label(&dev_str);
-                    if !l.is_empty() {
-                        break l;
+                let label = if is_folder {
+                    // Folder input: resolve label immediately, no polling needed
+                    crate::disc::resolve_label(
+                        &crate::types::InputSource::Folder {
+                            path: device.clone(),
+                        },
+                        None,
+                    )
+                } else {
+                    // Disc input: poll for disc presence every 2 seconds until found
+                    loop {
+                        let l = crate::disc::get_volume_label(&dev_str);
+                        if !l.is_empty() {
+                            break l;
+                        }
+                        let msg = format!("{} — no disc", dev_str);
+                        if tx.send(BackgroundResult::WaitingForDisc(msg)).is_err() {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(2));
                     }
-                    let msg = format!("{} — no disc", dev_str);
-                    if tx.send(BackgroundResult::WaitingForDisc(msg)).is_err() {
-                        return; // Receiver dropped, session shutting down
-                    }
-                    std::thread::sleep(std::time::Duration::from_secs(2));
                 };
 
                 let _ = tx.send(BackgroundResult::DiscFound(dev_str.clone()));
-                if max_speed {
+                if !is_folder && max_speed {
                     crate::disc::set_max_speed(&dev_str);
                 }
                 let tx_progress = tx.clone();
@@ -1067,11 +1078,12 @@ impl DriveSession {
 
         // Ctrl+C handled by coordinator — session ignores it
 
-        // Ctrl+E: eject this session's disc (not during ripping or text input)
+        // Ctrl+E: eject this session's disc (not during ripping or text input, not for folders)
         if key.code == KeyCode::Char('e')
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && !input_active
             && self.screen != Screen::Ripping
+            && !self.device.is_dir()
         {
             let device_str = self.device.to_string_lossy().to_string();
             match crate::disc::eject_disc(&device_str) {
@@ -1823,5 +1835,22 @@ mod tests {
         session.reset_for_rescan();
 
         assert!(session.tmdb.specials.is_empty());
+    }
+
+    #[test]
+    fn start_disc_scan_folder_skips_volume_label_poll() {
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (msg_tx, _msg_rx) = std::sync::mpsc::channel();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("BDMV")).unwrap();
+
+        let session = DriveSession::new(
+            dir.path().to_path_buf(),
+            crate::config::Config::default(),
+            crate::streams::StreamFilter::default(),
+            cmd_rx,
+            msg_tx,
+        );
+        assert!(session.device.is_dir());
     }
 }
