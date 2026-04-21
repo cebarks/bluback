@@ -877,9 +877,6 @@ fn start_next_job_session(
         }
     }
 
-    session.rip.chapters_added.store(0, Ordering::Relaxed);
-    let chapters_added_arc = session.rip.chapters_added.clone();
-
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         // Step 1: Open input and probe media info
@@ -954,7 +951,6 @@ fn start_next_job_session(
             let _ = tx_progress.send(RipMessage::Progress(progress.clone()));
         }) {
             Ok(added) => {
-                chapters_added_arc.store(added, std::sync::atomic::Ordering::Relaxed);
                 let _ = tx.send(RipMessage::ChaptersAdded(added));
             }
             Err(crate::media::MediaError::Cancelled) => {

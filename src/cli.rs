@@ -1709,8 +1709,17 @@ fn rip_selected(
             Some(&media_info),
             part,
         );
-        let outfile = if resolved_name != filename {
-            eprintln!("  Filename resolved: {} -> {}", filename, resolved_name);
+        let original_name = outfiles[i]
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let filename_changed = resolved_name != original_name;
+        let outfile = if filename_changed {
+            eprintln!(
+                "  Filename resolved: {} -> {}",
+                original_name, resolved_name
+            );
             &output_dir.join(&resolved_name)
         } else {
             outfile
@@ -1721,12 +1730,11 @@ fn rip_selected(
             .to_string_lossy();
 
         // Re-check overwrite with final filename if it changed
-        if resolved_name
-            != *outfiles[i]
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-        {
+        if filename_changed {
+            // Ensure output directory exists for re-resolved path
+            if let Some(parent) = outfile.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             match crate::workflow::check_overwrite(
                 outfile,
                 args.overwrite || config.overwrite(),
@@ -1740,6 +1748,30 @@ fn rip_selected(
                         filename,
                         format_size(size)
                     );
+                    if let (Some(db), Some(sid)) = (history, session_id) {
+                        let episodes_json = tmdb_ctx.episode_assignments.get(&pl.num).map(|eps| {
+                            serde_json::to_string(
+                                &eps.iter().map(|e| e.episode_number).collect::<Vec<_>>(),
+                            )
+                            .unwrap_or_default()
+                        });
+                        let file_info = crate::history::RippedFileInfo {
+                            playlist: pl.num.clone(),
+                            episodes: episodes_json,
+                            output_path: outfile.display().to_string(),
+                            file_size: Some(size as i64),
+                            duration_ms: Some((pl.seconds as i64) * 1000),
+                            streams: None,
+                            chapters: None,
+                        };
+                        if let Ok(fid) = db.record_file(sid, &file_info) {
+                            let _ = db.update_file_status(
+                                fid,
+                                crate::history::FileStatus::Skipped,
+                                None,
+                            );
+                        }
+                    }
                     skip_count += 1;
                     continue;
                 }

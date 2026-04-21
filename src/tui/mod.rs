@@ -121,7 +121,6 @@ pub struct RipState {
     pub progress_rx: Option<mpsc::Receiver<crate::tui::dashboard::RipMessage>>,
     pub confirm_abort: bool,
     pub confirm_rescan: bool,
-    pub chapters_added: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub verify_failed_idx: Option<usize>,
 }
 
@@ -134,7 +133,6 @@ impl Default for RipState {
             progress_rx: None,
             confirm_abort: false,
             confirm_rescan: false,
-            chapters_added: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             verify_failed_idx: None,
         }
     }
