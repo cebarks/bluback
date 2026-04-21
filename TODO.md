@@ -98,6 +98,7 @@ See [docs/ROADMAP-1.0.md](docs/ROADMAP-1.0.md) for the full 1.0 roadmap (38 item
 
 ## Post-1.0
 
+- Chapter-based episode splitting — some Blu-rays (especially Japanese anime) package all episodes as chapters within a single playlist (SubPath-based MPLS with 0 PlayItems). Need a way to specify chapter ranges per episode (e.g., chapters 1-5 = episode 1) to extract individual MKVs from these discs.
 - Resume partial rips (investigate FFmpeg MKV muxer seek support)
 - Windows support (platform abstraction for WMI/PowerShell equivalents)
 - GUI frontend (architecture prepared via v0.7 workflow extraction)
