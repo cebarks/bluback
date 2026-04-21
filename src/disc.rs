@@ -318,6 +318,84 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
     None
 }
 
+/// Parse disc title from BDMV/META/DL/bdmt_*.xml metadata.
+///
+/// Prefers `bdmt_eng.xml` if present; otherwise uses the first bdmt file found.
+/// Returns the content of the `<di:name>` element.
+#[allow(dead_code)] // Used in later tasks
+pub fn parse_bdmt_title(bdmv_root: &std::path::Path) -> Option<String> {
+    let meta_dir = bdmv_root.join("BDMV").join("META").join("DL");
+    if !meta_dir.is_dir() {
+        return None;
+    }
+
+    let entries: Vec<_> = std::fs::read_dir(&meta_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("bdmt_") && name.ends_with(".xml")
+        })
+        .collect();
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    // Prefer English, fall back to first found
+    let target = entries
+        .iter()
+        .find(|e| e.file_name().to_string_lossy() == "bdmt_eng.xml")
+        .or_else(|| entries.first())?;
+
+    parse_bdmt_xml(&target.path())
+}
+
+#[allow(dead_code)] // Used by parse_bdmt_title
+fn parse_bdmt_xml(path: &std::path::Path) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+
+    // Strip UTF-8 BOM if present
+    let data = if data.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &data[3..]
+    } else {
+        &data
+    };
+
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+
+    let mut reader = Reader::from_reader(data);
+    let mut in_name = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let local = e.local_name();
+                if local.as_ref() == b"name" {
+                    in_name = true;
+                }
+            }
+            Ok(Event::Text(e)) if in_name => {
+                let text = e.unescape().ok()?.trim().to_string();
+                if !text.is_empty() {
+                    return Some(text);
+                }
+                in_name = false;
+            }
+            Ok(Event::End(_)) if in_name => {
+                in_name = false;
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => return None,
+            _ => {}
+        }
+    }
+
+    None
+}
+
 #[cfg(target_os = "linux")]
 pub fn set_max_speed(device: &str) {
     let _ = Command::new("eject").args(["-x", "0", device]).status();
@@ -468,5 +546,111 @@ mod tests {
         assert_eq!(info.show, "THE WIRE");
         assert_eq!(info.season, 3);
         assert_eq!(info.disc, 1);
+    }
+
+    #[test]
+    fn parse_bdmt_title_valid_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join("BDMV/META/DL");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        std::fs::write(
+            meta_dir.join("bdmt_eng.xml"),
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<disclib xmlns="urn:BDA:bdmv;disclib">
+  <di:discinfo xmlns:di="urn:BDA:bdmv;discinfo">
+    <di:title>
+      <di:name>My Great Movie</di:name>
+    </di:title>
+  </di:discinfo>
+</disclib>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parse_bdmt_title(dir.path()),
+            Some("My Great Movie".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_bdmt_title_with_bom() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join("BDMV/META/DL");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        let mut content = vec![0xEF, 0xBB, 0xBF]; // UTF-8 BOM
+        content.extend_from_slice(
+            br#"<?xml version="1.0" encoding="utf-8"?>
+<disclib xmlns="urn:BDA:bdmv;disclib">
+  <di:discinfo xmlns:di="urn:BDA:bdmv;discinfo">
+    <di:title>
+      <di:name>BOM Test Title</di:name>
+    </di:title>
+  </di:discinfo>
+</disclib>"#,
+        );
+        std::fs::write(meta_dir.join("bdmt_jpn.xml"), content).unwrap();
+        assert_eq!(
+            parse_bdmt_title(dir.path()),
+            Some("BOM Test Title".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_bdmt_title_prefers_eng() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join("BDMV/META/DL");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        let make_xml = |name: &str| {
+            format!(
+                r#"<?xml version="1.0" encoding="utf-8"?>
+<disclib xmlns="urn:BDA:bdmv;disclib">
+  <di:discinfo xmlns:di="urn:BDA:bdmv;discinfo">
+    <di:title>
+      <di:name>{}</di:name>
+    </di:title>
+  </di:discinfo>
+</disclib>"#,
+                name
+            )
+        };
+        std::fs::write(meta_dir.join("bdmt_jpn.xml"), make_xml("日本語タイトル")).unwrap();
+        std::fs::write(meta_dir.join("bdmt_eng.xml"), make_xml("English Title")).unwrap();
+        assert_eq!(
+            parse_bdmt_title(dir.path()),
+            Some("English Title".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_bdmt_title_no_meta_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("BDMV")).unwrap();
+        assert_eq!(parse_bdmt_title(dir.path()), None);
+    }
+
+    #[test]
+    fn parse_bdmt_title_malformed_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join("BDMV/META/DL");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        std::fs::write(meta_dir.join("bdmt_eng.xml"), "not xml at all").unwrap();
+        assert_eq!(parse_bdmt_title(dir.path()), None);
+    }
+
+    #[test]
+    fn parse_bdmt_title_missing_name_element() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join("BDMV/META/DL");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        std::fs::write(
+            meta_dir.join("bdmt_eng.xml"),
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<disclib xmlns="urn:BDA:bdmv;disclib">
+  <di:discinfo xmlns:di="urn:BDA:bdmv;discinfo">
+    <di:title></di:title>
+  </di:discinfo>
+</disclib>"#,
+        )
+        .unwrap();
+        assert_eq!(parse_bdmt_title(dir.path()), None);
     }
 }
