@@ -39,7 +39,7 @@ static FIRST_SIGNAL_MS: AtomicU64 = AtomicU64::new(0);
     about = "Back up Blu-ray discs to MKV files using ffmpeg + libaacs"
 )]
 pub struct Args {
-    /// Blu-ray device path [default: auto-detect]
+    /// Blu-ray device or BDMV folder path [default: auto-detect]
     #[arg(short, long)]
     device: Option<PathBuf>,
 
@@ -464,10 +464,8 @@ fn run_inner() -> anyhow::Result<i32> {
         })
         .unwrap_or_else(|| config.aacs_backend());
 
-    aacs::preflight(aacs_backend)?;
-
     // Suppress libbluray's BD_DEBUG stderr output unless verbose mode is on.
-    // Must be set before any ffmpeg/libbluray calls.
+    // Must be set before any ffmpeg/libbluray calls (including AACS preflight).
     if !config.verbose_libbluray() {
         std::env::set_var("BD_DEBUG_MASK", "0");
     }
@@ -506,9 +504,29 @@ fn run_inner() -> anyhow::Result<i32> {
         }
     }
 
-    // Acquire per-device lock to prevent multiple bluback processes from contending
+    // Resolve input source type: folder (BDMV backup) vs disc (block device)
+    let is_folder_input = if let Some(ref dev) = args.device {
+        match disc::resolve_input_source(dev) {
+            Ok(src) => src.is_folder(),
+            Err(e) => return Err(e), // directory without BDMV/ structure
+        }
+    } else {
+        false
+    };
+
+    // AACS preflight: skip for folder input (already decrypted)
+    if !is_folder_input {
+        aacs::preflight(aacs_backend)?;
+    }
+
+    // Acquire per-device lock to prevent multiple bluback processes from contending.
+    // Skip for folder input — no physical drive contention.
     let _device_lock = if let Some(ref dev) = args.device {
-        Some(disc::try_lock_device(&dev.to_string_lossy())?)
+        if !is_folder_input {
+            Some(disc::try_lock_device(&dev.to_string_lossy())?)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -542,6 +560,13 @@ fn run_inner() -> anyhow::Result<i32> {
 
     let headless = args.yes || (!atty_stdin() && !use_tui);
     let batch = config.should_batch(args.cli_batch());
+
+    if batch && is_folder_input {
+        anyhow::bail!(
+            "batch mode is not supported with folder input \
+             (use --batch-dir for multi-volume folders in a future release)"
+        );
+    }
 
     if use_tui {
         tui::run(&args, &config, config_path, &stream_filter, history_db_path)?;
