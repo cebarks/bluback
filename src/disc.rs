@@ -343,6 +343,32 @@ pub fn resolve_input_source(path: &std::path::Path) -> anyhow::Result<InputSourc
     }
 }
 
+/// Resolve the best available label for an input source.
+///
+/// For folders: tries bdmt_*.xml title, falls back to folder basename.
+/// For discs: tries bdmt_*.xml from mount_point (if available), falls back to lsblk/diskutil label.
+#[allow(dead_code)] // Wired in Task 5 (main.rs) and Task 12 (label upgrade)
+pub fn resolve_label(source: &InputSource, mount_point: Option<&str>) -> String {
+    match source {
+        InputSource::Folder { path } => {
+            if let Some(title) = parse_bdmt_title(path) {
+                return title;
+            }
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        }
+        InputSource::Disc { device } => {
+            if let Some(mp) = mount_point {
+                if let Some(title) = parse_bdmt_title(std::path::Path::new(mp)) {
+                    return title;
+                }
+            }
+            get_volume_label(&device.to_string_lossy())
+        }
+    }
+}
+
 /// Parse disc title from BDMV/META/DL/bdmt_*.xml metadata.
 ///
 /// Prefers `bdmt_eng.xml` if present; otherwise uses the first bdmt file found.
@@ -703,5 +729,50 @@ mod tests {
         let src = resolve_input_source(std::path::Path::new("/dev/sr0")).unwrap();
         assert!(!src.is_folder());
         assert_eq!(src.bluray_path(), std::path::Path::new("/dev/sr0"));
+    }
+
+    // Task 4: resolve_label() tests
+    #[test]
+    fn resolve_label_folder_with_bdmt() {
+        let dir = tempfile::tempdir().unwrap();
+        let meta_dir = dir.path().join("BDMV/META/DL");
+        std::fs::create_dir_all(&meta_dir).unwrap();
+        std::fs::write(
+            meta_dir.join("bdmt_eng.xml"),
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<disclib xmlns="urn:BDA:bdmv;disclib">
+  <di:discinfo xmlns:di="urn:BDA:bdmv;discinfo">
+    <di:title><di:name>Test Show Vol.1</di:name></di:title>
+  </di:discinfo>
+</disclib>"#,
+        )
+        .unwrap();
+        let src = InputSource::Folder {
+            path: dir.path().to_path_buf(),
+        };
+        let label = resolve_label(&src, None);
+        assert_eq!(label, "Test Show Vol.1");
+    }
+
+    #[test]
+    fn resolve_label_folder_without_bdmt_uses_basename() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("BDMV")).unwrap();
+        let src = InputSource::Folder {
+            path: dir.path().to_path_buf(),
+        };
+        let label = resolve_label(&src, None);
+        assert!(!label.is_empty());
+    }
+
+    #[test]
+    fn resolve_label_folder_mount_point_override() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("BDMV")).unwrap();
+        let src = InputSource::Folder {
+            path: dir.path().to_path_buf(),
+        };
+        let label = resolve_label(&src, Some("/mnt/disc"));
+        assert!(!label.is_empty());
     }
 }
