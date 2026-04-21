@@ -527,16 +527,40 @@ git commit -m "feat: add resolve_label() with bdmt_*.xml priority"
 **Files:**
 - Modify: `src/main.rs`
 
-- [ ] **Step 1: Update device resolution to produce `InputSource`**
+**IMPORTANT:** The current `main.rs` flow runs `aacs::preflight()` at line 467 BEFORE device resolution at lines 489-507. We must reorder so device resolution happens first, then we know whether it's a folder before deciding on AACS preflight.
 
-In `src/main.rs`, the device resolution block at lines 489-507 currently sets `args.device` to a `PathBuf`. After this block, add `InputSource` resolution and conditional AACS/lock skipping. Replace the section from line 467 (aacs preflight) through line 514 (end of lock) with:
+- [ ] **Step 1: Reorder AACS preflight to after device resolution**
+
+In `src/main.rs`, the current flow around lines 460-514 is:
+1. AACS backend resolution (line 460-465)
+2. `aacs::preflight(aacs_backend)?;` (line 467)
+3. BD_DEBUG_MASK setup (line 471-473)
+4. --settings mode (line 476-482)
+5. Output dir resolution (line 484-487)
+6. Device resolution (lines 489-507)
+7. Device lock (lines 510-514)
+
+Restructure to:
+1. AACS backend resolution (unchanged)
+2. BD_DEBUG_MASK setup (move up, before preflight)
+3. --settings mode (unchanged)
+4. Output dir resolution (unchanged)
+5. Device resolution (unchanged)
+6. **NEW: Resolve InputSource and validate folder BDMV structure**
+7. **MOVED: `aacs::preflight()` — conditional, skip for folders**
+8. Device lock — conditional, skip for folders
+
+After the device resolution block (lines 489-507), add:
 
 ```rust
-    // Resolve input source from device path (if available at this point)
-    let input_source = args.device.as_ref().map(|d| disc::resolve_input_source(d));
-    let is_folder_input = match &input_source {
-        Some(Ok(src)) => src.is_folder(),
-        _ => false,
+    // Resolve input source type: folder (BDMV backup) vs disc (block device)
+    let is_folder_input = if let Some(ref dev) = args.device {
+        match disc::resolve_input_source(dev) {
+            Ok(src) => src.is_folder(),
+            Err(e) => return Err(e), // directory without BDMV/ structure
+        }
+    } else {
+        false
     };
 
     // AACS preflight: skip for folder input (already decrypted)
@@ -544,40 +568,8 @@ In `src/main.rs`, the device resolution block at lines 489-507 currently sets `a
         aacs::preflight(aacs_backend)?;
     }
 
-    // Suppress libbluray's BD_DEBUG stderr output unless verbose mode is on.
-    // Must be set before any ffmpeg/libbluray calls.
-    if !config.verbose_libbluray() {
-        std::env::set_var("BD_DEBUG_MASK", "0");
-    }
-```
-
-Keep the `--settings` block and output dir resolution as-is (lines 476-487).
-
-Then update the device resolution block (lines 489-507). After the existing device resolution, add folder validation:
-
-```rust
-    // If device was set and is a folder, validate BDMV structure
-    if let Some(ref dev) = args.device {
-        if dev.is_dir() && !dev.join("BDMV").is_dir() {
-            anyhow::bail!(
-                "Directory '{}' does not contain a BDMV structure. Expected a 'BDMV/' subdirectory.",
-                dev.display()
-            );
-        }
-    }
-
-    // Re-resolve input source after device resolution
-    let is_folder_input = args
-        .device
-        .as_ref()
-        .map(|d| d.is_dir())
-        .unwrap_or(false);
-```
-
-Update the lock block (lines 510-514) to skip for folders:
-
-```rust
     // Acquire per-device lock to prevent multiple bluback processes from contending
+    // Skip for folder input — no physical drive contention
     let _device_lock = if let Some(ref dev) = args.device {
         if !is_folder_input {
             Some(disc::try_lock_device(&dev.to_string_lossy())?)
@@ -589,7 +581,20 @@ Update the lock block (lines 510-514) to skip for folders:
     };
 ```
 
-Update the batch conflict check. Find where `batch` is resolved (line 544) and add after it:
+Move the `BD_DEBUG_MASK` setup (lines 471-473) to before the --settings block, so it runs regardless of whether AACS preflight is called:
+
+```rust
+    // Suppress libbluray's BD_DEBUG stderr output unless verbose mode is on.
+    // Must be set before any ffmpeg/libbluray calls.
+    if !config.verbose_libbluray() {
+        std::env::set_var("BD_DEBUG_MASK", "0");
+    }
+
+    // --settings mode: open settings panel without disc/dependency checks
+    if args.settings {
+```
+
+Add batch conflict check after `batch` is resolved (line 544):
 
 ```rust
     if batch && is_folder_input {
@@ -719,6 +724,8 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         println!("Volume label: {}", label);
     }
 ```
+
+**Note:** The `ensure_mounted()` call for chapter extraction (around line 122 in `list_playlists`) requires no changes — it already handles directories correctly (returns `(path, false)`).
 
 Also update the "Scanning disc" progress message (line 101) to be input-aware:
 
@@ -969,7 +976,23 @@ In `src/tui/coordinator.rs`, the `Coordinator::new()` function (line 51) always 
     }
 ```
 
-- [ ] **Step 2: Disable multi-drive Ctrl+N for folder input**
+- [ ] **Step 2: Guard coordinator's Ctrl+E handler for folder input**
+
+The coordinator has its own Ctrl+E handler (around line 358-367) that runs BEFORE forwarding to the session. Add a folder guard here too:
+
+```rust
+        // Ctrl+E: eject — not available for folder input
+        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if let Some(session) = self.active_session() {
+                if session.device.is_dir() {
+                    return; // No disc to eject for folder input
+                }
+            }
+            // ... existing eject logic
+        }
+```
+
+- [ ] **Step 3: Disable multi-drive Ctrl+N for folder input**
 
 In `handle_key()` in `coordinator.rs`, find the Ctrl+N handler (around line 360-388 where it spawns a new session for auto-detected drives). Add a folder guard:
 
@@ -984,7 +1007,7 @@ In `handle_key()` in `coordinator.rs`, find the Ctrl+N handler (around line 360-
         }
 ```
 
-- [ ] **Step 3: Update done screen hints to hide eject for folder input**
+- [ ] **Step 4: Update done screen hints to hide eject for folder input**
 
 In `src/tui/dashboard.rs`, find the done screen hint rendering (around line 484-488). The `eject` field on the view snapshot already controls whether eject is available (from Task 7 step 4). Update the hint to conditionally show `[Ctrl+E] Eject`:
 
@@ -1005,7 +1028,7 @@ Replace with:
     let hint = Paragraph::new(hint_text)
 ```
 
-- [ ] **Step 4: Update batch auto-eject to skip for folders**
+- [ ] **Step 5: Update batch auto-eject to skip for folders**
 
 In `src/tui/dashboard.rs`, find the batch auto-eject code (around line 757-764). Add a folder guard:
 
@@ -1018,12 +1041,12 @@ In `src/tui/dashboard.rs`, find the batch auto-eject code (around line 757-764).
         }
 ```
 
-- [ ] **Step 5: Verify compilation and tests**
+- [ ] **Step 6: Verify compilation and tests**
 
 Run: `cargo test`
 Expected: all tests pass
 
-- [ ] **Step 6: Run clippy and commit**
+- [ ] **Step 7: Run clippy and commit**
 
 Run: `cargo clippy -- -D warnings`
 
@@ -1035,6 +1058,8 @@ git commit -m "feat: skip DriveMonitor and eject for folder input in TUI"
 ---
 
 ### Task 9: Update `check.rs` for folder-aware validation
+
+**Depends on:** Task 5 (uses `is_folder_input` variable from main.rs)
 
 **Files:**
 - Modify: `src/check.rs`
@@ -1092,11 +1117,13 @@ git commit -m "feat: folder-aware --check output (skip AACS checks)"
 
 ---
 
-### Task 10: Integration tests for folder input
+### Task 10: BDMV fixture and CLI integration tests
 
 **Files:**
+- Create: `tests/fixtures/bdmv_sample/BDMV/META/DL/bdmt_eng.xml`
 - Create: `tests/folder_input.rs`
-- Modify: `tests/fixtures/` (add BDMV fixture structure)
+
+**Note:** bluback is a binary-only crate (no `src/lib.rs`), so integration tests in `tests/` cannot use `bluback::disc::...` paths. The unit-style tests for `resolve_input_source`, `parse_bdmt_title`, and `resolve_label` are already covered in Tasks 2-4 (inside `src/disc.rs` test blocks). This task creates the BDMV fixture structure and CLI subprocess-based integration tests (matching the pattern in `tests/cli_batch_conflicts.rs`).
 
 - [ ] **Step 1: Create minimal BDMV fixture structure**
 
@@ -1119,64 +1146,83 @@ Create `tests/fixtures/bdmv_sample/BDMV/META/DL/bdmt_eng.xml`:
 </disclib>
 ```
 
-- [ ] **Step 2: Write integration tests**
+- [ ] **Step 2: Write CLI subprocess integration tests**
 
 Create `tests/folder_input.rs`:
 
 ```rust
 use std::path::Path;
+use std::process::Command;
 
 #[test]
-fn folder_with_bdmv_is_detected_as_folder_input() {
-    let fixture = Path::new("tests/fixtures/bdmv_sample");
-    assert!(fixture.join("BDMV").is_dir());
-
-    // The resolve function should detect this as folder input
-    let result = bluback::disc::resolve_input_source(fixture);
-    assert!(result.is_ok());
-    let source = result.unwrap();
-    assert!(source.is_folder());
+fn folder_input_list_playlists_runs() {
+    let fixture_path = Path::new("tests/fixtures/bdmv_sample")
+        .canonicalize()
+        .expect("fixture exists");
+    let output = Command::new(env!("CARGO_BIN_EXE_bluback"))
+        .args([
+            "--list-playlists",
+            "-d",
+            fixture_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run bluback");
+    // The scan may fail (no actual streams) but should not crash with
+    // BDMV detection errors or AACS errors
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("does not contain a BDMV structure"),
+        "folder should be detected as valid BDMV: {}",
+        stderr
+    );
 }
 
 #[test]
 fn folder_without_bdmv_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
-    let result = bluback::disc::resolve_input_source(dir.path());
-    assert!(result.is_err());
+    let output = Command::new(env!("CARGO_BIN_EXE_bluback"))
+        .args([
+            "--list-playlists",
+            "-d",
+            dir.path().to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run bluback");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not contain a BDMV structure"),
+        "expected BDMV structure error, got: {}",
+        stderr
+    );
+    assert!(!output.status.success());
 }
 
 #[test]
-fn bdmt_title_extracted_from_fixture() {
-    let fixture = Path::new("tests/fixtures/bdmv_sample");
-    let title = bluback::disc::parse_bdmt_title(fixture);
-    assert_eq!(title, Some("Test Show Vol.1 Disc1".to_string()));
-}
-
-#[test]
-fn resolve_label_uses_bdmt_for_folder() {
-    let fixture = Path::new("tests/fixtures/bdmv_sample");
-    let source = bluback::types::InputSource::Folder {
-        path: fixture.to_path_buf(),
-    };
-    let label = bluback::disc::resolve_label(&source, None);
-    assert_eq!(label, "Test Show Vol.1 Disc1");
+fn folder_input_check_skips_aacs() {
+    let fixture_path = Path::new("tests/fixtures/bdmv_sample")
+        .canonicalize()
+        .expect("fixture exists");
+    let output = Command::new(env!("CARGO_BIN_EXE_bluback"))
+        .args([
+            "--check",
+            "-d",
+            fixture_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run bluback");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("AACS checks skipped") || stdout.contains("BDMV folder"),
+        "expected AACS skip message, got: {}",
+        stdout
+    );
 }
 ```
-
-Note: These tests require that `resolve_input_source`, `parse_bdmt_title`, and `resolve_label` are public. They already are from the implementations above. Also verify that `src/lib.rs` or the crate root re-exports these modules. If bluback is a binary crate only, these tests should use `use` paths appropriately or be converted to unit tests. Check `src/lib.rs` — if it doesn't exist, add one that re-exports the relevant modules:
-
-```rust
-// src/lib.rs
-pub mod disc;
-pub mod types;
-```
-
-If `src/lib.rs` already exists, just ensure `disc` and `types` are re-exported.
 
 - [ ] **Step 3: Run integration tests**
 
 Run: `cargo test --test folder_input`
-Expected: all 4 tests PASS
+Expected: all 3 tests PASS
 
 - [ ] **Step 4: Run clippy and commit**
 
@@ -1184,7 +1230,7 @@ Run: `cargo clippy -- -D warnings`
 
 ```bash
 git add tests/folder_input.rs tests/fixtures/bdmv_sample/
-git commit -m "test: add integration tests for BDMV folder input"
+git commit -m "test: add CLI integration tests for BDMV folder input"
 ```
 
 ---
@@ -1273,23 +1319,21 @@ Note: `ensure_mounted` is cheap if the disc is already mounted (just checks `get
 
 - [ ] **Step 2: Upgrade label in TUI `poll_background()` after scan**
 
-In `src/session.rs`, find `poll_background()` where `BackgroundResult::DiscScan(Ok(...))` is handled (around line 822). After the label and label_info are stored on `disc`, add the bdmt upgrade. Only upgrade `disc.label`, NOT `disc.label_info`:
+In `src/session.rs`, find `poll_background()` where `BackgroundResult::DiscScan(Ok(...))` is handled (around line 822). The existing code at lines 831-860 calls `ensure_mounted()` and uses a local `mount` variable for chapter extraction. `disc.mount_point` is NOT set at this point (it's only set later in wizard confirm). Add the bdmt upgrade inside the existing `Ok((mount, did_mount))` arm, using the local `mount` variable. Only upgrade `disc.label`, NOT `disc.label_info`:
+
+Inside the `Ok((mount, did_mount))` arm (around line 832), after chapter counts and clip sizes are populated but before unmounting, add:
 
 ```rust
-    // Existing code stores label and label_info:
-    // self.disc.label = label.clone();
-    // self.disc.label_info = disc::parse_volume_label(&label);
-
-    // Upgrade display label from bdmt_*.xml if mount point is available
-    // label_info stays from original lsblk label (bdmt format won't match regex)
-    if !self.device.is_dir() {
-        if let Some(ref mp) = self.disc.mount_point {
-            if let Some(bdmt_title) = crate::disc::parse_bdmt_title(std::path::Path::new(mp)) {
-                self.disc.label = bdmt_title;
-            }
-        }
-    }
+                        // Upgrade display label from bdmt_*.xml if available
+                        // label_info stays from original lsblk label (bdmt format won't match regex)
+                        if !self.device.is_dir() {
+                            if let Some(bdmt_title) = crate::disc::parse_bdmt_title(mount_path) {
+                                self.disc.label = bdmt_title;
+                            }
+                        }
 ```
+
+Place this AFTER `crate::index::parse_title_order(mount_path)` (line 849) but BEFORE the `if did_mount { unmount }` block (line 850). The `mount_path` variable is already in scope from line 833.
 
 - [ ] **Step 3: Verify compilation and tests**
 
