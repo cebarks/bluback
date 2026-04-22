@@ -57,11 +57,7 @@ impl Coordinator {
         let (drive_tx, drive_rx) = mpsc::channel();
 
         // Only spawn DriveMonitor for disc input (not folder input)
-        let is_folder = args
-            .device
-            .as_ref()
-            .map(|d| d.is_dir())
-            .unwrap_or(false);
+        let is_folder = args.device.as_ref().map(|d| d.is_dir()).unwrap_or(false);
         if !is_folder {
             DriveMonitor::spawn(Duration::from_secs(2), drive_tx);
         }
@@ -381,7 +377,12 @@ impl Coordinator {
         // Ctrl+N: new manual session (if no --device, spawn on first available drive
         // without an existing session)
         if key.code == KeyCode::Char('n') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let is_folder = self.args.device.as_ref().map(|d| d.is_dir()).unwrap_or(false);
+            let is_folder = self
+                .args
+                .device
+                .as_ref()
+                .map(|d| d.is_dir())
+                .unwrap_or(false);
             if is_folder {
                 return;
             }

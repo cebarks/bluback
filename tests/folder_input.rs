@@ -7,11 +7,7 @@ fn folder_input_list_playlists_runs() {
         .canonicalize()
         .expect("fixture exists");
     let output = Command::new(env!("CARGO_BIN_EXE_bluback"))
-        .args([
-            "--list-playlists",
-            "-d",
-            fixture_path.to_str().unwrap(),
-        ])
+        .args(["--list-playlists", "-d", fixture_path.to_str().unwrap()])
         .output()
         .expect("failed to run bluback");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -26,11 +22,7 @@ fn folder_input_list_playlists_runs() {
 fn folder_without_bdmv_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_bluback"))
-        .args([
-            "--list-playlists",
-            "-d",
-            dir.path().to_str().unwrap(),
-        ])
+        .args(["--list-playlists", "-d", dir.path().to_str().unwrap()])
         .output()
         .expect("failed to run bluback");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -48,11 +40,7 @@ fn folder_input_check_skips_aacs() {
         .canonicalize()
         .expect("fixture exists");
     let output = Command::new(env!("CARGO_BIN_EXE_bluback"))
-        .args([
-            "--check",
-            "-d",
-            fixture_path.to_str().unwrap(),
-        ])
+        .args(["--check", "-d", fixture_path.to_str().unwrap()])
         .output()
         .expect("failed to run bluback");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -69,12 +57,7 @@ fn batch_flag_with_folder_input_is_rejected() {
         .canonicalize()
         .expect("fixture exists");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_bluback"))
-        .args([
-            "--batch",
-            "-d",
-            fixture_path.to_str().unwrap(),
-            "--no-tui",
-        ])
+        .args(["--batch", "-d", fixture_path.to_str().unwrap(), "--no-tui"])
         .output()
         .expect("failed to run bluback");
     let stderr = String::from_utf8_lossy(&output.stderr);
