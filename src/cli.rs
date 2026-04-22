@@ -73,16 +73,30 @@ struct TmdbContext {
 
 pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Result<()> {
     let device = args.device().to_string_lossy();
+    let is_folder = args.device().is_dir();
 
     if !args.device().exists() {
-        anyhow::bail!("No Blu-ray device found at {}", device);
+        anyhow::bail!(
+            "No Blu-ray {} found at {}",
+            if is_folder { "folder" } else { "device" },
+            device
+        );
     }
 
-    if config.should_max_speed(args.no_max_speed) {
+    if !is_folder && config.should_max_speed(args.no_max_speed) {
         disc::set_max_speed(&device);
     }
 
-    let label = disc::get_volume_label(&device);
+    let label = if is_folder {
+        disc::resolve_label(
+            &crate::types::InputSource::Folder {
+                path: args.device().to_path_buf(),
+            },
+            None,
+        )
+    } else {
+        disc::get_volume_label(&device)
+    };
     if !label.is_empty() {
         println!("Volume label: {}", label);
     }
@@ -98,15 +112,16 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
         None
     });
 
-    eprint!("Scanning disc at {}...", device);
+    let source_name = if is_folder { "folder" } else { "disc" };
+    eprint!("Scanning {} at {}...", source_name, device);
     let (mut playlists, probe_cache, skip_set) = crate::media::scan_playlists_with_progress(
         &device,
         min_probe_duration,
         auto_detect,
         Some(&|elapsed, timeout| {
             eprint!(
-                "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
-                device, elapsed, timeout
+                "\rScanning {} at {} (AACS negotiation {}s/{}s)...",
+                source_name, device, elapsed, timeout
             );
         }),
         Some(&|current, total, num| {
@@ -893,16 +908,30 @@ fn scan_disc(
     std::collections::HashSet<String>,
 )> {
     let device = args.device().to_string_lossy();
+    let is_folder = args.device().is_dir();
 
     if !args.device().exists() {
-        anyhow::bail!("No Blu-ray device found at {}", device);
+        anyhow::bail!(
+            "No Blu-ray {} found at {}",
+            if is_folder { "folder" } else { "device" },
+            device
+        );
     }
 
-    if config.should_max_speed(args.no_max_speed) {
+    if !is_folder && config.should_max_speed(args.no_max_speed) {
         disc::set_max_speed(&device);
     }
 
-    let label = disc::get_volume_label(&device);
+    let label = if is_folder {
+        disc::resolve_label(
+            &crate::types::InputSource::Folder {
+                path: args.device().to_path_buf(),
+            },
+            None,
+        )
+    } else {
+        disc::get_volume_label(&device)
+    };
     let label_info = disc::parse_volume_label(&label);
     if !label.is_empty() {
         println!("Volume label: {}", label);
@@ -919,15 +948,16 @@ fn scan_disc(
         None
     });
 
-    eprint!("Scanning disc at {}...", device);
+    let source_name = if is_folder { "folder" } else { "disc" };
+    eprint!("Scanning {} at {}...", source_name, device);
     let (playlists, probe_cache, skip_set) = crate::media::scan_playlists_with_progress(
         &device,
         min_probe_duration,
         auto_detect,
         Some(&|elapsed, timeout| {
             eprint!(
-                "\rScanning disc at {} (AACS negotiation {}s/{}s)...",
-                device, elapsed, timeout
+                "\rScanning {} at {} (AACS negotiation {}s/{}s)...",
+                source_name, device, elapsed, timeout
             );
         }),
         Some(&|current, total, num| {
@@ -955,6 +985,20 @@ fn scan_disc(
     if probed_count == 0 {
         anyhow::bail!("No episode-length playlists found. Try lowering --min-probe-duration.");
     }
+
+    // Upgrade display label from bdmt_*.xml if available (richer than lsblk label)
+    // label_info stays derived from the original lsblk label (bdmt format won't match regex)
+    let label = if !is_folder {
+        match disc::ensure_mounted(&device) {
+            Ok((mount, _did_mount)) => {
+                let upgraded = disc::parse_bdmt_title(std::path::Path::new(&mount));
+                upgraded.unwrap_or(label)
+            }
+            Err(_) => label,
+        }
+    } else {
+        label
+    };
 
     let movie_mode = args.movie || (probed_count == 1 && args.season.is_none());
     if movie_mode && !args.movie {
@@ -2195,7 +2239,11 @@ fn rip_selected(
         output_dir.display()
     );
 
-    if !skip_eject && fail_count == 0 && config.should_eject(args.cli_eject()) {
+    if !args.device().is_dir()
+        && !skip_eject
+        && fail_count == 0
+        && config.should_eject(args.cli_eject())
+    {
         println!("Ejecting disc...");
         if let Err(e) = disc::eject_disc(device) {
             println!("Warning: failed to eject disc: {}", e);
@@ -2526,6 +2574,10 @@ pub fn run_batch(
     history: Option<&crate::history::HistoryDb>,
     ignore_history: bool,
 ) -> anyhow::Result<()> {
+    if args.device().is_dir() {
+        anyhow::bail!("batch mode is not supported with folder input");
+    }
+
     let mut disc_count: u32 = 0;
     let mut total_files: u32 = 0;
     let mut total_failures: u32 = 0;

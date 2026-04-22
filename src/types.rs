@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct Playlist {
@@ -38,6 +39,28 @@ pub struct LabelInfo {
     pub show: String,
     pub season: u32,
     pub disc: u32,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Consumed by disc.rs and wired in Task 5 (main.rs)
+pub enum InputSource {
+    Disc { device: PathBuf },
+    Folder { path: PathBuf },
+}
+
+impl InputSource {
+    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
+    pub fn bluray_path(&self) -> &Path {
+        match self {
+            InputSource::Disc { device } => device,
+            InputSource::Folder { path } => path,
+        }
+    }
+
+    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
+    pub fn is_folder(&self) -> bool {
+        matches!(self, InputSource::Folder { .. })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1741,6 +1764,24 @@ mod tests {
         let cloned = ctx.clone();
         assert_eq!(cloned.show_name, "Test Show");
         assert_eq!(cloned.next_episode, 5);
+    }
+
+    #[test]
+    fn input_source_bluray_path_disc() {
+        let src = InputSource::Disc {
+            device: PathBuf::from("/dev/sr0"),
+        };
+        assert_eq!(src.bluray_path(), Path::new("/dev/sr0"));
+        assert!(!src.is_folder());
+    }
+
+    #[test]
+    fn input_source_bluray_path_folder() {
+        let src = InputSource::Folder {
+            path: PathBuf::from("/mnt/backup/vol01"),
+        };
+        assert_eq!(src.bluray_path(), Path::new("/mnt/backup/vol01"));
+        assert!(src.is_folder());
     }
 
     #[test]

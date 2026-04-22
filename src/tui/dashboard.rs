@@ -481,10 +481,12 @@ pub fn render_done_view(f: &mut Frame, view: &DoneView, area: Rect) {
         .wrap(Wrap { trim: false });
     f.render_widget(body, chunks[1]);
 
-    let hint = Paragraph::new(
-        "[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [Ctrl+S] Settings  [any other key] Exit",
-    )
-    .style(Style::default().fg(Color::DarkGray));
+    let hint_text = if view.eject {
+        "[Enter/Ctrl+R] Rescan  [Ctrl+E] Eject  [Ctrl+S] Settings  [any other key] Exit"
+    } else {
+        "[Enter/Ctrl+R] Rescan  [Ctrl+S] Settings  [any other key] Exit"
+    };
+    let hint = Paragraph::new(hint_text).style(Style::default().fg(Color::DarkGray));
     f.render_widget(hint, chunks[2]);
 
     if let Some(ref label) = view.disc_detected_label {
@@ -755,7 +757,7 @@ fn check_all_done_session(
         }
 
         // Auto-eject in batch mode
-        if session.batch {
+        if session.batch && !session.device.is_dir() {
             let device = session.device.to_string_lossy();
             log::info!("Batch mode: ejecting disc {}", device);
             if let Err(e) = crate::disc::eject_disc(&device) {
@@ -1834,7 +1836,8 @@ mod tests {
 
     #[test]
     fn test_render_done_key_hints() {
-        let view = default_done_view(vec![make_job(PlaylistStatus::Done(1_000_000))]);
+        let mut view = default_done_view(vec![make_job(PlaylistStatus::Done(1_000_000))]);
+        view.eject = true;
         let text = render_done(&view);
         assert!(
             text.contains("[Enter/Ctrl+R] Rescan"),
@@ -1844,6 +1847,27 @@ mod tests {
         assert!(
             text.contains("[Ctrl+E] Eject"),
             "should show eject hint: {}",
+            text
+        );
+        assert!(
+            text.contains("[Ctrl+S] Settings"),
+            "should show settings hint: {}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_render_done_key_hints_no_eject() {
+        let view = default_done_view(vec![make_job(PlaylistStatus::Done(1_000_000))]);
+        let text = render_done(&view);
+        assert!(
+            text.contains("[Enter/Ctrl+R] Rescan"),
+            "should show rescan hint: {}",
+            text
+        );
+        assert!(
+            !text.contains("[Ctrl+E] Eject"),
+            "should not show eject hint when eject=false: {}",
             text
         );
         assert!(
