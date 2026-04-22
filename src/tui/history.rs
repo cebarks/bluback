@@ -476,32 +476,7 @@ fn handle_confirm_input(
     }
 }
 
-fn format_size(bytes: i64) -> String {
-    if bytes == 0 {
-        return "-".to_string();
-    }
-    let gb = bytes as f64 / 1_073_741_824.0;
-    if gb >= 1.0 {
-        return format!("{:.1} GB", gb);
-    }
-    let mb = bytes as f64 / 1_048_576.0;
-    if mb >= 1.0 {
-        return format!("{:.1} MB", mb);
-    }
-    let kb = bytes as f64 / 1024.0;
-    format!("{:.1} KB", kb)
-}
-
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else if max_len > 3 {
-        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
-    } else {
-        s.chars().take(max_len).collect()
-    }
-}
+use crate::util::{format_size_human as format_size, truncate};
 
 #[cfg(test)]
 mod tests {
@@ -716,7 +691,7 @@ mod tests {
 
     #[test]
     fn test_format_size_zero() {
-        assert_eq!(format_size(0), "-");
+        assert_eq!(format_size(0), "\u{2014}");
     }
 
     #[test]
@@ -731,7 +706,7 @@ mod tests {
 
     #[test]
     fn test_format_size_kb() {
-        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1024), "1 KB");
     }
 
     #[test]

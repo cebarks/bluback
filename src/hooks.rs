@@ -2,14 +2,28 @@ use crate::config::Config;
 use std::collections::HashMap;
 use std::process::Command;
 
+/// Shell-escape a value by wrapping in single quotes (POSIX).
+/// Internal single quotes are replaced with `'\''` (end quote, literal quote, start quote).
+fn shell_escape(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            escaped.push_str("'\\''");
+        } else {
+            escaped.push(ch);
+        }
+    }
+    escaped.push('\'');
+    escaped
+}
+
 /// Expand `{var}` placeholders in a command string.
-/// Known variables are replaced with their values. Empty values become "".
+/// Known variables are replaced with shell-escaped values.
 /// Unknown placeholders are left as-is for forward compatibility.
-///
-/// TODO(debt): Research shell injection risk from template substitution.
-/// Filenames with shell metacharacters ($, `, ", ;, etc.) in template
-/// variables could be exploited when expanded into an sh -c command string.
-/// Future fix: switch to environment variables or add shell escaping.
 pub fn expand_template(command: &str, vars: &HashMap<&str, String>) -> String {
     let mut result = String::with_capacity(command.len());
     let mut i = 0;
@@ -48,7 +62,7 @@ pub fn expand_template(command: &str, vars: &HashMap<&str, String>) -> String {
                     // Valid placeholder: {name}
                     let name: String = chars[name_start..name_end].iter().collect();
                     if let Some(value) = vars.get(name.as_str()) {
-                        result.push_str(value);
+                        result.push_str(&shell_escape(value));
                     } else {
                         // Unknown var - leave as-is
                         result.push('{');
@@ -213,7 +227,7 @@ mod tests {
         vars.insert("status", "success".to_string());
 
         let result = expand_template("cp {file} /backup/ && echo {status}", &vars);
-        assert_eq!(result, "cp output.mkv /backup/ && echo success");
+        assert_eq!(result, "cp 'output.mkv' /backup/ && echo 'success'");
     }
 
     #[test]
@@ -224,12 +238,12 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_var_becomes_empty() {
+    fn test_empty_var_becomes_empty_quotes() {
         let mut vars = HashMap::new();
         vars.insert("empty", "".to_string());
 
         let result = expand_template("echo {empty}done", &vars);
-        assert_eq!(result, "echo done");
+        assert_eq!(result, "echo ''done");
     }
 
     #[test]
@@ -245,7 +259,7 @@ mod tests {
         vars.insert("file", "test.mkv".to_string());
 
         let result = expand_template("{file} {unknown} {file}", &vars);
-        assert_eq!(result, "test.mkv {unknown} test.mkv");
+        assert_eq!(result, "'test.mkv' {unknown} 'test.mkv'");
     }
 
     #[test]
@@ -254,7 +268,7 @@ mod tests {
         vars.insert("file", "test.mkv".to_string());
 
         let result = expand_template("cp {file} {file}.bak", &vars);
-        assert_eq!(result, "cp test.mkv test.mkv.bak");
+        assert_eq!(result, "cp 'test.mkv' 'test.mkv'.bak");
     }
 
     #[test]
@@ -264,7 +278,7 @@ mod tests {
         vars.insert("b", "2".to_string());
 
         let result = expand_template("{a}{b}", &vars);
-        assert_eq!(result, "12");
+        assert_eq!(result, "'1''2'");
     }
 
     #[test]
@@ -300,7 +314,49 @@ mod tests {
         vars.insert("var_name", "value".to_string());
 
         let result = expand_template("{var_name}", &vars);
-        assert_eq!(result, "value");
+        assert_eq!(result, "'value'");
+    }
+
+    #[test]
+    fn test_shell_metacharacters_escaped() {
+        let mut vars = HashMap::new();
+        vars.insert("file", "\"; rm -rf / #".to_string());
+
+        let result = expand_template("process {file}", &vars);
+        assert_eq!(result, "process '\"; rm -rf / #'");
+    }
+
+    #[test]
+    fn test_single_quotes_in_value_escaped() {
+        let mut vars = HashMap::new();
+        vars.insert("title", "It's a Test".to_string());
+
+        let result = expand_template("echo {title}", &vars);
+        assert_eq!(result, "echo 'It'\\''s a Test'");
+    }
+
+    #[test]
+    fn test_backticks_and_dollar_escaped() {
+        let mut vars = HashMap::new();
+        vars.insert("file", "$(whoami)`id`.mkv".to_string());
+
+        let result = expand_template("cp {file} /out/", &vars);
+        assert_eq!(result, "cp '$(whoami)`id`.mkv' /out/");
+    }
+
+    #[test]
+    fn test_shell_escape_empty() {
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn test_shell_escape_simple() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+    }
+
+    #[test]
+    fn test_shell_escape_with_single_quote() {
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
     }
 
     // --- prepare_post_rip tests ---
@@ -371,7 +427,7 @@ mod tests {
             ..Default::default()
         };
         let result = prepare_post_rip(&config, &success_vars(), false);
-        assert_eq!(result.as_deref(), Some("echo test.mkv"));
+        assert_eq!(result.as_deref(), Some("echo 'test.mkv'"));
     }
 
     #[test]
@@ -394,7 +450,7 @@ mod tests {
             ..Default::default()
         };
         let result = prepare_post_rip(&config, &failed_vars(), false);
-        assert_eq!(result.as_deref(), Some("echo some error"));
+        assert_eq!(result.as_deref(), Some("echo 'some error'"));
     }
 
     // --- prepare_post_session tests ---
@@ -431,7 +487,7 @@ mod tests {
             ..Default::default()
         };
         let result = prepare_post_session(&config, &session_vars(0), false);
-        assert_eq!(result.as_deref(), Some("echo DISC_1"));
+        assert_eq!(result.as_deref(), Some("echo 'DISC_1'"));
     }
 
     #[test]
@@ -454,6 +510,6 @@ mod tests {
             ..Default::default()
         };
         let result = prepare_post_session(&config, &session_vars(2), false);
-        assert_eq!(result.as_deref(), Some("echo 2 failed"));
+        assert_eq!(result.as_deref(), Some("echo '2' failed"));
     }
 }
