@@ -271,15 +271,7 @@ fn bump_confidence(current: Confidence) -> Confidence {
 }
 
 fn format_duration(seconds: u32) -> String {
-    let h = seconds / 3600;
-    let m = (seconds % 3600) / 60;
-    let s = seconds % 60;
-
-    if h > 0 {
-        format!("{}:{:02}:{:02}", h, m, s)
-    } else {
-        format!("{}:{:02}", m, s)
-    }
+    crate::util::format_duration_hms(seconds)
 }
 
 // =============================================================================

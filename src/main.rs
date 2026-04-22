@@ -244,11 +244,20 @@ impl Args {
             None
         }
     }
+
+    pub fn cli_auto_detect(&self) -> Option<bool> {
+        if self.auto_detect {
+            Some(true)
+        } else if self.no_auto_detect {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_RUNTIME_ERROR: i32 = 1;
-#[allow(dead_code)]
 const EXIT_USAGE_ERROR: i32 = 2;
 const EXIT_NO_DEVICE: i32 = 3;
 const EXIT_CANCELLED: i32 = 4;
@@ -319,6 +328,17 @@ fn run() -> i32 {
 }
 
 fn classify_exit_code(err: &anyhow::Error) -> i32 {
+    // Try typed downcast first — more reliable than string matching
+    if let Some(me) = err.downcast_ref::<crate::media::MediaError>() {
+        return match me {
+            crate::media::MediaError::DeviceNotFound(_) | crate::media::MediaError::NoDisc => {
+                EXIT_NO_DEVICE
+            }
+            crate::media::MediaError::Cancelled => EXIT_CANCELLED,
+            _ => EXIT_RUNTIME_ERROR,
+        };
+    }
+    // Fallback: string matching for errors that lost their type through anyhow
     let msg = format!("{:#}", err);
     if msg.contains("No optical drives")
         || msg.contains("Device not found")
@@ -328,15 +348,6 @@ fn classify_exit_code(err: &anyhow::Error) -> i32 {
     }
     if msg.contains("cancelled") || msg.contains("Cancelled") {
         return EXIT_CANCELLED;
-    }
-    if let Some(me) = err.downcast_ref::<crate::media::MediaError>() {
-        return match me {
-            crate::media::MediaError::DeviceNotFound(_) | crate::media::MediaError::NoDisc => {
-                EXIT_NO_DEVICE
-            }
-            crate::media::MediaError::Cancelled => EXIT_CANCELLED,
-            _ => EXIT_RUNTIME_ERROR,
-        };
     }
     EXIT_RUNTIME_ERROR
 }
@@ -366,7 +377,7 @@ fn run_inner() -> anyhow::Result<i32> {
     let config_path = config::resolve_config_path(args.config.clone());
     let config = config::load_from(&config_path).unwrap_or_else(|e| {
         eprintln!("Error: {:#}", e);
-        std::process::exit(2);
+        std::process::exit(EXIT_USAGE_ERROR);
     });
 
     // Initialize logging before config validation so warnings are captured
@@ -621,4 +632,89 @@ fn atty_stdout() -> bool {
 fn atty_stdin() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_classify_exit_code_media_error_device_not_found() {
+        let err = anyhow::Error::from(crate::media::MediaError::DeviceNotFound("/dev/sr0".into()));
+        assert_eq!(classify_exit_code(&err), EXIT_NO_DEVICE);
+    }
+
+    #[test]
+    fn test_classify_exit_code_media_error_no_disc() {
+        let err = anyhow::Error::from(crate::media::MediaError::NoDisc);
+        assert_eq!(classify_exit_code(&err), EXIT_NO_DEVICE);
+    }
+
+    #[test]
+    fn test_classify_exit_code_media_error_cancelled() {
+        let err = anyhow::Error::from(crate::media::MediaError::Cancelled);
+        assert_eq!(classify_exit_code(&err), EXIT_CANCELLED);
+    }
+
+    #[test]
+    fn test_classify_exit_code_media_error_runtime() {
+        let err = anyhow::Error::from(crate::media::MediaError::NoStreams);
+        assert_eq!(classify_exit_code(&err), EXIT_RUNTIME_ERROR);
+    }
+
+    #[test]
+    fn test_classify_exit_code_string_no_drives() {
+        let err = anyhow::anyhow!("No optical drives found");
+        assert_eq!(classify_exit_code(&err), EXIT_NO_DEVICE);
+    }
+
+    #[test]
+    fn test_classify_exit_code_string_cancelled() {
+        let err = anyhow::anyhow!("Operation cancelled by user");
+        assert_eq!(classify_exit_code(&err), EXIT_CANCELLED);
+    }
+
+    #[test]
+    fn test_classify_exit_code_generic_error() {
+        let err = anyhow::anyhow!("something went wrong");
+        assert_eq!(classify_exit_code(&err), EXIT_RUNTIME_ERROR);
+    }
+
+    #[test]
+    fn test_cli_eject_true() {
+        let mut args = Args::parse_from(["bluback", "--eject"]);
+        args.device = Some("/dev/sr0".into());
+        assert_eq!(args.cli_eject(), Some(true));
+    }
+
+    #[test]
+    fn test_cli_eject_false() {
+        let mut args = Args::parse_from(["bluback", "--no-eject"]);
+        args.device = Some("/dev/sr0".into());
+        assert_eq!(args.cli_eject(), Some(false));
+    }
+
+    #[test]
+    fn test_cli_eject_default() {
+        let args = Args::parse_from(["bluback"]);
+        assert_eq!(args.cli_eject(), None);
+    }
+
+    #[test]
+    fn test_cli_auto_detect_true() {
+        let args = Args::parse_from(["bluback", "--auto-detect"]);
+        assert_eq!(args.cli_auto_detect(), Some(true));
+    }
+
+    #[test]
+    fn test_cli_auto_detect_false() {
+        let args = Args::parse_from(["bluback", "--no-auto-detect"]);
+        assert_eq!(args.cli_auto_detect(), Some(false));
+    }
+
+    #[test]
+    fn test_cli_auto_detect_default() {
+        let args = Args::parse_from(["bluback"]);
+        assert_eq!(args.cli_auto_detect(), None);
+    }
 }

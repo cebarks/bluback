@@ -339,6 +339,54 @@ pub fn format_size(bytes: u64) -> String {
     format!("{:.1} TiB", size)
 }
 
+/// Human-readable size for display tables. Returns a dash for zero/negative.
+pub fn format_size_human(bytes: i64) -> String {
+    if bytes <= 0 {
+        return "\u{2014}".to_string(); // em dash
+    }
+    let gb = bytes as f64 / 1_073_741_824.0;
+    if gb >= 1.0 {
+        return format!("{:.1} GB", gb);
+    }
+    let mb = bytes as f64 / 1_048_576.0;
+    if mb >= 1.0 {
+        return format!("{:.1} MB", mb);
+    }
+    format!("{} KB", bytes / 1024)
+}
+
+/// Truncate a string to `max_len` chars, appending "..." if truncated.
+pub fn truncate(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        return s.to_string();
+    }
+    if max_len <= 3 {
+        return ".".repeat(max_len);
+    }
+    let truncated: String = s.chars().take(max_len - 3).collect();
+    format!("{}...", truncated)
+}
+
+/// Format seconds as H:MM:SS or M:SS.
+pub fn format_duration_hms(seconds: u32) -> String {
+    let h = seconds / 3600;
+    let m = (seconds % 3600) / 60;
+    let s = seconds % 60;
+    if h > 0 {
+        format!("{}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{}:{:02}", m, s)
+    }
+}
+
+/// Format milliseconds as H:MM:SS or MM:SS. Returns a dash for None/zero.
+pub fn format_duration_ms(ms: Option<i64>) -> String {
+    match ms {
+        Some(ms) if ms > 0 => format_duration_hms((ms / 1000) as u32),
+        _ => "\u{2014}".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1312,5 +1360,103 @@ mod tests {
             None,
         );
         assert_eq!(result, "S05SP03_Behind the Scenes.mkv");
+    }
+
+    // --- format_size_human tests ---
+
+    #[test]
+    fn test_format_size_human_zero() {
+        assert_eq!(format_size_human(0), "\u{2014}");
+    }
+
+    #[test]
+    fn test_format_size_human_negative() {
+        assert_eq!(format_size_human(-100), "\u{2014}");
+    }
+
+    #[test]
+    fn test_format_size_human_gb() {
+        assert_eq!(format_size_human(5_368_709_120), "5.0 GB");
+    }
+
+    #[test]
+    fn test_format_size_human_mb() {
+        assert_eq!(format_size_human(10_485_760), "10.0 MB");
+    }
+
+    #[test]
+    fn test_format_size_human_kb() {
+        assert_eq!(format_size_human(2048), "2 KB");
+    }
+
+    // --- truncate tests ---
+
+    #[test]
+    fn test_truncate_short_string() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exact_length() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn test_truncate_long_string() {
+        assert_eq!(truncate("hello world", 8), "hello...");
+    }
+
+    #[test]
+    fn test_truncate_max_3() {
+        assert_eq!(truncate("hello", 3), "...");
+    }
+
+    #[test]
+    fn test_truncate_max_2() {
+        assert_eq!(truncate("hello", 2), "..");
+    }
+
+    #[test]
+    fn test_truncate_max_0() {
+        assert_eq!(truncate("hello", 0), "");
+    }
+
+    #[test]
+    fn test_truncate_unicode() {
+        assert_eq!(truncate("héllo wörld", 8), "héllo...");
+    }
+
+    // --- format_duration_hms tests ---
+
+    #[test]
+    fn test_format_duration_hms_with_hours() {
+        assert_eq!(format_duration_hms(3661), "1:01:01");
+    }
+
+    #[test]
+    fn test_format_duration_hms_no_hours() {
+        assert_eq!(format_duration_hms(125), "2:05");
+    }
+
+    #[test]
+    fn test_format_duration_hms_zero() {
+        assert_eq!(format_duration_hms(0), "0:00");
+    }
+
+    // --- format_duration_ms tests ---
+
+    #[test]
+    fn test_format_duration_ms_some() {
+        assert_eq!(format_duration_ms(Some(3661000)), "1:01:01");
+    }
+
+    #[test]
+    fn test_format_duration_ms_none() {
+        assert_eq!(format_duration_ms(None), "\u{2014}");
+    }
+
+    #[test]
+    fn test_format_duration_ms_zero() {
+        assert_eq!(format_duration_ms(Some(0)), "\u{2014}");
     }
 }

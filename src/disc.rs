@@ -322,7 +322,6 @@ pub fn parse_volume_label(label: &str) -> Option<LabelInfo> {
 ///
 /// For directories: validates that a `BDMV/` subdirectory exists.
 /// For non-directories (e.g., `/dev/sr0`): assumes a block device.
-#[allow(dead_code)] // Wired in Task 5 (main.rs)
 pub fn resolve_input_source(path: &std::path::Path) -> anyhow::Result<InputSource> {
     if path.is_dir() {
         if path.join("BDMV").is_dir() {
@@ -347,7 +346,6 @@ pub fn resolve_input_source(path: &std::path::Path) -> anyhow::Result<InputSourc
 ///
 /// For folders: tries bdmt_*.xml title, falls back to folder basename.
 /// For discs: tries bdmt_*.xml from mount_point (if available), falls back to lsblk/diskutil label.
-#[allow(dead_code)] // Wired in Task 5 (main.rs) and Task 12 (label upgrade)
 pub fn resolve_label(source: &InputSource, mount_point: Option<&str>) -> String {
     match source {
         InputSource::Folder { path } => {
@@ -373,7 +371,6 @@ pub fn resolve_label(source: &InputSource, mount_point: Option<&str>) -> String 
 ///
 /// Prefers `bdmt_eng.xml` if present; otherwise uses the first bdmt file found.
 /// Returns the content of the `<di:name>` element.
-#[allow(dead_code)] // Used in later tasks
 pub fn parse_bdmt_title(bdmv_root: &std::path::Path) -> Option<String> {
     let meta_dir = bdmv_root.join("BDMV").join("META").join("DL");
     if !meta_dir.is_dir() {
@@ -403,7 +400,6 @@ pub fn parse_bdmt_title(bdmv_root: &std::path::Path) -> Option<String> {
     parse_bdmt_xml(&target.path())
 }
 
-#[allow(dead_code)] // Used by parse_bdmt_title
 fn parse_bdmt_xml(path: &std::path::Path) -> Option<String> {
     let data = std::fs::read(path).ok()?;
 
@@ -551,6 +547,46 @@ pub fn try_lock_device(device: &str) -> anyhow::Result<File> {
     let _ = writeln!(file, "{}", std::process::id());
 
     Ok(file)
+}
+
+/// Result of extracting MPLS metadata from a mounted disc.
+pub struct MplsMetadata {
+    pub chapter_counts: std::collections::HashMap<String, usize>,
+    pub clip_sizes: std::collections::HashMap<String, u64>,
+    pub title_order: Option<Vec<String>>,
+}
+
+/// Mount disc, extract chapter counts / clip sizes / title order, then unmount if we mounted.
+/// Returns empty metadata on mount failure.
+pub fn collect_disc_metadata(device: &str, playlist_nums: &[&str]) -> MplsMetadata {
+    match ensure_mounted(device) {
+        Ok((mount, did_mount)) => {
+            let mount_path = std::path::Path::new(&mount);
+            let mpls_info = crate::chapters::collect_mpls_info(mount_path, playlist_nums);
+            let chapter_counts = mpls_info
+                .iter()
+                .map(|(k, v)| (k.clone(), v.chapters.len()))
+                .collect();
+            let clip_sizes = mpls_info
+                .into_iter()
+                .map(|(k, v)| (k, v.clip_size))
+                .collect();
+            let title_order = crate::index::parse_title_order(mount_path);
+            if did_mount {
+                let _ = unmount_disc(device);
+            }
+            MplsMetadata {
+                chapter_counts,
+                clip_sizes,
+                title_order,
+            }
+        }
+        Err(_) => MplsMetadata {
+            chapter_counts: std::collections::HashMap::new(),
+            clip_sizes: std::collections::HashMap::new(),
+            title_order: None,
+        },
+    }
 }
 
 #[cfg(test)]
