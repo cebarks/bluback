@@ -495,7 +495,7 @@ fn run_inner() -> anyhow::Result<i32> {
         let drives = disc::detect_optical_drives();
         if let Some(drive) = drives.first() {
             args.device = Some(drive.clone());
-        } else {
+        } else if !args.check {
             anyhow::bail!("No optical drives detected");
         }
     }
