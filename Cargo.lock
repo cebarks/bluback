@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "bluback"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "anyhow",
  "chrono",
