@@ -22,12 +22,12 @@ ureq = { version = "3", features = ["json"] }
 ffmpeg-the-third = "5"
 libc = "0.2"
 ctrlc = "3"
-rusqlite = { version = "0.39", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 fern = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-quick-xml = "0.37"
+quick-xml = "0.40"
 
 [lints.rust]
 # ff_api_avstream_side_data is emitted by ffmpeg-sys-the-third's build script

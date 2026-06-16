@@ -429,7 +429,7 @@ fn parse_bdmt_xml(path: &std::path::Path) -> Option<String> {
                 }
             }
             Ok(Event::Text(e)) if in_name => {
-                let text = e.unescape().ok()?.trim().to_string();
+                let text = e.decode().ok()?.trim().to_string();
                 if !text.is_empty() {
                     return Some(text);
                 }
