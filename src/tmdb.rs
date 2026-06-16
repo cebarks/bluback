@@ -8,9 +8,11 @@ use std::time::Duration;
 use crate::config::Config;
 use crate::types::{Episode, TmdbMovie, TmdbShow};
 
+const HTTP_TIMEOUT_SECS: u64 = 15;
+
 static TMDB_AGENT: LazyLock<ureq::Agent> = LazyLock::new(|| {
     ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
+        .timeout_global(Some(Duration::from_secs(HTTP_TIMEOUT_SECS)))
         .build()
         .into()
 });

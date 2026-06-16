@@ -1,7 +1,36 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+/// Mapping of environment variables to config keys for settings override/warning.
+const ENV_MAPPINGS: &[(&str, &str)] = &[
+    ("BLUBACK_OUTPUT_DIR", "output_dir"),
+    ("BLUBACK_DEVICE", "device"),
+    ("BLUBACK_EJECT", "eject"),
+    ("BLUBACK_MAX_SPEED", "max_speed"),
+    ("BLUBACK_MIN_PROBE_DURATION", "min_probe_duration"),
+    ("BLUBACK_PRESET", "preset"),
+    ("BLUBACK_TV_FORMAT", "tv_format"),
+    ("BLUBACK_MOVIE_FORMAT", "movie_format"),
+    ("BLUBACK_SPECIAL_FORMAT", "special_format"),
+    ("BLUBACK_SHOW_FILTERED", "show_filtered"),
+    ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
+    ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
+    ("BLUBACK_OVERWRITE", "overwrite"),
+    ("BLUBACK_BATCH", "batch"),
+    ("BLUBACK_AUTO_DETECT", "auto_detect"),
+    ("BLUBACK_VERIFY", "verify"),
+    ("BLUBACK_VERIFY_LEVEL", "verify_level"),
+    ("BLUBACK_AACS_BACKEND", "aacs_backend"),
+    ("BLUBACK_METADATA", "metadata.enabled"),
+    ("BLUBACK_AUDIO_LANGUAGES", "audio_languages"),
+    ("BLUBACK_SUBTITLE_LANGUAGES", "subtitle_languages"),
+    ("BLUBACK_PREFER_SURROUND", "prefer_surround"),
+    ("BLUBACK_HISTORY", "history.enabled"),
+    ("BLUBACK_HISTORY_RETENTION", "history.retention"),
+    ("TMDB_API_KEY", "tmdb_api_key"),
+];
 
 #[derive(Debug, Clone)]
 pub struct Playlist {
@@ -42,22 +71,20 @@ pub struct LabelInfo {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Consumed by disc.rs and wired in Task 5 (main.rs)
 pub enum InputSource {
     Disc { device: PathBuf },
     Folder { path: PathBuf },
 }
 
 impl InputSource {
-    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
-    pub fn bluray_path(&self) -> &Path {
+    #[cfg(test)]
+    pub fn bluray_path(&self) -> &std::path::Path {
         match self {
             InputSource::Disc { device } => device,
             InputSource::Folder { path } => path,
         }
     }
 
-    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
     pub fn is_folder(&self) -> bool {
         matches!(self, InputSource::Folder { .. })
     }
@@ -290,7 +317,7 @@ pub enum BackgroundResult {
     /// TMDb season fetch completed: (regular episodes, optional specials)
     SeasonFetch(anyhow::Result<Vec<Episode>>, Option<Vec<Episode>>),
     /// Single playlist probe result (for lazy probe of filtered playlists)
-    #[allow(dead_code)] // Constructed by Task 12 (final wiring)
+    #[allow(dead_code)]
     MediaProbe(String, Box<Option<(MediaInfo, StreamInfo)>>),
     /// Bulk probe results for episode-length playlists
     BulkProbe(std::collections::HashMap<String, (MediaInfo, StreamInfo)>),
@@ -982,34 +1009,6 @@ impl SettingsState {
     /// Check for BLUBACK_* env vars and apply their values to settings items.
     /// Returns the list of overrides that were applied.
     pub fn apply_env_overrides(&mut self) {
-        const ENV_MAPPINGS: &[(&str, &str)] = &[
-            ("BLUBACK_OUTPUT_DIR", "output_dir"),
-            ("BLUBACK_DEVICE", "device"),
-            ("BLUBACK_EJECT", "eject"),
-            ("BLUBACK_MAX_SPEED", "max_speed"),
-            ("BLUBACK_MIN_PROBE_DURATION", "min_probe_duration"),
-            ("BLUBACK_PRESET", "preset"),
-            ("BLUBACK_TV_FORMAT", "tv_format"),
-            ("BLUBACK_MOVIE_FORMAT", "movie_format"),
-            ("BLUBACK_SPECIAL_FORMAT", "special_format"),
-            ("BLUBACK_SHOW_FILTERED", "show_filtered"),
-            ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
-            ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
-            ("BLUBACK_OVERWRITE", "overwrite"),
-            ("BLUBACK_BATCH", "batch"),
-            ("BLUBACK_AUTO_DETECT", "auto_detect"),
-            ("BLUBACK_VERIFY", "verify"),
-            ("BLUBACK_VERIFY_LEVEL", "verify_level"),
-            ("BLUBACK_AACS_BACKEND", "aacs_backend"),
-            ("BLUBACK_METADATA", "metadata.enabled"),
-            ("BLUBACK_AUDIO_LANGUAGES", "audio_languages"),
-            ("BLUBACK_SUBTITLE_LANGUAGES", "subtitle_languages"),
-            ("BLUBACK_PREFER_SURROUND", "prefer_surround"),
-            ("BLUBACK_HISTORY", "history.enabled"),
-            ("BLUBACK_HISTORY_RETENTION", "history.retention"),
-            ("TMDB_API_KEY", "tmdb_api_key"),
-        ];
-
         let mut overrides = Vec::new();
 
         for &(env_var, config_key) in ENV_MAPPINGS {
@@ -1096,34 +1095,6 @@ impl SettingsState {
 
     /// Check which env vars are currently set that would override saved config.
     pub fn active_env_var_warnings(&self) -> Vec<String> {
-        const ENV_MAPPINGS: &[(&str, &str)] = &[
-            ("BLUBACK_OUTPUT_DIR", "output_dir"),
-            ("BLUBACK_DEVICE", "device"),
-            ("BLUBACK_EJECT", "eject"),
-            ("BLUBACK_MAX_SPEED", "max_speed"),
-            ("BLUBACK_MIN_PROBE_DURATION", "min_probe_duration"),
-            ("BLUBACK_PRESET", "preset"),
-            ("BLUBACK_TV_FORMAT", "tv_format"),
-            ("BLUBACK_MOVIE_FORMAT", "movie_format"),
-            ("BLUBACK_SPECIAL_FORMAT", "special_format"),
-            ("BLUBACK_SHOW_FILTERED", "show_filtered"),
-            ("BLUBACK_VERBOSE_LIBBLURAY", "verbose_libbluray"),
-            ("BLUBACK_RESERVE_INDEX_SPACE", "reserve_index_space"),
-            ("BLUBACK_OVERWRITE", "overwrite"),
-            ("BLUBACK_BATCH", "batch"),
-            ("BLUBACK_AUTO_DETECT", "auto_detect"),
-            ("BLUBACK_VERIFY", "verify"),
-            ("BLUBACK_VERIFY_LEVEL", "verify_level"),
-            ("BLUBACK_AACS_BACKEND", "aacs_backend"),
-            ("BLUBACK_METADATA", "metadata.enabled"),
-            ("BLUBACK_AUDIO_LANGUAGES", "audio_languages"),
-            ("BLUBACK_SUBTITLE_LANGUAGES", "subtitle_languages"),
-            ("BLUBACK_PREFER_SURROUND", "prefer_surround"),
-            ("BLUBACK_HISTORY", "history.enabled"),
-            ("BLUBACK_HISTORY_RETENTION", "history.retention"),
-            ("TMDB_API_KEY", "tmdb_api_key"),
-        ];
-
         let mut warnings = Vec::new();
         for &(env_var, _) in ENV_MAPPINGS {
             if let Ok(val) = std::env::var(env_var) {
@@ -1333,6 +1304,7 @@ impl SettingsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn test_audio_stream_is_surround() {

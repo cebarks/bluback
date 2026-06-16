@@ -122,3 +122,91 @@ pub fn classify_aacs_error(err: &ffmpeg_the_third::Error) -> Option<MediaError> 
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_display_aacs_revoked() {
+        let msg = format!("{}", MediaError::AacsRevoked);
+        assert!(msg.contains("AACS host certificate revoked"));
+        assert!(msg.contains("VUK"));
+    }
+
+    #[test]
+    fn test_display_aacs_auth_failed() {
+        let msg = format!("{}", MediaError::AacsAuthFailed("test error".into()));
+        assert!(msg.contains("AACS authentication failed"));
+        assert!(msg.contains("test error"));
+    }
+
+    #[test]
+    fn test_display_aacs_timeout_libmmbd() {
+        let msg = format!("{}", MediaError::AacsTimeout("libmmbd".into()));
+        assert!(msg.contains("timed out"));
+        assert!(msg.contains("libmmbd"));
+        assert!(msg.contains("makemkvcon"));
+    }
+
+    #[test]
+    fn test_display_aacs_timeout_libaacs() {
+        let msg = format!("{}", MediaError::AacsTimeout("libaacs".into()));
+        assert!(msg.contains("timed out"));
+        assert!(msg.contains("libaacs"));
+    }
+
+    #[test]
+    fn test_display_aacs_timeout_unknown() {
+        let msg = format!("{}", MediaError::AacsTimeout("auto".into()));
+        assert!(msg.contains("timed out"));
+        assert!(msg.contains("USB"));
+    }
+
+    #[test]
+    fn test_display_device_not_found() {
+        let msg = format!("{}", MediaError::DeviceNotFound("/dev/sr0".into()));
+        assert_eq!(msg, "Device not found: /dev/sr0");
+    }
+
+    #[test]
+    fn test_display_no_disc() {
+        assert_eq!(format!("{}", MediaError::NoDisc), "No disc in drive");
+    }
+
+    #[test]
+    fn test_display_cancelled() {
+        assert_eq!(format!("{}", MediaError::Cancelled), "Operation cancelled");
+    }
+
+    #[test]
+    fn test_display_no_streams() {
+        assert_eq!(
+            format!("{}", MediaError::NoStreams),
+            "No usable streams in playlist"
+        );
+    }
+
+    #[test]
+    fn test_display_output_exists() {
+        let msg = format!(
+            "{}",
+            MediaError::OutputExists(PathBuf::from("/tmp/test.mkv"))
+        );
+        assert!(msg.contains("already exists"));
+        assert!(msg.contains("/tmp/test.mkv"));
+    }
+
+    #[test]
+    fn test_error_source_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let err = MediaError::Io(io_err);
+        assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn test_error_source_none_for_others() {
+        assert!(std::error::Error::source(&MediaError::Cancelled).is_none());
+        assert!(std::error::Error::source(&MediaError::NoDisc).is_none());
+    }
+}

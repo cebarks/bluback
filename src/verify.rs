@@ -204,13 +204,15 @@ fn probe_output_file(path: &Path) -> Result<OutputInfo, String> {
 ///
 /// If expected is 0, the check is skipped (passes unconditionally) since
 /// the source didn't provide a duration to compare against.
+const DURATION_TOLERANCE: f64 = 0.02;
+
 fn duration_within_tolerance(actual_secs: f64, expected_secs: u32) -> (bool, String) {
     if expected_secs == 0 {
         return (true, "no expected duration (skipped)".to_string());
     }
 
     let expected = expected_secs as f64;
-    let tolerance = expected * 0.02;
+    let tolerance = expected * DURATION_TOLERANCE;
     let diff = actual_secs - expected;
 
     if diff.abs() <= tolerance {
@@ -277,7 +279,8 @@ fn decode_sample_frames(path: &Path, duration_secs: f64) -> Vec<VerifyCheck> {
         }
     };
 
-    let percentages = [0.0, 0.25, 0.50, 0.75, 0.90];
+    const SEEK_PERCENTAGES: [f64; 5] = [0.0, 0.25, 0.50, 0.75, 0.90];
+    let percentages = SEEK_PERCENTAGES;
     let mut checks = Vec::with_capacity(percentages.len());
 
     for &pct in &percentages {
@@ -356,11 +359,11 @@ fn decode_frame_at(path: &str, seek_secs: i64) -> Result<(), String> {
     // Read packets and try to decode one video frame
     let mut frame = ffmpeg_the_third::frame::Video::empty();
     let mut packet = ffmpeg_the_third::Packet::empty();
+    const MAX_DECODE_ATTEMPTS: u32 = 500;
     let mut attempts = 0;
-    let max_attempts = 500;
 
     loop {
-        if attempts >= max_attempts {
+        if attempts >= MAX_DECODE_ATTEMPTS {
             return Err("exceeded max packet read attempts without decoding a frame".to_string());
         }
         attempts += 1;

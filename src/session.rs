@@ -536,6 +536,31 @@ impl DriveSession {
                     self.rip
                         .cancel
                         .store(true, std::sync::atomic::Ordering::Relaxed);
+                    // Fire post-session hook with cancelled status
+                    {
+                        let mut vars = std::collections::HashMap::new();
+                        vars.insert("title", self.tmdb.show_name.clone());
+                        vars.insert("label", self.disc.label.clone());
+                        vars.insert("device", self.device.display().to_string());
+                        vars.insert(
+                            "mode",
+                            if self.tmdb.movie_mode { "movie" } else { "tv" }.to_string(),
+                        );
+                        vars.insert("dir", self.output_dir.display().to_string());
+                        vars.insert("total", "0".to_string());
+                        vars.insert("succeeded", "0".to_string());
+                        vars.insert("failed", "0".to_string());
+                        vars.insert("skipped", "0".to_string());
+                        vars.insert(
+                            "season",
+                            self.wizard
+                                .season_num
+                                .map(|n| n.to_string())
+                                .unwrap_or_default(),
+                        );
+                        vars.insert("status", "cancelled".to_string());
+                        crate::hooks::run_post_session(&self.config, &vars, self.no_hooks);
+                    }
                     if self.disc.did_mount {
                         let _ = crate::disc::unmount_disc(&self.device.to_string_lossy());
                     }
@@ -545,6 +570,13 @@ impl DriveSession {
                     let prev_screen = self.screen.clone();
                     let was_ripping = self.screen == Screen::Ripping;
                     self.handle_key(key);
+                    // Record history when leaving TmdbSearch (user has made their selection)
+                    if prev_screen == Screen::TmdbSearch
+                        && self.screen != Screen::TmdbSearch
+                        && self.history_session_id.is_none()
+                    {
+                        self.record_history_session(&history_db);
+                    }
                     // Compute episode hint when entering PlaylistManager from Season
                     if prev_screen == Screen::Season
                         && self.screen == Screen::PlaylistManager
@@ -586,10 +618,9 @@ impl DriveSession {
             let changed = self.poll_background();
             let probe_changed = self.poll_probe();
             if changed || probe_changed {
-                // Record history session when scan completes (transition to TmdbSearch)
+                // Compute duplicate hint when scan completes (transition to TmdbSearch)
                 if self.screen == Screen::TmdbSearch && self.history_session_id.is_none() {
                     self.compute_duplicate_hint(&history_db);
-                    self.record_history_session(&history_db);
                 }
                 self.emit_snapshot();
             }
@@ -724,7 +755,7 @@ impl DriveSession {
                                 ));
                             }),
                         )
-                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                        .map_err(anyhow::Error::from)?;
                     Ok((dev_str, label, playlists, probe_cache, skip_set))
                 })();
                 let _ = tx.send(BackgroundResult::DiscScan(result));
@@ -837,47 +868,32 @@ impl DriveSession {
                 self.disc.playlists = playlists;
                 self.skip_set = skip_set;
 
-                // Extract chapter counts and title order from mounted disc
+                // Extract chapter counts, clip sizes, and title order from mounted disc
                 let device_str = self.device.to_string_lossy().to_string();
-                let title_order = match crate::disc::ensure_mounted(&device_str) {
-                    Ok((mount, did_mount)) => {
-                        let mount_path = std::path::Path::new(&mount);
-                        let nums: Vec<&str> = self
-                            .disc
-                            .playlists
-                            .iter()
-                            .map(|pl| pl.num.as_str())
-                            .collect();
-                        let mpls_info = crate::chapters::collect_mpls_info(mount_path, &nums);
-                        self.disc.chapter_counts = mpls_info
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.chapters.len()))
-                            .collect();
-                        self.disc.clip_sizes = mpls_info
-                            .into_iter()
-                            .map(|(k, v)| (k, v.clip_size))
-                            .collect();
-                        let order = crate::index::parse_title_order(mount_path);
+                let nums: Vec<&str> = self
+                    .disc
+                    .playlists
+                    .iter()
+                    .map(|pl| pl.num.as_str())
+                    .collect();
+                let meta = crate::disc::collect_disc_metadata(&device_str, &nums);
+                self.disc.chapter_counts = meta.chapter_counts;
+                self.disc.clip_sizes = meta.clip_sizes;
 
-                        // Upgrade display label from bdmt_*.xml if available
-                        // label_info stays from original lsblk label (bdmt format won't match regex)
-                        if !self.device.is_dir() {
-                            if let Some(bdmt_title) = crate::disc::parse_bdmt_title(mount_path) {
-                                self.disc.label = bdmt_title;
-                            }
+                // Upgrade display label from bdmt_*.xml if available
+                if !self.device.is_dir() {
+                    if let Ok((mount, did_mount)) = crate::disc::ensure_mounted(&device_str) {
+                        if let Some(bdmt_title) =
+                            crate::disc::parse_bdmt_title(std::path::Path::new(&mount))
+                        {
+                            self.disc.label = bdmt_title;
                         }
-
                         if did_mount {
                             let _ = crate::disc::unmount_disc(&device_str);
                         }
-                        order
                     }
-                    Err(_) => {
-                        self.disc.chapter_counts.clear();
-                        self.disc.clip_sizes.clear();
-                        None
-                    }
-                };
+                }
+                let title_order = meta.title_order;
 
                 // Reorder playlists by title index (or MPLS number fallback)
                 crate::index::reorder_playlists(&mut self.disc.playlists, title_order.as_deref());

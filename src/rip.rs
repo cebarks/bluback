@@ -17,16 +17,7 @@ pub fn estimate_eta(progress: &RipProgress, total_seconds: u32) -> Option<u32> {
     }
 }
 
-pub fn format_eta(seconds: u32) -> String {
-    let hrs = seconds / 3600;
-    let mins = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-    if hrs > 0 {
-        format!("{}:{:02}:{:02}", hrs, mins, secs)
-    } else {
-        format!("{}:{:02}", mins, secs)
-    }
-}
+pub use crate::util::format_duration_hms as format_eta;
 
 #[cfg(test)]
 mod tests {

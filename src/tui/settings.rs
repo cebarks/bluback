@@ -221,18 +221,7 @@ fn is_preset_active(state: &SettingsState) -> bool {
     })
 }
 
-fn truncate(s: &str, max_len: usize) -> String {
-    if max_len == 0 {
-        return String::new();
-    }
-    if s.len() <= max_len {
-        s.to_string()
-    } else if max_len > 3 {
-        format!("{}...", &s[..max_len - 3])
-    } else {
-        s[..max_len].to_string()
-    }
-}
+use crate::util::truncate;
 
 fn mask_api_key(key: &str) -> String {
     if key.len() <= 4 {
@@ -513,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_truncate_tiny() {
-        assert_eq!(truncate("hello", 2), "he");
+        assert_eq!(truncate("hello", 2), "..");
     }
 
     #[test]

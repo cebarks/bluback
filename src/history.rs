@@ -1,7 +1,5 @@
 //! SQLite-backed rip history database.
 
-#![allow(dead_code)] // Types and methods used in future tasks
-
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -302,6 +300,7 @@ impl HistoryDb {
         Ok(db)
     }
 
+    #[cfg(test)]
     pub fn open_memory() -> Result<Self> {
         let conn = Connection::open_in_memory().context("Failed to open in-memory database")?;
         let mut db = Self { conn };
@@ -607,6 +606,7 @@ impl HistoryDb {
         Ok(result)
     }
 
+    #[cfg(test)]
     pub fn last_special(&self, tmdb_id: i64, season: i32) -> Result<Option<i32>> {
         let result = self
             .conn
@@ -624,6 +624,7 @@ impl HistoryDb {
         Ok(result)
     }
 
+    #[cfg(test)]
     pub fn last_special_by_label(&self, label_pattern: &str, season: i32) -> Result<Option<i32>> {
         let result = self
             .conn
@@ -683,6 +684,7 @@ impl HistoryDb {
         Ok(sessions)
     }
 
+    #[cfg(test)]
     pub fn find_session_by_tmdb(
         &self,
         tmdb_id: i64,

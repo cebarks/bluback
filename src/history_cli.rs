@@ -403,44 +403,4 @@ fn run_export(db: &HistoryDb) -> Result<()> {
     Ok(())
 }
 
-fn format_size(bytes: i64) -> String {
-    if bytes == 0 {
-        return "—".to_string();
-    }
-    let gb = bytes as f64 / 1_073_741_824.0;
-    if gb >= 1.0 {
-        return format!("{:.1} GB", gb);
-    }
-    let mb = bytes as f64 / 1_048_576.0;
-    if mb >= 1.0 {
-        return format!("{:.1} MB", mb);
-    }
-    let kb = bytes as f64 / 1024.0;
-    format!("{:.1} KB", kb)
-}
-
-fn format_duration_ms(ms: Option<i64>) -> String {
-    match ms {
-        None | Some(0) => "—".to_string(),
-        Some(ms) => {
-            let total_secs = ms / 1000;
-            let hours = total_secs / 3600;
-            let minutes = (total_secs % 3600) / 60;
-            let secs = total_secs % 60;
-            if hours > 0 {
-                format!("{}:{:02}:{:02}", hours, minutes, secs)
-            } else {
-                format!("{:02}:{:02}", minutes, secs)
-            }
-        }
-    }
-}
-
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_len.saturating_sub(1)).collect();
-        format!("{}…", truncated)
-    }
-}
+use crate::util::{format_duration_ms, format_size_human as format_size, truncate};

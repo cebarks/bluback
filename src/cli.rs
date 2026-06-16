@@ -104,13 +104,7 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
     let min_probe_duration = config.min_probe_duration(args.min_probe_duration);
 
     // Resolve auto_detect setting
-    let auto_detect = config.should_auto_detect(if args.auto_detect {
-        Some(true)
-    } else if args.no_auto_detect {
-        Some(false)
-    } else {
-        None
-    });
+    let auto_detect = config.should_auto_detect(args.cli_auto_detect());
 
     let source_name = if is_folder { "folder" } else { "disc" };
     eprint!("Scanning {} at {}...", source_name, device);
@@ -128,53 +122,22 @@ pub fn list_playlists(args: &Args, config: &crate::config::Config) -> anyhow::Re
             eprint!("\rProbing playlist {} ({}/{})...", num, current, total);
         }),
     )
-    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    .map_err(anyhow::Error::from)?;
     println!();
     if playlists.is_empty() {
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
     }
 
     // Mount disc for chapter counts, clip sizes, and title order
-    let (chapter_counts, _clip_sizes, title_order) = {
-        let device_str = device.to_string();
-        match disc::ensure_mounted(&device_str) {
-            Ok((mount, did_mount)) => {
-                let mount_path = std::path::Path::new(&mount);
-                let nums: Vec<&str> = playlists.iter().map(|pl| pl.num.as_str()).collect();
-                let mpls_info = crate::chapters::collect_mpls_info(mount_path, &nums);
-                let counts: std::collections::HashMap<String, usize> = mpls_info
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.chapters.len()))
-                    .collect();
-                let sizes: std::collections::HashMap<String, u64> = mpls_info
-                    .into_iter()
-                    .map(|(k, v)| (k, v.clip_size))
-                    .collect();
-                let order = crate::index::parse_title_order(mount_path);
-                if did_mount {
-                    let _ = disc::unmount_disc(&device_str);
-                }
-                (counts, sizes, order)
-            }
-            Err(_) => (
-                std::collections::HashMap::new(),
-                std::collections::HashMap::new(),
-                None,
-            ),
-        }
-    };
+    let nums: Vec<&str> = playlists.iter().map(|pl| pl.num.as_str()).collect();
+    let meta = disc::collect_disc_metadata(device.as_ref(), &nums);
+    let chapter_counts = meta.chapter_counts;
 
     // Reorder playlists by title index (or MPLS number fallback)
-    crate::index::reorder_playlists(&mut playlists, title_order.as_deref());
+    crate::index::reorder_playlists(&mut playlists, meta.title_order.as_deref());
 
     // Resolve auto_detect setting
-    let auto_detect = config.should_auto_detect(if args.auto_detect {
-        Some(true)
-    } else if args.no_auto_detect {
-        Some(false)
-    } else {
-        None
-    });
+    let auto_detect = config.should_auto_detect(args.cli_auto_detect());
 
     // Run detection if enabled (only on probed playlists)
     let mut detection_results = if auto_detect {
@@ -455,48 +418,18 @@ pub fn run(
     }
 
     // Mount disc for chapter counts, clip sizes, and title order
-    let (chapter_counts, clip_sizes, title_order) = {
-        let device_str = device.to_string();
-        match disc::ensure_mounted(&device_str) {
-            Ok((mount, did_mount)) => {
-                let mount_path = std::path::Path::new(&mount);
-                let nums: Vec<&str> = all_playlists.iter().map(|pl| pl.num.as_str()).collect();
-                let mpls_info = crate::chapters::collect_mpls_info(mount_path, &nums);
-                let counts: std::collections::HashMap<String, usize> = mpls_info
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.chapters.len()))
-                    .collect();
-                let sizes: std::collections::HashMap<String, u64> = mpls_info
-                    .into_iter()
-                    .map(|(k, v)| (k, v.clip_size))
-                    .collect();
-                let order = crate::index::parse_title_order(mount_path);
-                if did_mount {
-                    let _ = disc::unmount_disc(&device_str);
-                }
-                (counts, sizes, order)
-            }
-            Err(_) => (
-                std::collections::HashMap::new(),
-                std::collections::HashMap::new(),
-                None,
-            ),
-        }
-    };
+    let nums: Vec<&str> = all_playlists.iter().map(|pl| pl.num.as_str()).collect();
+    let meta = disc::collect_disc_metadata(device.as_ref(), &nums);
+    let chapter_counts = meta.chapter_counts;
+    let clip_sizes = meta.clip_sizes;
 
     // Reorder playlists by title index (or MPLS number fallback)
-    crate::index::reorder_playlists(&mut all_playlists, title_order.as_deref());
-    crate::index::reorder_playlists(&mut episodes_pl, title_order.as_deref());
+    crate::index::reorder_playlists(&mut all_playlists, meta.title_order.as_deref());
+    crate::index::reorder_playlists(&mut episodes_pl, meta.title_order.as_deref());
 
     // Detection-aware movie_mode override (mirrors TUI logic in session.rs)
     if !args.movie {
-        let auto_detect = config.should_auto_detect(if args.auto_detect {
-            Some(true)
-        } else if args.no_auto_detect {
-            Some(false)
-        } else {
-            None
-        });
+        let auto_detect = config.should_auto_detect(args.cli_auto_detect());
         if auto_detect {
             let probed_playlists: Vec<&Playlist> = all_playlists
                 .iter()
@@ -578,13 +511,7 @@ pub fn run(
     )?;
 
     // Resolve auto_detect setting
-    let auto_detect = config.should_auto_detect(if args.auto_detect {
-        Some(true)
-    } else if args.no_auto_detect {
-        Some(false)
-    } else {
-        None
-    });
+    let auto_detect = config.should_auto_detect(args.cli_auto_detect());
 
     // Resolve --specials flag to playlist numbers, or run auto-detection
     let specials_set: std::collections::HashSet<String> =
@@ -940,13 +867,7 @@ fn scan_disc(
     let min_probe_duration = config.min_probe_duration(args.min_probe_duration);
 
     // Resolve auto_detect setting
-    let auto_detect = config.should_auto_detect(if args.auto_detect {
-        Some(true)
-    } else if args.no_auto_detect {
-        Some(false)
-    } else {
-        None
-    });
+    let auto_detect = config.should_auto_detect(args.cli_auto_detect());
 
     let source_name = if is_folder { "folder" } else { "disc" };
     eprint!("Scanning {} at {}...", source_name, device);
@@ -964,7 +885,7 @@ fn scan_disc(
             eprint!("\rProbing playlist {} ({}/{})...", num, current, total);
         }),
     )
-    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    .map_err(anyhow::Error::from)?;
     println!();
     if playlists.is_empty() {
         anyhow::bail!("No playlists found. Check libaacs and KEYDB.cfg.");
@@ -990,8 +911,11 @@ fn scan_disc(
     // label_info stays derived from the original lsblk label (bdmt format won't match regex)
     let label = if !is_folder {
         match disc::ensure_mounted(&device) {
-            Ok((mount, _did_mount)) => {
+            Ok((mount, did_mount)) => {
                 let upgraded = disc::parse_bdmt_title(std::path::Path::new(&mount));
+                if did_mount {
+                    let _ = disc::unmount_disc(&device);
+                }
                 upgraded.unwrap_or(label)
             }
             Err(_) => label,
@@ -2254,10 +2178,7 @@ fn rip_selected(
 }
 
 fn format_time(seconds: u32) -> String {
-    let h = seconds / 3600;
-    let m = (seconds % 3600) / 60;
-    let s = seconds % 60;
-    format!("{}:{:02}:{:02}", h, m, s)
+    crate::util::format_duration_hms(seconds)
 }
 
 fn format_progress_line(
