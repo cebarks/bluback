@@ -24,7 +24,7 @@ pub struct DetectionResult {
 }
 
 /// Run detection without chapter information.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn run_detection(
     all_playlists: &[Playlist],
     tmdb_episodes: Option<&[Episode]>,

@@ -522,8 +522,6 @@ mod tests {
         HistoryOverlayState {
             sessions,
             selected: 0,
-            filter_text: String::new(),
-            status_filter: None,
             detail_view: None,
             confirm_action: None,
         }

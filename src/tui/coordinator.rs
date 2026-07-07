@@ -529,147 +529,91 @@ impl Coordinator {
     }
 
     fn poll_sessions(&mut self) {
-        let mut notifications = Vec::new();
-
         for session in &mut self.sessions {
             if session.dead {
                 continue;
             }
 
-            // Drain all available messages
-            while let Ok(msg) = session.output_rx.try_recv() {
-                match msg {
-                    SessionMessage::Snapshot(boxed_snap) => {
-                        let snap = *boxed_snap;
-                        session.tab_summary = TabSummary {
-                            session_id: snap.session_id,
-                            device_name: session.tab_summary.device_name.clone(),
-                            state: match snap.screen {
-                                Screen::Scanning => {
-                                    if snap
-                                        .scanning
-                                        .as_ref()
-                                        .map(|s| s.label.is_empty())
-                                        .unwrap_or(true)
-                                    {
-                                        TabState::Idle
-                                    } else {
-                                        TabState::Scanning
-                                    }
-                                }
-                                Screen::TmdbSearch
-                                | Screen::Season
-                                | Screen::PlaylistManager
-                                | Screen::Confirm => TabState::Wizard,
-                                Screen::Ripping => TabState::Ripping,
-                                Screen::Done => TabState::Done,
-                            },
-                            rip_progress: if snap.screen == Screen::Ripping {
-                                snap.dashboard.as_ref().map(|d| {
-                                    let total = d.jobs.len();
-                                    let done_count = d
-                                        .jobs
-                                        .iter()
-                                        .filter(|j| {
-                                            matches!(
-                                                j.status,
-                                                PlaylistStatus::Done(_)
-                                                    | PlaylistStatus::Verified(..)
-                                                    | PlaylistStatus::VerifyFailed(..)
-                                            )
-                                        })
-                                        .count();
-                                    let current_pct = d
-                                        .jobs
-                                        .get(d.current_rip)
-                                        .and_then(|job| {
-                                            if let PlaylistStatus::Ripping(ref prog) = job.status {
-                                                if job.playlist.seconds > 0 {
-                                                    Some(
-                                                        (prog.out_time_secs as f64
-                                                            / job.playlist.seconds as f64
-                                                            * 100.0)
-                                                            .min(100.0)
-                                                            as u8,
-                                                    )
-                                                } else {
-                                                    Some(0)
-                                                }
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or(0);
-                                    let overall = if total > 0 {
-                                        ((done_count as f64 * 100.0 + current_pct as f64)
-                                            / total as f64)
-                                            as u8
-                                    } else {
-                                        0
-                                    };
-                                    (done_count + 1, total, overall)
-                                })
+            while let Ok(SessionMessage::Snapshot(boxed_snap)) = session.output_rx.try_recv() {
+                let snap = *boxed_snap;
+                session.tab_summary = TabSummary {
+                    session_id: snap.session_id,
+                    device_name: session.tab_summary.device_name.clone(),
+                    state: match snap.screen {
+                        Screen::Scanning => {
+                            if snap
+                                .scanning
+                                .as_ref()
+                                .map(|s| s.label.is_empty())
+                                .unwrap_or(true)
+                            {
+                                TabState::Idle
                             } else {
-                                None
-                            },
-                            error: session.tab_summary.error.clone(),
-                        };
-                        session.snapshot = Some(snap);
-                    }
-                    SessionMessage::Progress {
-                        session_id: _,
-                        progress,
-                        job_index,
-                    } => {
-                        // Merge progress into the cached snapshot's dashboard view
-                        if let Some(ref mut snap) = session.snapshot {
-                            if let Some(ref mut dashboard) = snap.dashboard {
-                                if let Some(job) = dashboard.jobs.get_mut(job_index) {
-                                    job.status = PlaylistStatus::Ripping(progress);
-                                }
+                                TabState::Scanning
                             }
                         }
-                    }
-                    SessionMessage::Notification(notification) => {
-                        notifications.push(notification);
-                    }
-                }
+                        Screen::TmdbSearch
+                        | Screen::Season
+                        | Screen::PlaylistManager
+                        | Screen::Confirm => TabState::Wizard,
+                        Screen::Ripping => TabState::Ripping,
+                        Screen::Done => TabState::Done,
+                    },
+                    rip_progress: if snap.screen == Screen::Ripping {
+                        snap.dashboard.as_ref().map(|d| {
+                            let total = d.jobs.len();
+                            let done_count = d
+                                .jobs
+                                .iter()
+                                .filter(|j| {
+                                    matches!(
+                                        j.status,
+                                        PlaylistStatus::Done(_)
+                                            | PlaylistStatus::Verified(..)
+                                            | PlaylistStatus::VerifyFailed(..)
+                                    )
+                                })
+                                .count();
+                            let current_pct = d
+                                .jobs
+                                .get(d.current_rip)
+                                .and_then(|job| {
+                                    if let PlaylistStatus::Ripping(ref prog) = job.status {
+                                        if job.playlist.seconds > 0 {
+                                            Some(
+                                                (prog.out_time_secs as f64
+                                                    / job.playlist.seconds as f64
+                                                    * 100.0)
+                                                    .min(100.0)
+                                                    as u8,
+                                            )
+                                        } else {
+                                            Some(0)
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            let overall = if total > 0 {
+                                ((done_count as f64 * 100.0 + current_pct as f64) / total as f64)
+                                    as u8
+                            } else {
+                                0
+                            };
+                            (done_count + 1, total, overall)
+                        })
+                    } else {
+                        None
+                    },
+                    error: session.tab_summary.error.clone(),
+                };
+                session.snapshot = Some(snap);
             }
-        }
-
-        // Handle notifications outside the session borrow
-        for notification in notifications {
-            self.handle_notification(notification);
         }
     }
 
-    fn handle_notification(&mut self, notification: Notification) {
-        match notification {
-            Notification::EpisodesAssigned {
-                session_id,
-                show_name,
-                season,
-                episodes,
-            } => {
-                self.validate_episode_overlap(session_id, &show_name, season, &episodes);
-            }
-            Notification::ScreenChanged {
-                session_id,
-                tab_summary,
-            } => {
-                if let Some(session) = self.sessions.iter_mut().find(|s| s.id == session_id) {
-                    session.tab_summary = tab_summary;
-                }
-            }
-            // Other notifications are informational; we can log or ignore
-            Notification::RipComplete { .. }
-            | Notification::RipFailed { .. }
-            | Notification::AllDone { .. }
-            | Notification::DiscDetected { .. }
-            | Notification::SessionCrashed { .. } => {}
-        }
-    }
-
+    #[allow(dead_code)] // ponytail: re-wire when multi-drive Notification is constructed
     fn validate_episode_overlap(
         &mut self,
         session_id: SessionId,
@@ -906,8 +850,6 @@ impl Coordinator {
                 crate::types::HistoryOverlayState {
                     sessions,
                     selected: 0,
-                    filter_text: String::new(),
-                    status_filter: None,
                     detail_view: None,
                     confirm_action: None,
                 },

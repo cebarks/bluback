@@ -405,12 +405,10 @@ impl Config {
         cli_batch.unwrap_or_else(|| self.batch())
     }
 
-    #[allow(dead_code)] // Part of Task 5 (auto-detection config); used by TUI/CLI after wiring
     pub fn auto_detect(&self) -> bool {
         self.auto_detect.unwrap_or(true)
     }
 
-    #[allow(dead_code)] // Part of Task 5 (auto-detection config); used by TUI/CLI after wiring
     pub fn should_auto_detect(&self, cli_auto_detect: Option<bool>) -> bool {
         cli_auto_detect.unwrap_or_else(|| self.auto_detect())
     }
@@ -503,7 +501,6 @@ impl Config {
             .unwrap_or_default()
     }
 
-    #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
     pub fn history_enabled(&self) -> bool {
         self.history
             .as_ref()
@@ -511,12 +508,10 @@ impl Config {
             .unwrap_or(true)
     }
 
-    #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
     pub fn history_path(&self) -> Option<&str> {
         self.history.as_ref().and_then(|h| h.path.as_deref())
     }
 
-    #[allow(dead_code)] // Part of Task 7 (history config); used by CLI/TUI/hooks after wiring
     pub fn history_retention(&self) -> Option<&str> {
         self.history.as_ref().and_then(|h| h.retention.as_deref())
     }

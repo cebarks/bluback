@@ -15,8 +15,6 @@ pub enum MediaError {
     DeviceNotFound(String),
     /// Drive present but no disc inserted
     NoDisc,
-    /// Requested playlist doesn't exist on disc
-    PlaylistNotFound(String),
     /// Playlist has no usable streams
     NoStreams,
     /// Error during packet read/write in remux
@@ -73,7 +71,6 @@ impl fmt::Display for MediaError {
             }
             Self::DeviceNotFound(dev) => write!(f, "Device not found: {}", dev),
             Self::NoDisc => write!(f, "No disc in drive"),
-            Self::PlaylistNotFound(num) => write!(f, "Playlist {} not found on disc", num),
             Self::NoStreams => write!(f, "No usable streams in playlist"),
             Self::RemuxFailed(msg) => write!(f, "Remux failed: {}", msg),
             Self::OutputExists(path) => {

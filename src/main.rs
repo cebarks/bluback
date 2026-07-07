@@ -248,8 +248,6 @@ impl Args {
 
 const EXIT_SUCCESS: i32 = 0;
 const EXIT_RUNTIME_ERROR: i32 = 1;
-#[allow(dead_code)]
-const EXIT_USAGE_ERROR: i32 = 2;
 const EXIT_NO_DEVICE: i32 = 3;
 const EXIT_CANCELLED: i32 = 4;
 

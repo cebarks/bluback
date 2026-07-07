@@ -1,85 +1,62 @@
 //! Duration parsing for history retention and CLI filters.
 
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Duration, Utc};
-use regex::Regex;
+use chrono::{DateTime, Datelike, Duration, Utc};
 
-#[allow(dead_code)] // Public API — used by config and CLI modules (tasks 7+)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedDuration {
     Relative(u32),    // days
     Absolute(String), // ISO date string "YYYY-MM-DD"
 }
 
-/// Parse a duration string into a ParsedDuration.
-///
-/// Accepts:
-/// - "30d" → Relative(30)
-/// - "1d" → Relative(1)
-/// - "6months" or "6month" → Relative(180) (30 days per month)
-/// - "1month" → Relative(30)
-/// - "1year" or "2years" → Relative(365) / Relative(730)
-/// - "2026-04-01" → Absolute("2026-04-01")
-/// - Empty string or "0d" → error
-#[allow(dead_code)] // Public API — used by config and CLI modules (tasks 7+)
+// ponytail: strip_suffix instead of 4 per-call Regex::new()
 pub fn parse_duration(s: &str) -> Result<ParsedDuration> {
     if s.is_empty() {
         return Err(anyhow!("duration cannot be empty"));
     }
 
-    // Try absolute date first (YYYY-MM-DD)
-    let date_re = Regex::new(r"^(\d{4})-(\d{2})-(\d{2})$").unwrap();
-    if let Some(caps) = date_re.captures(s) {
-        let year: i32 = caps[1].parse()?;
-        let month: u32 = caps[2].parse()?;
-        let day: u32 = caps[3].parse()?;
+    let err = || {
+        anyhow!(
+            "invalid duration format: '{}'. Expected formats: '30d', '6months', '1year', or 'YYYY-MM-DD'",
+            s
+        )
+    };
 
-        // Validate the date is reasonable
-        if !(1..=12).contains(&month) {
-            return Err(anyhow!("invalid month: {}", month));
-        }
-        if !(1..=31).contains(&day) {
-            return Err(anyhow!("invalid day: {}", day));
-        }
-        if !(1970..=9999).contains(&year) {
-            return Err(anyhow!("invalid year: {}", year));
-        }
+    if let Some(n) = s.strip_suffix('d') {
+        let days: u32 = n.parse().map_err(|_| err())?;
+        return if days == 0 {
+            Err(anyhow!("duration must be greater than 0"))
+        } else {
+            Ok(ParsedDuration::Relative(days))
+        };
+    }
 
+    if let Some(n) = s.strip_suffix("months").or_else(|| s.strip_suffix("month")) {
+        let months: u32 = n.parse().map_err(|_| err())?;
+        return if months == 0 {
+            Err(anyhow!("duration must be greater than 0"))
+        } else {
+            Ok(ParsedDuration::Relative(months * 30))
+        };
+    }
+
+    if let Some(n) = s.strip_suffix("years").or_else(|| s.strip_suffix("year")) {
+        let years: u32 = n.parse().map_err(|_| err())?;
+        return if years == 0 {
+            Err(anyhow!("duration must be greater than 0"))
+        } else {
+            Ok(ParsedDuration::Relative(years * 365))
+        };
+    }
+
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        if !(1970..=9999).contains(&date.year()) {
+            return Err(anyhow!("invalid year: {}", date.year()));
+        }
         return Ok(ParsedDuration::Absolute(s.to_string()));
     }
 
-    // Try relative durations
-    let days_re = Regex::new(r"^(\d+)d$").unwrap();
-    if let Some(caps) = days_re.captures(s) {
-        let days: u32 = caps[1].parse()?;
-        if days == 0 {
-            return Err(anyhow!("duration must be greater than 0"));
-        }
-        return Ok(ParsedDuration::Relative(days));
-    }
-
-    let months_re = Regex::new(r"^(\d+)months?$").unwrap();
-    if let Some(caps) = months_re.captures(s) {
-        let months: u32 = caps[1].parse()?;
-        if months == 0 {
-            return Err(anyhow!("duration must be greater than 0"));
-        }
-        return Ok(ParsedDuration::Relative(months * 30));
-    }
-
-    let years_re = Regex::new(r"^(\d+)years?$").unwrap();
-    if let Some(caps) = years_re.captures(s) {
-        let years: u32 = caps[1].parse()?;
-        if years == 0 {
-            return Err(anyhow!("duration must be greater than 0"));
-        }
-        return Ok(ParsedDuration::Relative(years * 365));
-    }
-
-    Err(anyhow!(
-        "invalid duration format: '{}'. Expected formats: '30d', '6months', '1year', or 'YYYY-MM-DD'",
-        s
-    ))
+    Err(err())
 }
 
 impl ParsedDuration {
@@ -87,7 +64,6 @@ impl ParsedDuration {
     ///
     /// - Relative(30) → "2026-03-15T00:00:00" (now minus 30 days)
     /// - Absolute("2026-04-01") → "2026-04-01T00:00:00"
-    #[allow(dead_code)] // Public API — used by config and CLI modules (tasks 7+)
     pub fn to_cutoff_date(&self) -> Result<String> {
         match self {
             ParsedDuration::Relative(days) => {

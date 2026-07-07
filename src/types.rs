@@ -1,7 +1,9 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Playlist {
@@ -42,14 +44,13 @@ pub struct LabelInfo {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Consumed by disc.rs and wired in Task 5 (main.rs)
 pub enum InputSource {
     Disc { device: PathBuf },
     Folder { path: PathBuf },
 }
 
 impl InputSource {
-    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
+    #[cfg(test)]
     pub fn bluray_path(&self) -> &Path {
         match self {
             InputSource::Disc { device } => device,
@@ -57,7 +58,6 @@ impl InputSource {
         }
     }
 
-    #[allow(dead_code)] // Part of InputSource API; wired in Task 5
     pub fn is_folder(&self) -> bool {
         matches!(self, InputSource::Folder { .. })
     }
@@ -555,10 +555,6 @@ pub enum Overlay {
 pub struct HistoryOverlayState {
     pub sessions: Vec<crate::history::SessionSummary>,
     pub selected: usize,
-    #[allow(dead_code)] // Placeholder for future filter-by-text feature
-    pub filter_text: String,
-    #[allow(dead_code)] // Placeholder for future filter-by-status feature
-    pub status_filter: Option<crate::history::SessionStatus>,
     pub detail_view: Option<crate::history::SessionDetail>,
     pub confirm_action: Option<HistoryConfirmAction>,
 }

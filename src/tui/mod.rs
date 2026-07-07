@@ -56,9 +56,6 @@ pub struct DiscState {
 
 #[derive(Default)]
 pub struct TmdbState {
-    #[allow(dead_code)]
-    // Legacy field from single-session App; sessions use DriveSession.tmdb_api_key
-    pub api_key: Option<String>,
     pub search_query: String,
     pub movie_mode: bool,
     pub search_results: Vec<TmdbShow>,

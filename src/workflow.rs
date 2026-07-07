@@ -113,8 +113,16 @@ pub fn check_overwrite(
             log::info!(
                 "Partial rip detected: {} is {} but expected ~{} ({}%)",
                 output.display(),
-                format_size_inline(size),
-                format_size_inline(est),
+                if size >= 1_073_741_824 {
+                    format!("{:.1} GB", size as f64 / 1_073_741_824.0)
+                } else {
+                    format!("{:.0} MB", size as f64 / 1_048_576.0)
+                },
+                if est >= 1_073_741_824 {
+                    format!("{:.1} GB", est as f64 / 1_073_741_824.0)
+                } else {
+                    format!("{:.0} MB", est as f64 / 1_048_576.0)
+                },
                 (size as f64 / est as f64 * 100.0) as u32,
             );
             std::fs::remove_file(output)?;
@@ -122,16 +130,6 @@ pub fn check_overwrite(
         }
     }
     Ok(OverwriteAction::Skip(size))
-}
-
-fn format_size_inline(bytes: u64) -> String {
-    const GB: u64 = 1_073_741_824;
-    const MB: u64 = 1_048_576;
-    if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
-    } else {
-        format!("{:.0} MB", bytes as f64 / MB as f64)
-    }
 }
 
 pub fn prepare_remux_options(

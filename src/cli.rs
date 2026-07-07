@@ -2583,7 +2583,11 @@ pub fn run_batch(
     let mut total_failures: u32 = 0;
     let mut next_start_episode = args.start_episode.unwrap_or(1);
     let device = args.device().to_string_lossy().to_string();
-    let batch_id = uuid::Uuid::new_v4().to_string();
+    let batch_id = format!(
+        "{}-{:x}",
+        chrono::Local::now().format("%Y%m%d%H%M%S"),
+        std::process::id()
+    );
 
     loop {
         if crate::CANCELLED.load(std::sync::atomic::Ordering::Relaxed) {
