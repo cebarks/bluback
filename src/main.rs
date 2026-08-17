@@ -500,10 +500,7 @@ fn run_inner() -> anyhow::Result<i32> {
 
     // Resolve input source type: folder (BDMV backup) vs disc (block device)
     let is_folder_input = if let Some(ref dev) = args.device {
-        match disc::resolve_input_source(dev) {
-            Ok(src) => src.is_folder(),
-            Err(e) => return Err(e), // directory without BDMV/ structure
-        }
+        disc::resolve_input_source(dev)?.is_folder()
     } else {
         false
     };

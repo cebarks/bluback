@@ -1,6 +1,6 @@
 [package]
 name = "bluback"
-version = "0.11.6"
+version = "0.12.0"
 edition = "2021"
 description = "Blu-ray backup tool with TUI"
 license = "AGPL-3.0-or-later"
@@ -19,14 +19,14 @@ serde_json = "1"
 mpls = "0.2"
 toml = "1.1"
 ureq = { version = "3", features = ["json"] }
-ffmpeg-the-third = "5"
+ffmpeg-the-third = "6"
 libc = "0.2"
 ctrlc = "3"
 rusqlite = { version = "0.40", features = ["bundled"] }
 log = "0.4"
 fern = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-quick-xml = "0.40"
+quick-xml = "0.41"
 
 [lints.rust]
 # ff_api_avstream_side_data is emitted by ffmpeg-sys-the-third's build script
