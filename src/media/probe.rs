@@ -29,9 +29,14 @@ fn open_bluray(
 
     let url = format!("bluray:{}", device);
 
+    let mut opts = ffmpeg_the_third::Dictionary::new();
+    // Increase probesize to 100MB and analyzeduration to 100s to ensure
+    // streams that start late (like some PGS subtitles) are properly probed
+    opts.set("probesize", "100000000");
+    opts.set("analyzeduration", "100000000");
+
     match playlist_num {
         Some(num) => {
-            let mut opts = ffmpeg_the_third::Dictionary::new();
             opts.set("playlist", num);
             ffmpeg_the_third::format::input_with_dictionary(&url, opts).map_err(|e| {
                 match super::error::classify_aacs_error(&e) {

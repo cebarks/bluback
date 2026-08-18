@@ -142,6 +142,8 @@ pub fn open_remux_input(
     let input_url = format!("bluray:{}", device);
     let mut opts = Dictionary::new();
     opts.set("playlist", playlist);
+    opts.set("probesize", "100000000");
+    opts.set("analyzeduration", "100000000");
 
     let ictx = guard.track_open(|| {
         format::input_with_dictionary(&input_url, opts).map_err(|e| {
@@ -200,6 +202,24 @@ where
     // -1 means not mapped
     let mut stream_map: Vec<i32> = vec![-1; nb_input_streams];
 
+    // Find video dimensions as fallback for PGS subtitles that may lack them
+    // (if ffmpeg's probe phase times out before seeing a subtitle packet)
+    let mut fallback_width = 1920;
+    let mut fallback_height = 1080;
+    for in_idx in 0..nb_input_streams {
+        if let Some(stream) = ictx.stream(in_idx) {
+            if stream.parameters().medium() == media::Type::Video {
+                let w = stream.parameters().width();
+                let h = stream.parameters().height();
+                if w > 0 && h > 0 {
+                    fallback_width = w;
+                    fallback_height = h;
+                    break;
+                }
+            }
+        }
+    }
+
     for (out_idx, &in_idx) in (0_i32..).zip(selected.iter()) {
         let in_stream = ictx
             .stream(in_idx)
@@ -211,10 +231,20 @@ where
         out_stream.set_parameters(in_stream.parameters());
         out_stream.set_time_base(in_stream.time_base());
 
+        let is_pgs = in_stream.parameters().medium() == media::Type::Subtitle
+            && in_stream.parameters().id() == ffmpeg_the_third::codec::Id::HDMV_PGS_SUBTITLE;
+
         // Clear codec tag for container compatibility (equivalent to codec_tag = 0)
         unsafe {
             let st_ptr = out_stream.as_mut_ptr();
             (*(*st_ptr).codecpar).codec_tag = 0;
+
+            // Fix for "Failed to write header: Invalid argument" with PGS subtitles.
+            // MKV muxer requires width and height for HDMV_PGS_SUBTITLE.
+            if is_pgs && (*(*st_ptr).codecpar).width == 0 {
+                (*(*st_ptr).codecpar).width = fallback_width as i32;
+                (*(*st_ptr).codecpar).height = fallback_height as i32;
+            }
         }
 
         stream_map[in_idx] = out_idx;
