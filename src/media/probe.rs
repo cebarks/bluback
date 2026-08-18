@@ -252,7 +252,7 @@ fn scan_with_log_capture(
     unsafe { libc::close(pipe_write) };
     crate::aacs::register_scan_pgid(child_pid);
 
-    let poll_interval = Duration::from_secs(5);
+    let poll_interval = Duration::from_secs(1);
     let start = std::time::Instant::now();
     let child_result = loop {
         let mut status = 0i32;

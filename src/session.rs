@@ -803,7 +803,12 @@ impl DriveSession {
                     "AACS negotiation in progress ({}s / {}s)...",
                     elapsed, timeout
                 );
-                self.disc.scan_log.push(msg.clone());
+                match self.disc.scan_log.last_mut() {
+                    Some(last) if last.starts_with("AACS negotiation in progress") => {
+                        *last = msg.clone();
+                    }
+                    _ => self.disc.scan_log.push(msg.clone()),
+                }
                 self.status_message = msg;
                 self.emit_snapshot();
                 return false; // Keep pending_rx alive
