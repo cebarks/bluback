@@ -1,11 +1,135 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use ffmpeg_the_third::{self as ffmpeg, format, media, Dictionary, Packet, Rational, Rescale};
+use ffmpeg_the_third::{
+    self as ffmpeg, codec, format, media, Dictionary, Frame, Packet, Rational, Rescale,
+};
 
 use super::error::{classify_aacs_error, MediaError};
 use crate::types::{ChapterMark, RipProgress};
+
+/// Handles lossless transcoding of Blu-ray-specific PCM formats (PCM_BLURAY,
+/// PCM_DVD) to standard PCM codecs that MKV supports. The conversion is
+/// bit-exact — same samples, different container encoding.
+struct AudioTranscoder {
+    decoder: codec::decoder::Audio,
+    encoder: codec::encoder::audio::Encoder,
+}
+
+impl AudioTranscoder {
+    /// Choose a standard PCM codec that matches the bit depth of the source.
+    fn target_codec_id(bits: u32) -> codec::Id {
+        if bits <= 16 {
+            codec::Id::PCM_S16LE
+        } else if bits <= 24 {
+            codec::Id::PCM_S24LE
+        } else {
+            codec::Id::PCM_S32LE
+        }
+    }
+
+    /// Create a transcoder for an input stream, configuring the output stream
+    /// with the target codec's parameters.
+    fn new(
+        in_stream: &ffmpeg::Stream,
+        out_stream: &mut format::stream::StreamMut,
+    ) -> Result<Self, MediaError> {
+        // Decode from the input codec (e.g. PCM_BLURAY)
+        let decoder = codec::context::Context::from_parameters(in_stream.parameters())
+            .and_then(|ctx| ctx.decoder().audio())
+            .map_err(|e| MediaError::RemuxFailed(format!("Failed to open PCM decoder: {}", e)))?;
+
+        // Pick target codec based on bit depth
+        let bits = {
+            let coded = in_stream.parameters().bits_per_coded_sample();
+            let raw_sample = in_stream.parameters().bits_per_raw_sample();
+            if raw_sample > 0 {
+                raw_sample
+            } else if coded > 0 {
+                coded
+            } else {
+                24 // PCM_BLURAY default
+            }
+        };
+        let target_id = Self::target_codec_id(bits);
+        let target_codec = codec::encoder::find(target_id).ok_or_else(|| {
+            MediaError::RemuxFailed(format!("PCM encoder {:?} not available", target_id))
+        })?;
+
+        log::info!(
+            "Transcoding stream {} from {:?} to {:?} ({}-bit)",
+            in_stream.index(),
+            in_stream.parameters().id(),
+            target_id,
+            bits
+        );
+
+        // Configure encoder to match decoder's audio parameters
+        let mut enc_audio = codec::context::Context::new_with_codec(target_codec)
+            .encoder()
+            .audio()
+            .map_err(|e| MediaError::RemuxFailed(format!("Failed to create PCM encoder: {}", e)))?;
+
+        enc_audio.set_rate(decoder.rate() as i32);
+        enc_audio.set_format(decoder.format());
+        enc_audio.set_ch_layout(decoder.ch_layout());
+        enc_audio.set_time_base((1, decoder.rate() as i32));
+
+        let encoder = enc_audio
+            .open_as(target_codec)
+            .map_err(|e| MediaError::RemuxFailed(format!("Failed to open PCM encoder: {}", e)))?;
+
+        // Set output stream parameters from the opened encoder context
+        let enc_ctx: &codec::Context = encoder.as_ref();
+        out_stream.copy_parameters_from_context(enc_ctx);
+
+        Ok(Self { decoder, encoder })
+    }
+
+    /// Decode input packets and re-encode to the target format.
+    /// Returns encoded output packets.
+    fn transcode(&mut self, input_packet: &Packet) -> Result<Vec<Packet>, MediaError> {
+        self.decoder
+            .send_packet(input_packet)
+            .map_err(|e| MediaError::RemuxFailed(format!("PCM decode error: {}", e)))?;
+        self.drain_encoder()
+    }
+
+    /// Flush remaining frames at end of stream.
+    fn flush(&mut self) -> Result<Vec<Packet>, MediaError> {
+        self.decoder
+            .send_eof()
+            .map_err(|e| MediaError::RemuxFailed(format!("PCM decoder flush error: {}", e)))?;
+        let packets = self.drain_encoder()?;
+        self.encoder
+            .send_eof()
+            .map_err(|e| MediaError::RemuxFailed(format!("PCM encoder flush error: {}", e)))?;
+        let mut final_packets = packets;
+        let mut out_pkt = Packet::empty();
+        while self.encoder.receive_packet(&mut out_pkt).is_ok() {
+            final_packets.push(out_pkt.clone());
+        }
+        Ok(final_packets)
+    }
+
+    /// Receive decoded frames and feed them to the encoder, collecting output packets.
+    fn drain_encoder(&mut self) -> Result<Vec<Packet>, MediaError> {
+        let mut output = Vec::new();
+        let mut frame = unsafe { Frame::empty() };
+        while self.decoder.receive_frame(&mut frame).is_ok() {
+            self.encoder
+                .send_frame(&frame)
+                .map_err(|e| MediaError::RemuxFailed(format!("PCM encode error: {}", e)))?;
+            let mut out_pkt = Packet::empty();
+            while self.encoder.receive_packet(&mut out_pkt).is_ok() {
+                output.push(out_pkt.clone());
+            }
+        }
+        Ok(output)
+    }
+}
 
 /// How to select streams from the input for remuxing.
 #[derive(Debug, Clone, Default)]
@@ -220,16 +344,42 @@ where
         }
     }
 
-    for (out_idx, &in_idx) in (0_i32..).zip(selected.iter()) {
+    let mut transcoders: HashMap<usize, AudioTranscoder> = HashMap::new();
+    let mut out_idx_counter: i32 = 0;
+    for &in_idx in selected.iter() {
         let in_stream = ictx
             .stream(in_idx)
             .ok_or_else(|| MediaError::RemuxFailed(format!("Input stream {} not found", in_idx)))?;
 
-        // Add output stream and copy codec parameters
         let codec_id = in_stream.parameters().id();
-        let mut out_stream = octx.add_stream(codec_id)?;
-        out_stream.set_parameters(in_stream.parameters());
-        out_stream.set_time_base(in_stream.time_base());
+        let needs_transcode = codec_id == ffmpeg_the_third::codec::Id::PCM_BLURAY
+            || codec_id == ffmpeg_the_third::codec::Id::PCM_DVD;
+
+        // Add output stream and copy codec parameters
+        let out_idx = out_idx_counter;
+        let mut out_stream = if needs_transcode {
+            // For Blu-ray PCM codecs, create the output stream with the target
+            // codec — AudioTranscoder::new() will set the actual parameters.
+            let target_id = AudioTranscoder::target_codec_id(
+                in_stream
+                    .parameters()
+                    .bits_per_raw_sample()
+                    .max(in_stream.parameters().bits_per_coded_sample())
+                    .max(16),
+            );
+            octx.add_stream(target_id)?
+        } else {
+            let mut s = octx.add_stream(codec_id)?;
+            s.set_parameters(in_stream.parameters());
+            s.set_time_base(in_stream.time_base());
+            s
+        };
+
+        // Set up lossless transcoder for Blu-ray PCM → standard PCM
+        if needs_transcode {
+            let transcoder = AudioTranscoder::new(&in_stream, &mut out_stream)?;
+            transcoders.insert(in_idx, transcoder);
+        }
 
         let is_pgs = in_stream.parameters().medium() == media::Type::Subtitle
             && in_stream.parameters().id() == ffmpeg_the_third::codec::Id::HDMV_PGS_SUBTITLE;
@@ -240,14 +390,24 @@ where
             (*(*st_ptr).codecpar).codec_tag = 0;
 
             // Fix for "Failed to write header: Invalid argument" with PGS subtitles.
-            // MKV muxer requires width and height for HDMV_PGS_SUBTITLE.
-            if is_pgs && (*(*st_ptr).codecpar).width == 0 {
+            // The MKV muxer internally checks subtitle dimensions; PGS streams
+            // read from Blu-ray transport streams frequently have width/height=0
+            // because FFmpeg's probe phase doesn't read far enough to encounter
+            // the first subtitle display set packet.
+            if is_pgs && ((*(*st_ptr).codecpar).width == 0 || (*(*st_ptr).codecpar).height == 0) {
                 (*(*st_ptr).codecpar).width = fallback_width as i32;
                 (*(*st_ptr).codecpar).height = fallback_height as i32;
+                log::info!(
+                    "Injected fallback dimensions {}x{} for PGS subtitle stream {}",
+                    fallback_width,
+                    fallback_height,
+                    in_idx
+                );
             }
         }
 
         stream_map[in_idx] = out_idx;
+        out_idx_counter = out_idx + 1;
         // TODO: Per-stream metadata titles (e.g. "English - DTS-HD MA 5.1")
         // to be implemented alongside per-stream track selection in v0.10
     }
@@ -307,6 +467,7 @@ where
     let reserve_bytes = (options.reserve_index_space_kb as u64) * 1024;
     let mut muxer_opts = Dictionary::new();
     muxer_opts.set("reserve_index_space", reserve_bytes.to_string());
+
     octx.write_header_with(muxer_opts)
         .map_err(|e| MediaError::RemuxFailed(format!("Failed to write header: {}", e)))?;
 
@@ -385,15 +546,29 @@ where
 
         total_bytes += packet.size() as u64;
 
-        // Rescale timestamps and set output stream index
-        packet.rescale_ts(in_time_base, out_time_base);
-        packet.set_stream(out_stream_idx);
+        // Branch: transcode or stream-copy
+        if let Some(transcoder) = transcoders.get_mut(&in_stream_idx) {
+            // Transcode: decode PCM_BLURAY/PCM_DVD → re-encode as standard PCM
+            let out_packets = transcoder.transcode(&packet)?;
+            for mut out_pkt in out_packets {
+                out_pkt.rescale_ts(in_time_base, out_time_base);
+                out_pkt.set_stream(out_stream_idx);
+                out_pkt.write_interleaved(&mut octx).map_err(|e| {
+                    log::warn!("Remux failed: {}: {}", output.display(), e);
+                    MediaError::RemuxFailed(format!("Error writing transcoded packet: {}", e))
+                })?;
+            }
+        } else {
+            // Stream-copy: rescale timestamps and write directly
+            packet.rescale_ts(in_time_base, out_time_base);
+            packet.set_stream(out_stream_idx);
 
-        // Write packet (interleaved for proper ordering)
-        packet.write_interleaved(&mut octx).map_err(|e| {
-            log::warn!("Remux failed: {}: {}", output.display(), e);
-            MediaError::RemuxFailed(format!("Error writing packet: {}", e))
-        })?;
+            // Write packet (interleaved for proper ordering)
+            packet.write_interleaved(&mut octx).map_err(|e| {
+                log::warn!("Remux failed: {}: {}", output.display(), e);
+                MediaError::RemuxFailed(format!("Error writing packet: {}", e))
+            })?;
+        }
 
         // Report progress every ~100ms
         if last_progress.elapsed().as_millis() >= 100 {
@@ -427,6 +602,27 @@ where
                 speed,
             });
             last_progress = Instant::now();
+        }
+    }
+
+    // Flush any transcoded streams before writing the trailer
+    for (&in_idx, transcoder) in transcoders.iter_mut() {
+        let out_stream_idx = stream_map[in_idx] as usize;
+        let in_time_base = ictx
+            .stream(in_idx)
+            .map(|s| s.time_base())
+            .unwrap_or(Rational(1, 90000));
+        let out_time_base = octx
+            .stream(out_stream_idx)
+            .map(|s| s.time_base())
+            .unwrap_or(Rational(1, 90000));
+        let flushed = transcoder.flush()?;
+        for mut out_pkt in flushed {
+            out_pkt.rescale_ts(in_time_base, out_time_base);
+            out_pkt.set_stream(out_stream_idx);
+            out_pkt.write_interleaved(&mut octx).map_err(|e| {
+                MediaError::RemuxFailed(format!("Error writing flushed packet: {}", e))
+            })?;
         }
     }
 
